@@ -120,7 +120,7 @@ class _DynamicFusedMOE(torch.nn.Module):
 # VLLM-HPU-EXT PATCH End
 # ==-------------------------------------------------------------------------==
 
-# FIXME(Yi) temporary solution for bypassing the limitation of the number in experts on torch.ops.hpu.mixture_of_experts
+# FIXME(Yi) temporary solution for bypassing the limitation on the number of experts in torch.ops.hpu.mixture_of_experts."
 TEMP_EP = 16
 
 
