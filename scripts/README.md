@@ -2,6 +2,7 @@
 
 ## Prequsites
 
+- Hardware: 2xG3 
 - Docker: 1.20.0-497
 
 ```bash
@@ -29,19 +30,22 @@ cd vllm;  pip install -r requirements-hpu.txt; VLLM_TARGET_DEVICE=hpu pip instal
 
 ```
 model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l"
-
 ```
 
 ## Run
 
 ```bash
+# vllm root
 cd vllm
 
 # !! Replace the model_path in the run_lm_eval.py
 # Test BF16 model
 python scripts/run_lm_eval.py  
 # Measure BF16 model to generate calibration data
-QUANT_CONFIG=./scripts/inc_measure_config.json python scripts/run_lm_eval.py
+QUANT_CONFIG=./scripts/inc_measure_config.json python ./scripts/run_lm_eval.py
 # Quantize BF16 model to FP8
-QUANT_CONFIG=./scripts/inc_quant_config.json python scripts/run_lm_eval.py
+QUANT_CONFIG=./scripts/inc_quant_config.json python ./scripts/run_lm_eval.py
 ```
+
+> [!CAUTION]
+> FAKE `EP` was hard-coded as 16. Please check `TEMP_EP` in vllm and `DEEPSEEK_EP` in INC.
