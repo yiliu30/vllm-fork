@@ -29,7 +29,7 @@ from vllm_hpu_extension.profiler import (HabanaHighLevelProfiler,
                                          HabanaMemoryProfiler, format_bytes)
 
 from vllm.attention import AttentionMetadata, get_attn_backend
-from vllm.config import DeviceConfig, VllmConfig
+from vllm.config import DeviceConfig, VllmConfig, ForkedPdb
 from vllm.distributed import broadcast_tensor_dict
 from vllm.distributed.parallel_state import get_world_group
 from vllm.forward_context import set_forward_context
@@ -748,7 +748,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     max_position_embeddings=max_pos_embeddings,
                 )
                 self.model = self.lora_manager.create_lora_manager(self.model)
-
             if self.model_config.quantization == 'inc':
                 logger.info("Preparing model with INC..")
                 with HabanaMemoryProfiler() as m_inc:
@@ -756,10 +755,13 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         FP8Config, convert, prepare)
                     config = FP8Config.from_json_file(
                         os.getenv("QUANT_CONFIG", ""))
+
                     if config.measure:
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
+                    logger.info(f"converted model")
+                    logger.info(f"model: {self.model}")
                     htcore.hpu_initialize(self.model,
                                           mark_only_scales_as_const=True)
                 self.inc_initialized_successfully = True
@@ -1951,6 +1953,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             (self.model.model is not None) and \
             self.inc_initialized_successfully and \
             not getattr(self, "_is_inc_finalized", False)
+        logger.info(f"can finalize inc: {can_finalize_inc}")
         if can_finalize_inc:
             from neural_compressor.torch.quantization import (
                 finalize_calibration)
