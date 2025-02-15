@@ -393,9 +393,11 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         #     permuted_weights=True,
         #     activation="silu",
         # )
-        final_hidden_states = torch.zeros_like(x)
-        num_experts = layer.w13_weight.shape[0]
-        n_expert_slice = layer.w13_weight.shape[0] // TEMP_EP
+        final_hidden_states: torch.Tensor = torch.zeros_like(x)
+        # Note: The w13_weight was removed by INC.
+        # num_experts = layer.w13_weight.shape[0]
+        num_experts = layer.num_experts
+        n_expert_slice = num_experts // TEMP_EP
         assert n_expert_slice * TEMP_EP == num_experts
         for i in range(TEMP_EP):
             _temp_expert_group = getattr(layer, f"_temp_expert_group_{i}")
