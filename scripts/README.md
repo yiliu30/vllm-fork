@@ -2,7 +2,7 @@
 
 ## Prequsites
 
-- Hardware: 2xG3 
+- Hardware: ~~2xG3~~  8XG3
 - Docker: 1.20.0-497
 
 ```bash
@@ -26,10 +26,11 @@ python setup.py pt develop
 cd vllm;  pip install -r requirements-hpu.txt; VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation;
 ```
 
-- Reduced DeepSeek V3 model (4 layers with random weights)
+- ~~Reduced DeepSeek V3 model (4 layers with random weights)~~
+- Reduced DeepSeek V3 model (4 layers with real weights)
 
 ```
-model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l"
+model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l-real"
 ```
 
 ## Run
@@ -42,10 +43,10 @@ cd vllm
 # Test BF16 model
 python ./scripts/run_lm_eval.py  
 # Measure BF16 model to generate calibration data
-QUANT_CONFIG=./scripts/inc_measure_config.json python ./scripts/run_lm_eval.py
+QUANT_CONFIG=./scripts/inc_measure_config.json python ./scripts/run_inc_example_tp.py
 # Quantize BF16 model to FP8
-QUANT_CONFIG=./scripts/inc_quant_config.json python ./scripts/run_lm_eval.py
+QUANT_CONFIG=./scripts/inc_quant_config.json python ./scripts/run_inc_example_tp.py
 ```
 
 > [!CAUTION]
-> FAKE `EP` was hard-coded as 16. Please check `TEMP_EP` in vllm and `DEEPSEEK_EP` in INC.
+> ~~FAKE `EP` was hard-coded as 16. Please check `TEMP_EP` in vllm and `DEEPSEEK_EP` in INC.~~
