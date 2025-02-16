@@ -40,7 +40,7 @@ cd vllm
 
 # !! Replace the model_path in the run_lm_eval.py
 # Test BF16 model
-python scripts/run_lm_eval.py  
+python ./scripts/run_lm_eval.py  
 # Measure BF16 model to generate calibration data
 QUANT_CONFIG=./scripts/inc_measure_config.json python ./scripts/run_lm_eval.py
 # Quantize BF16 model to FP8
