@@ -760,8 +760,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    logger.info(f"converted model")
-                    logger.info(f"model: {self.model}")
+                    logger.debug(f"converted model")
+                    logger.debug(f"model: {self.model}")
                     htcore.hpu_initialize(self.model,
                                           mark_only_scales_as_const=True)
                 self.inc_initialized_successfully = True

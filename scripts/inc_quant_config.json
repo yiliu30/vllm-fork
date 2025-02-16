@@ -10,6 +10,5 @@
         "types": ["KVCache", "VLLMKVCache"],
         "names": ["lm_head"]
     },
-    "scale_format": "const",
     "dump_stats_path": "./nc_workspace_tmp/inc_measure_output"
 }
