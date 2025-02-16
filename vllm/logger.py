@@ -147,6 +147,12 @@ _configure_vllm_root_logger()
 logger = init_logger(__name__)
 
 
+def rank_logger(msg):
+    import torch
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else -1
+    logger.info(f"[Rank {rank}] {msg}")
+
+
 def _trace_calls(log_path, root_dir, frame, event, arg=None):
     if event in ['call', 'return']:
         # Extract the filename, line number, function name, and the code object
