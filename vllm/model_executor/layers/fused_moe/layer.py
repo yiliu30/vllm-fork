@@ -8,7 +8,7 @@ from vllm.distributed import (get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_reduce)
 from vllm.logger import init_logger
-from vllm.logger import rank_logger
+from vllm.logger import rank_debug
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
@@ -413,7 +413,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 f"final_hidden_states.shape: {final_hidden_states.shape}, device: {final_hidden_states.device}, dtype: {final_hidden_states.dtype}"
             )
             htorch.core.mark_step()
-            rank_logger(f"done mark step {i}")
+            rank_debug(f"done mark step {i}")
         return final_hidden_states.view(-1, x.shape[1])
 
     def forward_cpu(
@@ -589,7 +589,7 @@ class FusedMoE(torch.nn.Module):
                 _temp_expert_group = _DynamicFusedMOE(num_expert_per_group)
                 min_expert = i * n_expert_slice
                 max_expert = (i + 1) * n_expert_slice
-                # rank_logger(f"i:{i}, num_experts:{num_experts} loading experts from {min_expert} to {max_expert}, layer.w13_weight.shape : {layer.w13_weight.shape}")
+                # rank_debug(f"i:{i}, num_experts:{num_experts} loading experts from {min_expert} to {max_expert}, layer.w13_weight.shape : {layer.w13_weight.shape}")
                 w13_list_slice = [
                     layer.w13_weight[j].clone()
                     for j in range(min_expert, max_expert)
@@ -609,7 +609,7 @@ class FusedMoE(torch.nn.Module):
                 setattr(_temp_expert_group.MoeOp, "experts_min", min_expert)
                 setattr(_temp_expert_group.MoeOp, "experts_max", max_expert - 1)
                 setattr(self, f"_temp_expert_group_{i}", _temp_expert_group)
-                logger.info(f"set _temp_expert_group_{i}")
+                logger.debug(f"set _temp_expert_group_{i}")
                 htorch.core.mark_step()
 
     def _load_per_tensor_weight_scale(self, shard_id: str,

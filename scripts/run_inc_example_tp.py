@@ -235,3 +235,9 @@ if __name__ == "__main__":
             print(f"Ground truth: {gt_i!r}")
             print("====================================")
     llm.llm_engine.model_executor.shutdown()
+    
+    
+"""
+QUANT_CONFIG=./scripts/inc_measure_config.json python  scripts/run_inc_example_tp.py
+QUANT_CONFIG=./scripts/inc_quant_config.json python  scripts/run_inc_example_tp.py
+"""
