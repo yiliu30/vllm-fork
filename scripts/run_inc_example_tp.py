@@ -12,7 +12,7 @@ dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
 
 model_path = "/data/models/DeepSeek-R1/"
 # model_path = "deepseek-ai/DeepSeek-V2-Lite"
-model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l"
+model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l-real"
 
 
 # Parse the command-line arguments.
