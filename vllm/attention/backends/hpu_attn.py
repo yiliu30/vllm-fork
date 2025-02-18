@@ -183,7 +183,6 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         self.q_proj = kwargs.pop("q_proj", None)
         self.kv_b_proj = kwargs.pop("kv_b_proj", None)
         self.o_proj = kwargs.pop("o_proj", None)
-
         
         self.matmul_qk = Matmul()
         self.softmax = Softmax()
