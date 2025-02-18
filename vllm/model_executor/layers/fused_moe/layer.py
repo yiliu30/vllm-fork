@@ -334,8 +334,8 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                                          experts_max=max_expert - 1)
             htorch.core.mark_step()
         return final_hidden_states.view(-1, x.shape[1])
-    
-    def forward_hpu(
+
+    def forward_hpu_fused_moe_op(
         self,
         layer: torch.nn.Module,
         x: torch.Tensor,
@@ -411,6 +411,193 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             # logger.debug(f"done mark step {i}")
         return final_hidden_states.view(-1, x.shape[1])
 
+    def forward_hpu(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        use_grouped_topk: bool,
+        top_k: int,
+        router_logits: torch.Tensor,
+        renormalize: bool,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        ep_rank=0,
+    ):
+        batch_size, seq_len, hidden_dim = x.shape
+        num_experts = layer.w13_weight.shape[0]
+        n_expert_slice = layer.w13_weight.shape[0] // self.moe_n_slice
+        assert n_expert_slice * self.moe_n_slice == num_experts
+        x = x.view(-1, hidden_dim)
+        total_num_experts = router_logits.size(-1)
+        if (
+            seq_len == 1
+            and (num_experts == total_num_experts)
+            and (batch_size * top_k <= 64)
+        ):
+            # num_tokens * topk(num_experts per token) is
+            # less than total number of experts,
+            # we can safely load less experts weight
+            use_partial_experts = True
+        else:
+            use_partial_experts = False
+
+        topk_weights, topk_ids = FusedMoE.select_experts(
+            hidden_states=x,
+            router_logits=router_logits,
+            use_grouped_topk=use_grouped_topk,
+            top_k=top_k,
+            renormalize=renormalize,
+            topk_group=topk_group,
+            num_expert_group=num_expert_group,
+            custom_routing_function=custom_routing_function,
+            scoring_func=scoring_func,
+            e_score_correction_bias=e_score_correction_bias,
+        )
+
+        # orig_M_w13 = layer.orig_M_w13.data
+        # orig_N_w13 = layer.orig_N_w13.data
+        # orig_M_w2 = layer.orig_M_w2.data
+        # orig_N_w2 = layer.orig_N_w2.data
+        ep_shift = ep_rank * num_experts
+
+        use_static_moe = True
+        use_partial_experts = False
+        # if seq_len > 1:
+        #     use_static_moe = False
+        # else:
+        #     use_static_moe = self.use_static_moe
+
+        def do_static_moe(
+            x,
+            topk_ids,
+            topk_weights,
+            w13_weight_fp8,
+            w2_weight_fp8,
+            total_num_experts,
+            num_experts,
+            w13_weight_scale_inv_fp8=None,
+            w2_weight_scale_inv_fp8=None,
+        ):
+            final_hidden_states = torch.zeros_like(x)
+            # padded_weights shape is (total_num_experts, num_tokens)
+            experts_mask = torch.zeros(
+                (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
+            )
+            experts_mask.scatter_(-1, topk_ids, topk_weights)
+            experts_mask = experts_mask.transpose(0, 1)
+
+            for i in range(num_experts):
+                w13_weight_fp8_slice = w13_weight_fp8[i, ...]
+                w2_weight_fp8_slice = w2_weight_fp8[i, ...]
+                # w13_scale_fp8_slice = w13_weight_scale_inv_fp8[i, ...]
+                # w2_scale_fp8_slice = w2_weight_scale_inv_fp8[i, ...]
+
+                # w13_weight = dequant_block_fp8_weight_naive(
+                #     w13_weight_fp8_slice,
+                #     w13_scale_fp8_slice,
+                #     self.quant_config.weight_block_size,
+                #     x.dtype,
+                #     orig_M_w13,
+                #     orig_N_w13,
+                # )
+                w13_weight = w13_weight_fp8_slice
+
+                up_gate_states = torch.matmul(x, w13_weight.transpose(0, 1))
+                d = up_gate_states.shape[-1] // 2
+                tmp_states = F.silu(up_gate_states[..., :d]) * up_gate_states[..., d:]
+                w2_weight = w2_weight_fp8_slice
+                # w2_weight = dequant_block_fp8_weight_naive(
+                #     w2_weight_fp8_slice,
+                #     w2_scale_fp8_slice,
+                #     self.quant_config.weight_block_size,
+                #     x.dtype,
+                #     orig_M_w13,
+                #     orig_N_w13,
+                # )
+                current_hidden_states = torch.matmul(
+                    tmp_states, w2_weight.transpose(0, 1)
+                )
+                padded_weight = experts_mask[i + ep_shift].unsqueeze(1)
+                final_hidden_states += current_hidden_states * padded_weight
+
+            return final_hidden_states
+
+        # def do_moe(
+        #     x,
+        #     topk_ids,
+        #     topk_weights,
+        #     w13_weight_fp8,
+        #     w2_weight_fp8,
+        #     moe_n_slice,
+        #     n_expert_slice,
+        #     w13_weight_scale_inv_fp8=None,
+        #     w2_weight_scale_inv_fp8=None,
+        # ):
+        #     w13_weight = dequant_block_fp8_weight_naive(
+        #         w13_weight_fp8,
+        #         w13_weight_scale_inv_fp8,
+        #         block_size=self.quant_config.weight_block_size,
+        #         dtype=x.dtype,
+        #         original_M=orig_M_w13,
+        #         original_N=orig_N_w13,
+        #     )
+        #     w2_weight = dequant_block_fp8_weight_naive(
+        #         w2_weight_fp8,
+        #         w2_weight_scale_inv_fp8,
+        #         block_size=self.quant_config.weight_block_size,
+        #         dtype=x.dtype,
+        #         original_M=orig_M_w2,
+        #         original_N=orig_N_w2,
+        #     )
+        #     final_hidden_states = torch.zeros_like(x)
+        #     for i in range(moe_n_slice):
+        #         min_expert = i * n_expert_slice
+        #         max_expert = (i + 1) * n_expert_slice
+
+        #         w13_list_slice = [w13_weight[j] for j in range(min_expert, max_expert)]
+        #         w2_list_slice = [w2_weight[j] for j in range(min_expert, max_expert)]
+
+        #         final_hidden_states += torch.ops.hpu.mixture_of_experts(
+        #             hidden_states=x,
+        #             expert_routing_table=topk_ids.to(torch.int64),
+        #             router_weights=topk_weights.to(x.dtype),
+        #             w12=w13_list_slice,
+        #             w3=w2_list_slice,
+        #             permuted_weights=True,
+        #             activation="silu",
+        #             experts_min=min_expert + ep_shift,
+        #             experts_max=max_expert - 1 + ep_shift,
+        #         )
+        #         htorch.core.mark_step()
+        #     return final_hidden_states
+
+        if use_partial_experts:
+            raise NotImplementedError(f"Not implemented for partial experts")
+        else:
+            w13_weight_fp8 = layer.w13_weight
+            # w13_weight_scale_inv_fp8 = layer.w13_weight_scale_inv
+            w2_weight_fp8 = layer.w2_weight
+            # w2_weight_scale_inv_fp8 = layer.w2_weight_scale_inv
+
+            if use_static_moe:
+                final_hidden_states = do_static_moe(
+                    x,
+                    topk_ids,
+                    topk_weights,
+                    w13_weight_fp8,
+                    w2_weight_fp8,
+                    total_num_experts,
+                    num_experts,
+                    # w13_weight_scale_inv_fp8,
+                    # w2_weight_scale_inv_fp8,
+                )
+            else:
+                raise NotImplementedError(f"Not implemented for dynamic moe")
+
+        return final_hidden_states.view(-1, x.shape[1])
 
     def forward_cpu(
         self,
@@ -941,7 +1128,7 @@ class FusedMoE(torch.nn.Module):
             custom_routing_function=self.custom_routing_function,
             scoring_func=self.scoring_func,
             e_score_correction_bias=self.e_score_correction_bias,
-            # ep_rank=self.ep_rank
+            ep_rank=self.ep_rank
             )
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
