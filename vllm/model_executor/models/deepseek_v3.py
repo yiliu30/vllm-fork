@@ -57,7 +57,7 @@ from .utils import (PPMissingLayer, is_pp_missing_parameter,
 import habana_frameworks.torch as htorch
 from vllm.platforms import current_platform
 is_hpu = current_platform.is_hpu()
-
+from vllm.logger import rank_debug
 class DeepseekV3MLP(nn.Module):
 
     def __init__(
@@ -500,6 +500,8 @@ class DeepseekV3MLAAttention(nn.Module):
         return self.mla_attn(hidden_states_or_q_c, kv_c_normed, k_pe, kv_cache,
                              attn_metadata)
 
+def get_tensor_range(tensor):
+    return f"{tensor.min().item()}:{tensor.max().item()}"
 
 class DeepseekV3DecoderLayer(nn.Module):
 
@@ -583,11 +585,12 @@ class DeepseekV3DecoderLayer(nn.Module):
             kv_cache=kv_cache,
             attn_metadata=attn_metadata,
         )
-
+        rank_debug(f"after self_attn: {get_tensor_range(hidden_states)}")
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
+        rank_debug(f"after mlp: {get_tensor_range(hidden_states)}")
         return hidden_states, residual
 
 
