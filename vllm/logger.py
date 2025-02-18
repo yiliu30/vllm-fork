@@ -120,6 +120,12 @@ def _configure_vllm_root_logger() -> None:
     if logging_config:
         dictConfig(logging_config)
 
+def rank_debug(msg, target_rank=0):
+    import torch
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else -1
+    if rank == target_rank:
+        logger.debug(f"[Rank {rank}] {msg}")
+
 
 def init_logger(name: str) -> _VllmLogger:
     """The main purpose of this function is to ensure that loggers are
