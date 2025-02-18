@@ -429,6 +429,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         e_score_correction_bias: Optional[torch.Tensor] = None,
         ep_rank=0,
     ):
+        self.moe_n_slice = int(os.environ.get("VLLM_MOE_N_SLICE", 4))
         batch_size, seq_len, hidden_dim = x.shape
         num_experts = layer.w13_weight.shape[0]
         n_expert_slice = layer.w13_weight.shape[0] // self.moe_n_slice
