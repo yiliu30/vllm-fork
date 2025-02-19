@@ -8,6 +8,7 @@ from vllm.distributed import (get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_reduce)
 from vllm.logger import init_logger
+from vllm.logger import rank_debug
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
@@ -16,6 +17,8 @@ from vllm.platforms import current_platform
 from vllm.platforms.interface import CpuArchEnum
 
 is_hpu = current_platform.is_hpu()
+# FIXME: (Yi) add it to the envs 
+_VLLM_HPU_FP8 = False
 
 if current_platform.is_cuda_alike():
     from .fused_moe import fused_experts
@@ -28,6 +31,98 @@ else:
     fused_moe_pallas = None  # type: ignore
 logger = init_logger(__name__)
 
+import os
+VLLM_LOAD_FOR_INC = os.environ.get("VLLM_LOAD_FOR_INC", "0") == "1"
+
+# ==-------------------------------------------------------------------------==
+# VLLM-HPU-EXT PATCH Start
+# ==-------------------------------------------------------------------------==
+
+import torch.nn.functional as F
+import habana_frameworks.torch.core as htcore
+import habana_frameworks.torch as htorch
+
+
+class MoeMatmul(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def set_weight(self, w):
+        self.weight = w
+
+    def forward(self, state, expert_id, w):
+        raise NotImplementedError()
+
+
+class VllmMixtureOfExpertsOp(torch.nn.Module):
+    def __init__(self, num_total_experts):
+        super().__init__()
+        self.w13_list = torch.nn.ModuleList(
+            [MoeMatmul() for _ in range(num_total_experts)]
+        )
+        self.w2_list = torch.nn.ModuleList(
+            [MoeMatmul() for _ in range(num_total_experts)]
+        )
+        self.num_experts = num_total_experts
+        # FIXME (Yi) add experts_min and experts_max as init parameters
+        self.experts_min = None
+        self.experts_max = None
+
+    def forward(
+        self,
+        hidden_states,
+        expert_routing_table,
+        router_weights,
+        permuted_weights=True,
+        activation="silu",
+    ):
+        # pre-processing for custom op inputs
+
+        experts_range = range(self.num_experts)
+        assert self.experts_min is not None, "`experts_min` is not set"
+        assert self.experts_max is not None, "`experts_max` is not set"
+        experts_min, experts_max = self.experts_min, self.experts_max
+        w1_list = [self.w13_list[i].weight.squeeze() for i in experts_range]
+        w2_list = [self.w2_list[i].weight.squeeze() for i in experts_range]
+        return torch.ops.hpu.mixture_of_experts(
+            hidden_states=hidden_states,
+            expert_routing_table=expert_routing_table,
+            router_weights=router_weights,
+            w12=w1_list,
+            w3=w2_list,
+            permuted_weights=permuted_weights,
+            activation=activation,
+            experts_min=experts_min,
+            experts_max=experts_max,
+        )
+
+
+class _DynamicFusedMOE(torch.nn.Module):
+    def __init__(self, num_total_experts):
+        super().__init__()
+        self.MoeOp = VllmMixtureOfExpertsOp(num_total_experts)
+
+    def forward(self, hidden_states, score, topk):
+        htorch.core.mark_step()
+        routing_weights = F.softmax(score, dim=1, dtype=torch.float32)
+        routing_weights, selected_experts = torch.topk(
+            routing_weights, topk, dim=-1
+        )
+        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+        routing_weights = routing_weights.to(hidden_states.dtype)
+
+        final_hidden_states = self.MoeOp(
+            hidden_states=hidden_states,
+            expert_routing_table=selected_experts,
+            router_weights=routing_weights,
+            permuted_weights=True,
+            activation="silu",
+        )
+
+        return final_hidden_states.view(-1, hidden_states.shape[1])
+
+# ==-------------------------------------------------------------------------==
+# VLLM-HPU-EXT PATCH End
 
 class FusedMoeWeightScaleSupported(Enum):
     TENSOR = "tensor"
@@ -115,7 +210,8 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         num_expert_group: Optional[int] = None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
-        e_score_correction_bias: Optional[torch.Tensor] = None
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        ep_rank=0,
     ) -> torch.Tensor:
         return self.forward(x=x,
                             layer=layer,
@@ -127,7 +223,9 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                             num_expert_group=num_expert_group,
                             custom_routing_function=custom_routing_function,
                             scoring_func=scoring_func,
-                            e_score_correction_bias=e_score_correction_bias)
+                            e_score_correction_bias=e_score_correction_bias,
+                            ep_rank=ep_rank,
+                            )
 
     def forward_cuda(
         self,
@@ -162,7 +260,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                              topk_ids=topk_ids,
                              inplace=True)
 
-    def forward_hpu(
+    def forward_hpu_original(
         self,
         layer: torch.nn.Module,
         x: torch.Tensor,
@@ -182,7 +280,10 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         # # assert topk_group is None, 'topk_group is not supported on HPU'
         # if layer is not None:
         #     return layer.hpu_fused_moe(x, router_logits, top_k)
-        assert len(x.shape) == 2
+        batch_size, seq_len, hidden_dim = x.shape
+        bt = batch_size * seq_len
+        x = x.view(-1, hidden_dim)
+        assert len(x.shape) == 2, f"Expected 2D tensor, got {x.shape}"
         import habana_frameworks.torch as htorch
         htorch.core.mark_step()
         if use_grouped_topk:
@@ -239,6 +340,98 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                                          experts_max=max_expert - 1)
             htorch.core.mark_step()
         return final_hidden_states.view(-1, x.shape[1])
+    
+    def forward_hpu(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        use_grouped_topk: bool,
+        top_k: int,
+        router_logits: torch.Tensor,
+        renormalize: bool,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        ep_rank=0,
+    ):
+        # #assert not use_grouped_topk, 'use_grouped_topk must be False on HPU'
+        # # assert num_expert_group is None, ('num_expert_group is '
+        # #                                   'not supported on HPU')
+        # # assert topk_group is None, 'topk_group is not supported on HPU'
+        # if layer is not None:
+        #     return layer.hpu_fused_moe(x, router_logits, top_k)
+        # FIXME: (Yi) 2d or 3d?
+        hidden_size = x.shape[-1]
+        x = x.reshape(-1, hidden_size)
+        assert len(x.shape) == 2, f"Expected 2D input, got {x.shape}"
+        import habana_frameworks.torch as htorch
+        htorch.core.mark_step()
+        if use_grouped_topk:
+            topk_weights, topk_ids = FusedMoE.select_experts(
+                hidden_states=x,
+                router_logits=router_logits,
+                use_grouped_topk=use_grouped_topk,
+                top_k=top_k,
+                renormalize=renormalize,
+                topk_group=topk_group,
+                num_expert_group=num_expert_group,
+                custom_routing_function=custom_routing_function,
+                scoring_func=scoring_func,
+                e_score_correction_bias=e_score_correction_bias)
+        else:
+            import torch.nn.functional as F
+            topk_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
+            topk_weights, topk_ids = torch.topk(topk_weights,
+                                                        top_k,
+                                                        dim=-1)
+            topk_weights /= topk_weights.sum(dim=-1, keepdim=True)
+            topk_weights = topk_weights.to(x.dtype)
+
+        # final_hidden_states = layer.hpu_fused_moe.MoeOp(
+        #     hidden_states=x,
+        #     expert_routing_table=topk_ids,
+        #     router_weights=topk_weights,
+        #     permuted_weights=True,
+        #     activation="silu",
+        # )
+        final_hidden_states: torch.Tensor = torch.zeros_like(x)
+        # Note: The w13_weight was removed by INC.
+        # num_experts = layer.w13_weight.shape[0]
+        num_experts = layer.num_experts
+        if hasattr(layer, "w13_weight"):
+            assert (
+                layer.w13_weight.shape[0] == num_experts
+            ), f"Expected {layer.w13_weight.shape[0]} experts, got {num_experts}"
+        # For mixtral, the `num_expert_group` is 8.
+        if num_expert_group is None:
+            num_expert_group = 8
+        num_expert_group = num_expert_group
+        n_expert_slice = num_experts // num_expert_group
+        # For TP 16, EP 16:
+        #   num_experts = 256 // 16 = 16
+        #   num_expert_group = 8
+        #   n_expert_slice = 16 // 8 = 2
+        # rank_debug(f"num_experts: {num_experts}, n_expert_slice: {n_expert_slice}, num_expert_group: {num_expert_group}")
+        assert n_expert_slice * num_expert_group == num_experts
+        for i in range(num_expert_group):
+            _temp_expert_group = getattr(layer, f"_temp_expert_group_{i}")
+            final_hidden_states += _temp_expert_group.MoeOp(
+                hidden_states=x,
+                expert_routing_table=topk_ids.to(torch.int64),
+                router_weights=topk_weights.to(x.dtype),
+                permuted_weights=True,
+                activation="silu",
+            )
+            # logger.debug(
+            #     f"final_hidden_states.shape: {final_hidden_states.shape}, device: {final_hidden_states.device}, dtype: {final_hidden_states.dtype}"
+            # )
+            htorch.core.mark_step()
+            # logger.debug(f"done mark step {i}")
+        # rank_debug(f"final_hidden_states.shape: {final_hidden_states.shape}")
+        return final_hidden_states.view(-1, x.shape[1])
+
 
     def forward_cpu(
         self,
@@ -340,7 +533,7 @@ class FusedMoE(torch.nn.Module):
         e_score_correction_bias: Optional[torch.Tensor] = None,
     ):
         super().__init__()
-
+        self.prefix = prefix
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
 
@@ -364,8 +557,12 @@ class FusedMoE(torch.nn.Module):
         self.topk_group = topk_group
         self.custom_routing_function = custom_routing_function
         if is_hpu:
-            from vllm_hpu_extension.ops import DynamicFusedMOE
-            self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
+            if _VLLM_HPU_FP8:
+                from vllm_hpu_extension.ops import DynamicFusedMOE
+                self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
+                self._need_init_dynamic_fused_moe_lst = False
+            else:
+                self._need_init_dynamic_fused_moe_lst = True
 
         self.scoring_func = scoring_func
         self.e_score_correction_bias = e_score_correction_bias
@@ -395,6 +592,48 @@ class FusedMoE(torch.nn.Module):
 
         self.quant_method.create_weights(layer=self, **moe_quant_params)
 
+
+        layer = self
+        ep_shift = self.ep_rank * self.num_experts
+        # FIXME: (Yi) we need to wrap the `torch.ops.hpu.mixture_of_experts` as `VllmMixtureOfExpertsOp`,
+        # so that INC can patch it for measurement and quantization.
+        if layer._need_init_dynamic_fused_moe_lst:
+            num_experts_on_rank = self.num_experts
+            layer._need_init_dynamic_fused_moe_lst = False
+            if num_expert_group is None:
+                num_expert_group = 8
+            num_expert_per_group = num_experts_on_rank// num_expert_group
+            n_expert_slice = num_experts_on_rank // num_expert_group
+            assert n_expert_slice * num_expert_group == num_experts_on_rank
+
+            for i in range(num_expert_group):
+                _temp_expert_group = _DynamicFusedMOE(num_expert_per_group)
+                min_expert = i * n_expert_slice
+                max_expert = (i + 1) * n_expert_slice
+                # Note: clone weight will cause OoM.
+                # rank_debug(f"i:{i}, num_experts:{num_experts} loading experts from {min_expert} to {max_expert}, layer.w13_weight.shape : {layer.w13_weight.shape}")
+                w13_list_slice = [
+                    layer.w13_weight[j]
+                    for j in range(min_expert, max_expert)
+                ]
+                w2_list_slice = [
+                    layer.w2_weight[j]
+                    for j in range(min_expert, max_expert)
+                ]
+                for index in range(len(w13_list_slice)):
+                    _temp_expert_group.MoeOp.w13_list[index].set_weight(
+                        w13_list_slice[index]
+                    )
+                    _temp_expert_group.MoeOp.w2_list[index].set_weight(
+                        w2_list_slice[index]
+                    )
+                # FIXME: (Yi) pass `experts_min` and `experts_max` to MoeOp.
+                setattr(_temp_expert_group.MoeOp, "experts_min", min_expert + ep_shift)
+                setattr(_temp_expert_group.MoeOp, "experts_max", max_expert - 1 + ep_shift)
+                setattr(self, f"_temp_expert_group_{i}", _temp_expert_group)
+                # logger.debug(f"set _temp_expert_group_{i}")
+                htorch.core.mark_step()
+                
     def _load_per_tensor_weight_scale(self, shard_id: str,
                                       param: torch.nn.Parameter,
                                       loaded_weight: torch.Tensor,
@@ -489,8 +728,9 @@ class FusedMoE(torch.nn.Module):
         expert_data.copy_(loaded_weight)
 
         if is_hpu:
-            self.hpu_fused_moe.MoeOp.w13_list[expert_id].set_weight(
-                orig_exp_data)
+            # FIXME: (Yi) add it back
+            if _VLLM_HPU_FP8:
+                self.hpu_fused_moe.MoeOp.w13_list[expert_id].set_weight(orig_exp_data)
             # print(f"loaded w13 for hpu for expert_id: {expert_id}, orig_exp_data.shape: {orig_exp_data.shape}")
 
     def _load_w2(self,
@@ -513,8 +753,9 @@ class FusedMoE(torch.nn.Module):
         # w2, down_proj: Load into only logical weight of w2.
         expert_data.copy_(loaded_weight)
         if is_hpu:
-            self.hpu_fused_moe.MoeOp.w2_list[expert_id].set_weight(expert_data)
-            # print(f"loaded w2 for hpu for expert_id: {expert_id}, expert_data.shape: {expert_data.shape}")
+            if _VLLM_HPU_FP8:
+                self.hpu_fused_moe.MoeOp.w2_list[expert_id].set_weight(expert_data)
+                # print(f"loaded w2 for hpu for expert_id: {expert_id}, expert_data.shape: {expert_data.shape}")
 
     def _load_single_value(self, param: torch.nn.Parameter,
                            loaded_weight: torch.Tensor, expert_id: int):
@@ -538,7 +779,6 @@ class FusedMoE(torch.nn.Module):
     def weight_loader(self, param: torch.nn.Parameter,
                       loaded_weight: torch.Tensor, weight_name: str,
                       shard_id: str, expert_id: int) -> None:
-
         tp_rank = get_tensor_model_parallel_rank()
         if self.ep_size > 1:
             tp_rank = tp_rank // self.ep_size
@@ -718,7 +958,8 @@ class FusedMoE(torch.nn.Module):
             custom_routing_function=self.custom_routing_function,
             scoring_func=self.scoring_func,
             e_score_correction_bias=self.e_score_correction_bias,
-            ep_rank=self.ep_rank)
+            ep_rank=self.ep_rank,
+            )
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             final_hidden_states = tensor_model_parallel_all_reduce(
