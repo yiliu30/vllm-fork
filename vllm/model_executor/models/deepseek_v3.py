@@ -87,6 +87,7 @@ class DeepseekV3MLP(nn.Module):
                              "Only silu is supported for now.")
         self.act_fn = SiluAndMul()
 
+
     def forward(self, x):
         gate_up, _ = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
@@ -133,7 +134,7 @@ class DeepseekV3MoE(nn.Module):
             top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
             intermediate_size=config.moe_intermediate_size,
-            reduce_results=False,
+            reduce_results=True if self.ep_size > 1 else False,
             renormalize=config.norm_topk_prob,
             quant_config=quant_config,
             use_grouped_topk=True,
@@ -153,8 +154,9 @@ class DeepseekV3MoE(nn.Module):
                 intermediate_size=intermediate_size,
                 hidden_act=config.hidden_act,
                 quant_config=quant_config,
-                reduce_results=False,
+                reduce_results=False if self.ep_size == 1 else True,
             )
+
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, hidden_dim = hidden_states.shape
@@ -164,12 +166,13 @@ class DeepseekV3MoE(nn.Module):
             shared_output = self.shared_experts(hidden_states)
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
+        hidden_states = hidden_states.reshape(batch_size, seq_len, hidden_dim)
         final_hidden_states = self.experts(
-            hidden_states=hidden_states.view(batch_size, seq_len, hidden_dim),
+            hidden_states=hidden_states,
             router_logits=router_logits) * self.routed_scaling_factor
         if shared_output is not None:
             final_hidden_states = final_hidden_states + shared_output
-        if self.tp_size > 1:
+        if self.ep_size == 1 and self.tp_size > 1:
             final_hidden_states = tensor_model_parallel_all_reduce(
                 final_hidden_states)
 
@@ -296,7 +299,6 @@ class DeepseekV3Attention(nn.Module):
         batch_size, seq_len = hidden_states.size(0), hidden_states.size(1)
         hidden_states = hidden_states.view(batch_size * seq_len, *hidden_states.shape[2:])
         positions = positions.view(-1)
-        # print(f"hidden_states: {hidden_states.shape}, positions: {positions.shape}")
         if self.q_lora_rank is not None:
             q = self.q_a_proj(hidden_states)[0]
             q = q.view(batch_size, seq_len, self.q_lora_rank)
@@ -345,7 +347,6 @@ class DeepseekV3Attention(nn.Module):
         k = k.view(batch_size, seq_len, self.num_local_heads * self.qk_head_dim)
         v = v.view(batch_size, seq_len, self.num_local_heads * self.qk_head_dim)
 
-        # print(f"before sending to attn, q shape is {q.shape}, k shape is {k.shape}, v shape is {v.shape}")
         attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
         attn_output = attn_output.view(
             batch_size, seq_len, self.num_local_heads,
