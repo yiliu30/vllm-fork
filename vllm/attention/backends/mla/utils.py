@@ -25,6 +25,8 @@ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
     scaled_dequantize, scaled_quantize)
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
+from vllm.platforms import current_platform
+
 # from vllm.vllm_flash_attn import flash_attn_varlen_func
 
 
@@ -228,13 +230,15 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
         def get_scale_group_shapes_for_fp8(layer: LinearBase) -> \
             Tuple[Tuple[int, int], Tuple[int, int]]:
             if isinstance(layer.quant_method, Fp8LinearMethod):
-                if layer.quant_method.block_quant is not None:
+                if layer.quant_method.block_quant:
                     weight_block_size = \
                         layer.quant_method.quant_config.weight_block_size
                     # per-token-group (1, X), block-quantized (X, Y)
                     return (1, weight_block_size[-1]), weight_block_size
                 else:
                     return (-1, -1), (-1, -1)  # per-tensor, per-tensor
+            elif current_platform.is_hpu():
+                return (-1, -1), (-1, 1)  # per-tensor, per-channel
             elif isinstance(layer.quant_method, CompressedTensorsLinearMethod)\
                 and isinstance(layer.scheme, CompressedTensorsW8A8Fp8):
                 # this is hacky but we always assume the for
@@ -273,6 +277,7 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
                 else:
                     weight = layer.weight
                 
+                # TODO@yangulei: check if needs to restore it
                 scales = get_scales(layer)
                 if len(scales.shape) > 1:
                     _, weight_scale_group_shape = \
