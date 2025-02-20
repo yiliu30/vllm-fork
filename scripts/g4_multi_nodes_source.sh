@@ -32,7 +32,6 @@ block_size=128
 
 # INC
 export QUANT_CONFIG="/mnt/disk3/yiliu4/vllm-fork/scripts"
-export RAY_DEDUP_LOGS=0
 
 # memory footprint tunning params
 export VLLM_GPU_MEMORY_UTILIZATION=0.98
@@ -40,9 +39,9 @@ export VLLM_GRAPH_RESERVED_MEM=0.35
 export VLLM_GRAPH_PROMPT_RATIO=0
 # params
 max_num_batched_tokens=2048
-max_num_seqs=128
-input_min=16
-input_max=16
+max_num_seqs=1024
+input_min=1024
+input_max=1024
 output_max=32
 unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX
 unset VLLM_PROMPT_SEQ_BUCKET_MIN VLLM_PROMPT_SEQ_BUCKET_STEP VLLM_PROMPT_SEQ_BUCKET_MAX

@@ -6,6 +6,8 @@ from typing import Any, List, Tuple
 from transformers import (PreTrainedTokenizerBase, AutoTokenizer)
 import random
 import datasets
+from vllm.utils import reset_seed
+reset_seed()
 # get file location
 file_path = os.path.abspath(__file__)
 dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
@@ -43,6 +45,22 @@ args = parser.parse_args()
 # os.environ["RAY_IGNORE_UNHANDLED_ERRORS"] = "0"
 # os.environ["RAY_DEDUP_LOGS"] = "1"
 # os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
+
+# ==-------------------------------------------------------------------------==
+# Calibration parameters
+least_tokens = 1024
+num_samples = 512
+max_new_tokens = 32
+seed = 42
+# https://github.com/deepseek-ai/DeepSeek-R1/blob/main/README.md#deepseek-r1-evaluation
+"""
+... benchmarks requiring sampling, we use a temperature of 0.6, a top-p value of 0.95...
+"""
+temperature = 0.6
+temperature = 0 # greedy sample
+top_p = 0.95
+# ==-------------------------------------------------------------------------==
+
 
 def sample_sonnet_requests(
     dataset_path: str,
@@ -173,9 +191,21 @@ if __name__ == "__main__":
             # "The capital of France is",
             "The future of AI is",
         ]
+
+        from utils import get_prompts, get_prompt_token_ids
+
+        prompts = get_prompts()
+        prompt_token_ids = get_prompt_token_ids(
+            args.model, prompts, least_tokens
+        )
         gt = None
     # Create a sampling params object.
-    sampling_params = SamplingParams(temperature=0, max_tokens=args.osl)
+    sampling_params = SamplingParams(
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_new_tokens,
+        truncate_prompt_tokens=least_tokens,
+    )
     model = args.model
 
     llm = LLM(
@@ -185,21 +215,24 @@ if __name__ == "__main__":
         distributed_executor_backend='ray',
         trust_remote_code=True,
         quantization='inc_q',
+        weights_load_device="cpu",
         max_model_len=16384,
         dtype="bfloat16",
     )
 
     # Generate texts from the prompts. The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
-    outputs = llm.generate(prompts, sampling_params)
+    outputs = llm.generate(
+        prompts=None, sampling_params=sampling_params, prompt_token_ids=prompt_token_ids
+    )
     # Print the outputs.
     for output_i in range(len(outputs)):
         output = outputs[output_i]
         gt_i = None if gt is None else gt[output_i]
-        prompt = output.prompt
+        prompt_token_ids = output.prompt_token_ids
         generated_text = output.outputs[0].text
         print("====================================")
-        print(f"Prompt: {prompt!r}")
+        print(f"Prompt: {prompt_token_ids!r}")
         print(f"Generated text: {generated_text!r}")
         print(f"Ground truth: {gt_i!r}")
         print("====================================")
