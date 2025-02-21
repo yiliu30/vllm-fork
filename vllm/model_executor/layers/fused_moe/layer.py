@@ -602,6 +602,11 @@ class FusedMoE(torch.nn.Module):
         # so that INC can patch it for measurement and quantization.
         # FIXME: (Yi) use the `VllmMixtureOfExpertsOp` directly.
         if layer._need_init_dynamic_fused_moe_lst:
+            # FIXME(Yi) The ModuleList cause below Ray issue.
+            # There are some potential root causes. 
+            # (1) The process is killed by SIGKILL by OOM killer due to high memory usage. 
+            # (2) ray stop --force is called. 
+            # (3) The worker is crashed unexpectedly due to SIGSEGV or other unexpected errors.
             self.hpu_fused_moe_nn_module_list = torch.nn.ModuleList()
             num_experts_on_rank = self.num_experts
             layer._need_init_dynamic_fused_moe_lst = False
