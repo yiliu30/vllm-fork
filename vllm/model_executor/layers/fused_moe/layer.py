@@ -430,7 +430,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         #     htorch.core.mark_step()
 
         for dynamic_moe in layer.hpu_fused_moe_nn_module_list:
-            final_hidden_states += dynamic_moe(x, topk_ids, topk_weights)
+            final_hidden_states += dynamic_moe.MoeOp(x, topk_ids, topk_weights)
             # logger.debug(f"done mark step {i}")
         # rank_debug(f"final_hidden_states.shape: {final_hidden_states.shape}")
         return final_hidden_states.view(-1, x.shape[1])
@@ -598,8 +598,9 @@ class FusedMoE(torch.nn.Module):
 
         layer = self
         ep_shift = self.ep_rank * self.num_experts
-        # FIXME: (Yi) we need to wrap the `torch.ops.hpu.mixture_of_experts` as `VllmMixtureOfExpertsOp`,
+        # Note: we need to wrap the `torch.ops.hpu.mixture_of_experts` as `VllmMixtureOfExpertsOp`,
         # so that INC can patch it for measurement and quantization.
+        # FIXME: (Yi) use the `VllmMixtureOfExpertsOp` directly.
         if layer._need_init_dynamic_fused_moe_lst:
             self.hpu_fused_moe_nn_module_list = torch.nn.ModuleList()
             num_experts_on_rank = self.num_experts
