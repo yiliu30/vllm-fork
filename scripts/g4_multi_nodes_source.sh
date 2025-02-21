@@ -23,20 +23,26 @@ export HABANA_VISIBLE_MODULES="0,1,2,3,4,5,6,7"
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 export VLLM_MOE_N_SLICE=8
 export VLLM_EP_SIZE=16
+export VLLM_TP_SIZE=16
 export PT_HPU_RECIPE_CACHE_CONFIG=/tmp/recipe_cache,True,16384
-export VLLM_SKIP_WARMUP=1
+export VLLM_SKIP_WARMUP="true"
+export VLLM_LOGGING_LEVEL="DEBUG"
 block_size=128
 # DO NOT change ends...
+
+# INC
+export QUANT_CONFIG="/mnt/disk3/yiliu4/vllm-fork/scripts"
+
 # memory footprint tunning params
 export VLLM_GPU_MEMORY_UTILIZATION=0.98
 export VLLM_GRAPH_RESERVED_MEM=0.35
 export VLLM_GRAPH_PROMPT_RATIO=0
 # params
 max_num_batched_tokens=2048
-max_num_seqs=128
+max_num_seqs=1024
 input_min=1024
 input_max=1024
-output_max=1024
+output_max=32
 unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX
 unset VLLM_PROMPT_SEQ_BUCKET_MIN VLLM_PROMPT_SEQ_BUCKET_STEP VLLM_PROMPT_SEQ_BUCKET_MAX
 unset VLLM_DECODE_BS_BUCKET_MIN VLLM_DECODE_BS_BUCKET_STEP VLLM_DECODE_BS_BUCKET_MAX
