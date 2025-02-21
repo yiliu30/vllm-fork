@@ -32,7 +32,7 @@ else:
 logger = init_logger(__name__)
 
 import os
-VLLM_LOAD_FOR_INC = os.environ.get("VLLM_LOAD_FOR_INC", "0") == "1"
+
 
 # ==-------------------------------------------------------------------------==
 # VLLM-HPU-EXT PATCH Start
@@ -415,19 +415,22 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         #   n_expert_slice = 16 // 8 = 2
         # rank_debug(f"num_experts: {num_experts}, n_expert_slice: {n_expert_slice}, num_expert_group: {num_expert_group}")
         assert n_expert_slice * num_expert_group == num_experts
-        for i in range(num_expert_group):
-            _temp_expert_group = getattr(layer, f"_temp_expert_group_{i}")
-            final_hidden_states += _temp_expert_group.MoeOp(
-                hidden_states=x,
-                expert_routing_table=topk_ids.to(torch.int64),
-                router_weights=topk_weights.to(x.dtype),
-                permuted_weights=True,
-                activation="silu",
-            )
-            # logger.debug(
-            #     f"final_hidden_states.shape: {final_hidden_states.shape}, device: {final_hidden_states.device}, dtype: {final_hidden_states.dtype}"
-            # )
-            htorch.core.mark_step()
+        # for i in range(num_expert_group):
+        #     _temp_expert_group = getattr(layer, f"_temp_expert_group_{i}")
+        #     final_hidden_states += _temp_expert_group.MoeOp(
+        #         hidden_states=x,
+        #         expert_routing_table=topk_ids.to(torch.int64),
+        #         router_weights=topk_weights.to(x.dtype),
+        #         permuted_weights=True,
+        #         activation="silu",
+        #     )
+        #     # logger.debug(
+        #     #     f"final_hidden_states.shape: {final_hidden_states.shape}, device: {final_hidden_states.device}, dtype: {final_hidden_states.dtype}"
+        #     # )
+        #     htorch.core.mark_step()
+
+        for dynamic_moe in self.hpu_fused_moe_nn_module_list:
+            final_hidden_states += dynamic_moe(x, topk_ids, topk_weights)
             # logger.debug(f"done mark step {i}")
         # rank_debug(f"final_hidden_states.shape: {final_hidden_states.shape}")
         return final_hidden_states.view(-1, x.shape[1])
@@ -598,6 +601,7 @@ class FusedMoE(torch.nn.Module):
         # FIXME: (Yi) we need to wrap the `torch.ops.hpu.mixture_of_experts` as `VllmMixtureOfExpertsOp`,
         # so that INC can patch it for measurement and quantization.
         if layer._need_init_dynamic_fused_moe_lst:
+            self.hpu_fused_moe_nn_module_list = torch.nn.ModuleList()
             num_experts_on_rank = self.num_experts
             layer._need_init_dynamic_fused_moe_lst = False
             if num_expert_group is None:
@@ -613,12 +617,10 @@ class FusedMoE(torch.nn.Module):
                 # Note: clone weight will cause OoM.
                 # rank_debug(f"i:{i}, num_experts:{num_experts} loading experts from {min_expert} to {max_expert}, layer.w13_weight.shape : {layer.w13_weight.shape}")
                 w13_list_slice = [
-                    layer.w13_weight[j]
-                    for j in range(min_expert, max_expert)
+                    layer.w13_weight[j] for j in range(min_expert, max_expert)
                 ]
                 w2_list_slice = [
-                    layer.w2_weight[j]
-                    for j in range(min_expert, max_expert)
+                    layer.w2_weight[j] for j in range(min_expert, max_expert)
                 ]
                 for index in range(len(w13_list_slice)):
                     _temp_expert_group.MoeOp.w13_list[index].set_weight(
@@ -628,10 +630,19 @@ class FusedMoE(torch.nn.Module):
                         w2_list_slice[index]
                     )
                 # FIXME: (Yi) pass `experts_min` and `experts_max` to MoeOp.
-                setattr(_temp_expert_group.MoeOp, "experts_min", min_expert + ep_shift)
-                setattr(_temp_expert_group.MoeOp, "experts_max", max_expert - 1 + ep_shift)
-                setattr(self, f"_temp_expert_group_{i}", _temp_expert_group)
+                setattr(
+                    _temp_expert_group.MoeOp,
+                    "experts_min",
+                    min_expert + ep_shift,
+                )
+                setattr(
+                    _temp_expert_group.MoeOp,
+                    "experts_max",
+                    max_expert - 1 + ep_shift,
+                )
+                # setattr(self, f"_temp_expert_group_{i}", _temp_expert_group)
                 # logger.debug(f"set _temp_expert_group_{i}")
+                self.hpu_fused_moe_nn_module_list.append(_temp_expert_group)
                 htorch.core.mark_step()
                 
     def _load_per_tensor_weight_scale(self, shard_id: str,
