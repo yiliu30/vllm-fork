@@ -777,6 +777,59 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
+
+                        import importlib
+                        from neural_compressor.torch.algorithms.fp8_quant._quant_common.helper_modules import PatchedVLLMKVCache
+                        from neural_compressor.torch.algorithms.fp8_quant._quant_common.quant_config import QuantMode, ScaleFormat, Fp8cfg, ScaleMethod
+                        from neural_compressor.torch.algorithms.fp8_quant.model_configs import ModuleExtraConfig, ModuleConfig
+                        from neural_compressor.torch.algorithms.fp8_quant._core.quant_dequant import QuantInput, DequantOutput
+
+                        if importlib.util.find_spec("neural_compressor.torch.algorithms.fp8_quant._core.quantized_func_wrappers") is not None:
+                            from neural_compressor.torch.algorithms.fp8_quant._core.quantized_func_wrappers import init_quantized_func_wrapper_factory
+                            init_quantized_func_wrapper_factory()
+
+                        if importlib.util.find_spec("neural_compressor.torch.algorithms.fp8_quant._core.patching_common") is not None:
+                            from neural_compressor.torch.algorithms.fp8_quant._core.patching_common import generate_model_info, parent_child_mod_dict
+                            generate_model_info(self.model)
+                        else:
+                            from neural_compressor.torch.algorithms.fp8_quant.common import generate_model_info
+                            parent_child_mod_dict = generate_model_info(self.model)
+
+                        def forward_quant(self, input, *args, **kwargs):
+                            qinput = self.quant_input(input)
+                            return self.orig_mod(qinput, *args, **kwargs)
+
+                        def fetch_from_cache(self, quant_cache, blocks, permutations=None):
+                            if permutations:
+                                output_cache = self.orig_mod.fetch_from_cache(quant_cache, blocks, permutations)
+                                for i in range(len(output_cache)):
+                                    output_cache[i] = self.dequant_output(output_cache[i])
+                                return output_cache
+                            output_cache = self.orig_mod.fetch_from_cache(quant_cache, blocks)
+                            return self.dequant_output(output_cache)
+
+                        PatchedVLLMKVCache.forward_quant = forward_quant
+                        PatchedVLLMKVCache.fetch_from_cache = fetch_from_cache
+
+                        cfg = Fp8cfg.parse({"scale_method": "UNIT_SCALE", "scale_format": "CONST"})
+                        for n, mod in self.model.named_modules():
+                            if mod.__class__.__name__ == "VLLMKVCache":
+                                mod.__hqt_config__ = cfg
+                                mod_extra_config = ModuleExtraConfig(
+                                    inputs=[QuantInput(lp_dtype=torch.float8_e4m3fn, hp_dtype=torch.bfloat16, scale_inv=torch.tensor(1., device='hpu:0', dtype=torch.bfloat16))],
+                                    outputs=[DequantOutput(lp_dtype=torch.float8_e4m3fn, hp_dtype=torch.bfloat16, scale=torch.tensor(1., device='hpu:0', dtype=torch.bfloat16))],
+                                    scale=ModuleConfig(inputs=[torch.tensor(1., device='hpu:0', dtype=torch.bfloat16)], outputs=[torch.tensor(1., device='hpu:0', dtype=torch.bfloat16)]),
+                                    config_params={"lp_dtype": torch.float8_e4m3fn, "hp_dtype": torch.bfloat16},
+                                )
+                                parent = parent_child_mod_dict[mod].parent
+                                name = parent_child_mod_dict[mod].name
+                                kwargs = {"mod": mod, "mod_extra_config": mod_extra_config, "parent": parent}
+                                patched_mod = PatchedVLLMKVCache(**kwargs)
+                                setattr(parent, name, patched_mod)
+
+                        #htcore.hpu_initialize(model, mark_only_scales_as_const=True)
+                        #htcore.mark_step()
+
                     torch.distributed.barrier()
                     htcore.hpu_initialize(self.model,
                                           mark_only_scales_as_const=True)
