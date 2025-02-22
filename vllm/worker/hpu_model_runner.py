@@ -19,6 +19,7 @@ from typing import (TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple,
 import habana_frameworks.torch as htorch
 import habana_frameworks.torch.internal.bridge_config as bc
 import torch
+import torch.distributed
 import torch.nn as nn
 import vllm_hpu_extension.environment as environment
 from vllm_hpu_extension.bucketing import HPUBucketingContext
@@ -35,6 +36,7 @@ from vllm.distributed.parallel_state import get_world_group
 from vllm.forward_context import set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
+from vllm.logger import rank_debug
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
@@ -750,20 +752,37 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 )
                 self.model = self.lora_manager.create_lora_manager(self.model)
 
-            if self.model_config.quantization == 'inc':
+            if self.model_config.quantization is not None and "inc" in self.model_config.quantization:
                 logger.info("Preparing model with INC..")
                 with HabanaMemoryProfiler() as m_inc:
                     from neural_compressor.torch.quantization import (
                         FP8Config, convert, prepare)
-                    config = FP8Config.from_json_file(
-                        os.getenv("QUANT_CONFIG", ""))
+                    rank_debug(f"Orig MODEL: \n{self.model}", target_rank=0)
+                    rank_debug(f"Orig MODEL: \n{self.model}", target_rank=15)
+                    quant_method = self.model_config.quantization
+                    if quant_method == "inc":
+                        config = FP8Config.from_json_file(
+                            os.getenv("QUANT_CONFIG", ""))
+                    else:
+                        if quant_method == "inc_p":
+                            config_dir = os.getenv("QUANT_CONFIG", "")
+                            config_path = os.path.join(config_dir, "inc_measure_config.json")
+                        elif quant_method == "inc_q":
+                            config_dir = os.getenv("QUANT_CONFIG", "")
+                            config_path = os.path.join(config_dir, "inc_quant_config.json")
+                        else:
+                            raise ValueError(f"Invalid quantization method: {quant_method}")
+                        config = FP8Config.from_json_file(config_path)
                     if config.measure:
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
+                    torch.distributed.barrier()
                     htcore.hpu_initialize(self.model,
                                           mark_only_scales_as_const=True)
                 self.inc_initialized_successfully = True
+                rank_debug(f"INC MODEL: \n{self.model}", target_rank=0)
+                rank_debug(f"INC MODEL: \n{self.model}", target_rank=15)
                 logger.info("Preparing model with INC took %s",
                             m_inc.get_summary_string())
             elif not is_fake_hpu():
@@ -1950,15 +1969,27 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         finalize_calibration(self.model.model)
 
     def shutdown_inc(self):
-        can_finalize_inc = (self.model_config.quantization == 'inc') and \
-            (self.model.model is not None) and \
-            self.inc_initialized_successfully and \
-            not getattr(self, "_is_inc_finalized", False)
+        rank = torch.distributed.get_rank()
+
+        can_finalize_inc = (
+            (
+                self.model_config.quantization is not None
+                and "inc" in self.model_config.quantization
+            )
+            and (self.model.model is not None)
+            and self.inc_initialized_successfully
+            and not getattr(self, "_is_inc_finalized", False)
+        )
+        rank_debug(f"can finalize inc: {can_finalize_inc}", target_rank=0)
         if can_finalize_inc:
             from neural_compressor.torch.quantization import (
                 finalize_calibration)
             finalize_calibration(self.model.model)
+            # import time
+            # # FIXME: (Yi) Maybe no need to sleep here
+            # time.sleep(5)
             self._is_inc_finalized = True
+        torch.distributed.barrier()
 
     @property
     def vocab_size(self) -> int:
