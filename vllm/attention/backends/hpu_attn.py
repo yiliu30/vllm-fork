@@ -143,7 +143,7 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     cross_attn_bias: Optional[torch.Tensor] = None
     
 
-class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
+class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
     def __init__(
             self,
@@ -163,7 +163,23 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
                          alibi_slopes, sliding_window, kv_cache_dtype,
                          blocksparse_params, logits_soft_cap, attn_type,
                          **kwargs)
-        
+        # Copied from Mengni's impl, https://github.com/yangulei/vllm-fork/blob/aeb90482d1cd30a888a64b26e72589fde6314b75/vllm/attention/backends/hpu_attn.py#L167C1-L171C26
+        # FIXME: (Yi) use a better way
+        torch.nn.Module.__init__(self)
+        MLACommonImpl.__init__(
+            self,
+            num_heads,
+            head_size,
+            scale,
+            num_kv_heads,
+            alibi_slopes,
+            sliding_window,
+            kv_cache_dtype,
+            blocksparse_params,
+            logits_soft_cap,
+            attn_type,
+            **kwargs,
+        )
         self.matmul_qk = Matmul()
         self.softmax = Softmax()
         self.matmul_av = Matmul()
