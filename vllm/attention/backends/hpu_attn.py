@@ -22,7 +22,7 @@ from vllm.logger import init_logger
 
 logger = init_logger(__name__)
 from vllm.logger import rank_debug
-
+from habana_frameworks.torch import core as htcore
 class HPUAttentionBackend(AttentionBackend):
 
     @staticmethod
@@ -234,7 +234,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             # TODO(lucas): there must be a nicer way to write this line
             q[..., self.qk_nope_head_dim:], k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
-        
+        htcore.mark_step()
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
 
@@ -253,14 +253,20 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         if kv_cache is not None and len(kv_cache) == 2:
             # print(f"k cache shape: {kv_cache[0].shape}")
             # print(f"v cache shape: {kv_cache[1].shape}")
-            # print(f"latent vec k shape: {latent_vec_k.shape}")
-            # print(f"latent vec v shape: {latent_vec_v.shape}")
             latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
             latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
+            rank_debug(f"latent vec k shape: {latent_vec_k.shape}, dtype {latent_vec_k.dtype}")
+            rank_debug(f"latent vec v shape: {latent_vec_v.shape}, dtype {latent_vec_v.dtype}")
+            rank_debug(f"v_cache : {kv_cache[0].shape}, dtype: {kv_cache[0].dtype}")
+            rank_debug(f"k_cache : {kv_cache[1].shape}, dtype: {kv_cache[1].dtype}")
+            htcore.mark_step()
             k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
                                         block_offsets)
             v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
                                         block_offsets)
+            htcore.mark_step()
+            rank_debug(f"v_cache : {v_cache.shape}")
+            rank_debug(f"k_cache : {k_cache.shape}")
             kv_cache = (k_cache, v_cache)
 
 #        if torch.distributed.get_rank() == 0:
@@ -315,8 +321,12 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         attn_output = out\
             .view(batch_size, -1, self.num_heads, q.shape[-1])[..., :v.shape[-1]]\
                 .reshape(batch_size, -1, self.num_heads * v.shape[-1])
-
-        return self.o_proj(attn_output)[0]
+        rank_debug(f"attn_output shape: {attn_output.shape}")
+        htcore.mark_step()
+        out =  self.o_proj(attn_output)[0]
+        htcore.mark_step()
+        rank_debug(f"out shape: {out.shape}")
+        return out
     
     def _forward_decode(
         self,

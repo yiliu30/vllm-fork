@@ -6,6 +6,8 @@ import os
 os.environ["VLLM_MOE_N_SLICE"] = "8"
 os.environ["VLLM_EP_SIZE"] = "8"
 os.environ["VLLM_TP_SIZE"] = "8"
+os.environ["VLLM_SKIP_WARMUP"] = "true"
+
 from typing import Any, List, Tuple
 from transformers import (PreTrainedTokenizerBase, AutoTokenizer)
 import random
@@ -20,6 +22,7 @@ model_path = "/data/models/DeepSeek-R1/"
 model_path = "/hf/hf_models/DeepSeek-R1"
 # model_path = "deepseek-ai/DeepSeek-V2-Lite"
 model_path = "/mnt/disk5/hf_models/DeepSeek-R1-BF16"
+model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l-real"
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default=model_path, help="The model path.")
@@ -31,6 +34,7 @@ parser.add_argument("--isl", type=int, default=1024, help="input sequence length
 parser.add_argument("--osl", type=int, default=128, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
+parser.add_argument("--quant", action="store_true", help="quant")
 args = parser.parse_args()
 
 # os.environ["VLLM_SKIP_WARMUP"] = "true"
@@ -223,18 +227,30 @@ if __name__ == "__main__":
         truncate_prompt_tokens=least_tokens,
     )
     model = args.model
-
-    llm = LLM(
-        model=model, 
-        tokenizer=args.tokenizer,
-        tensor_parallel_size=args.tp_size,
-        distributed_executor_backend='mp',
-        trust_remote_code=True,
-        quantization='inc_p',
-        max_model_len=16384,
-        dtype="bfloat16",
-    )
-
+    quantization  = "inc_q" if args.quant else "inc_p"
+    if args.quant:
+        llm = LLM(
+            model=model, 
+            tokenizer=args.tokenizer,
+            tensor_parallel_size=args.tp_size,
+            distributed_executor_backend='mp',
+            trust_remote_code=True,
+            quantization=quantization,
+            kv_cache_dtype="fp8_inc",
+            max_model_len=16384,
+            dtype="bfloat16",
+        )
+    else:
+        llm = LLM(
+            model=model, 
+            tokenizer=args.tokenizer,
+            tensor_parallel_size=args.tp_size,
+            distributed_executor_backend='mp',
+            trust_remote_code=True,
+            quantization=quantization,
+            max_model_len=16384,
+            dtype="bfloat16",
+        )
     # Generate texts from the prompts. The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
     outputs = llm.generate(

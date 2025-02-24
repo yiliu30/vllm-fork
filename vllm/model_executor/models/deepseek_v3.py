@@ -21,7 +21,9 @@
 # limitations under the License.
 """Inference-only DeepseekV3 model."""
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
-
+from vllm.logger import rank_debug
+import habana_frameworks.torch as htorch
+import habana_frameworks.torch.core as htcore
 import torch
 from torch import nn
 import os
@@ -172,6 +174,8 @@ class DeepseekV3MoE(nn.Module):
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
         hidden_states = hidden_states.reshape(batch_size, seq_len, hidden_dim)
+        htcore.mark_step()
+        logger.info(f"hidden_states shape after gate: {hidden_states.shape}")
         final_hidden_states = self.experts(
             hidden_states=hidden_states,
             router_logits=router_logits) * self.routed_scaling_factor
@@ -180,7 +184,8 @@ class DeepseekV3MoE(nn.Module):
         if self.ep_size == 1 and self.tp_size > 1:
             final_hidden_states = tensor_model_parallel_all_reduce(
                 final_hidden_states)
-
+        logger.info(f"final_hidden_states shape after experts: {final_hidden_states.shape}")
+        htcore.mark_step()
         return final_hidden_states.view(batch_size, seq_len, hidden_dim)
 
 
@@ -461,7 +466,18 @@ class DeepseekV3MLAAttention(nn.Module):
             scaling_factor = rope_scaling["factor"]
             mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
             self.scaling = self.scaling * mscale * mscale
-
+        
+        if self.q_lora_rank is not None:
+            q_proj = self.q_b_proj
+            # transfer q_proj to impl
+            delattr(self, "q_b_proj")
+        else:
+            q_proj = self.q_proj
+            delattr(self, "q_proj")
+        kv_b_proj = self.kv_b_proj
+        delattr(self, "kv_b_proj")
+        o_proj = self.o_proj
+        delattr(self, "o_proj")
         self.mla_attn = Attention(
             num_heads=self.num_local_heads,
             head_size=self.kv_lora_rank,
@@ -479,9 +495,10 @@ class DeepseekV3MLAAttention(nn.Module):
             qk_head_dim=self.qk_head_dim,
             v_head_dim=self.v_head_dim,
             rotary_emb=self.rotary_emb,
-            q_proj=self.q_proj if self.q_lora_rank is None else self.q_b_proj,
-            kv_b_proj=self.kv_b_proj,
-            o_proj=self.o_proj,
+            # q_proj=self.q_proj if self.q_lora_rank is None else self.q_b_proj,
+            q_proj=q_proj, #if self.q_lora_rank is None else self.q_b_proj,
+            kv_b_proj=kv_b_proj,
+            o_proj=o_proj,
         )
 
         self.prefix = prefix
@@ -596,6 +613,9 @@ class DeepseekV3DecoderLayer(nn.Module):
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
+        # htorch.core.mark_step()
+        htcore.mark_step()
+        logger.info(f"hidden_states shape after mlp: {hidden_states.shape}")
         # show_mem_info(logger, "DeepseekV3DecoderLayer: after mlp")
         return hidden_states, residual
 
@@ -676,6 +696,7 @@ class DeepseekV3Model(nn.Module):
             hidden_states, residual = layer(positions, hidden_states,
                                             kv_caches[i - self.start_layer],
                                             attn_metadata, residual)
+            rank_debug(f"finished layer {i}, hidden_states shape: {hidden_states.shape}, dtype: {hidden_states.dtype}")
             if is_hpu:
                 htorch.core.mark_step()
 
