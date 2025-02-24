@@ -21,7 +21,7 @@ from vllm.attention.ops.hpu_paged_attn import (HPUPagedAttention,
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
-
+from vllm.logger import rank_debug
 
 class HPUAttentionBackend(AttentionBackend):
 
@@ -235,6 +235,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         assert hasattr(attn_metadata, "input_positions"), f"attn meta: {attn_metadata}"
 
         if not is_prefill:
+            rank_debug(f"decoding  hidden_states_or_q_c: {hidden_states_or_q_c.shape}")
             q_nope = self._q_proj_and_k_up_proj(hidden_states_or_q_c)
             q_pe = torch.matmul(hidden_states_or_q_c, self.W_QR)\
                 .view(-1, self.num_heads, self.qk_rope_head_dim)
@@ -242,6 +243,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             q_pe, k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
         else:
+            rank_debug(f"prefill  hidden_states_or_q_c: {hidden_states_or_q_c.shape}")
             q = self.q_proj(hidden_states_or_q_c)[0]\
                 .view(-1, self.num_heads, self.qk_head_dim)
             
