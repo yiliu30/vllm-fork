@@ -195,9 +195,20 @@ if __name__ == "__main__":
         from utils import get_prompts, get_prompt_token_ids, get_pile_prompts
 
         # prompts = get_prompts()
-        prompts = get_pile_prompts(args.model, num_samples)
+        # Got the unseen prompts.
+        # smoke_num_samples = 10
+        # prompts = get_pile_prompts(args.model, num_samples * 2)
+        # smoke_prompts = [
+        #     "Hello, my name is",
+        #     "The president of the United States is",
+        #     "The capital of France is",
+        #     "The future of AI is",
+        # ]
+
+        # smoke_prompts = smoke_prompts + prompts[-smoke_num_samples:]
+        smoke_prompts = get_prompts()
         prompt_token_ids = get_prompt_token_ids(
-            args.model, prompts, least_tokens
+            args.model, smoke_prompts, least_tokens
         )
         gt = None
     # Create a sampling params object.
@@ -216,17 +227,17 @@ if __name__ == "__main__":
         distributed_executor_backend='mp',
         trust_remote_code=True,
         quantization='inc_p',
-        max_model_len= 16384,
-        max_num_seqs=1,
+        max_model_len=16384,
         dtype="bfloat16",
     )
 
     # Generate texts from the prompts. The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
     outputs = llm.generate(
-        prompts=None, sampling_params=sampling_params, prompt_token_ids=prompt_token_ids
+        # prompts=smoke_prompts,
+        sampling_params=sampling_params,
+        prompt_token_ids=prompt_token_ids
     )
-    # outputs.append(output)
     # Print the outputs.
     for output_i in range(len(outputs)):
         output = outputs[output_i]
@@ -234,8 +245,10 @@ if __name__ == "__main__":
         prompt_token_ids = output.prompt_token_ids
         generated_text = output.outputs[0].text
         print("====================================")
-        print(f"Prompt[:10]: {prompt_token_ids[:10]!r}")
-        print(f"Prompt[-10:]: {prompt_token_ids[-10:]!r}")
+        prompt = output.prompt
+        print(f"prompt: {prompt!r}")
+        print(f"prompt_token_ids[:10]: {prompt_token_ids[:10]!r}")
+        print(f"prompt_token_ids[-10:]: {prompt_token_ids[-10:]!r}")
         print(f"Generated text: {generated_text!r}")
         print(f"Ground truth: {gt_i!r}")
         print("====================================")
