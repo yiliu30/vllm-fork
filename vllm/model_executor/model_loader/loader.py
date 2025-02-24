@@ -57,7 +57,6 @@ from vllm.utils import is_pin_memory_available
 
 import torch.distributed as dist
 is_hpu = current_platform.is_hpu()
-
 def hpu_distributed_barrier():
     if is_hpu:
         torch.hpu.synchronize()
@@ -411,6 +410,7 @@ class DefaultModelLoader(BaseModelLoader):
                             from checkpoint: {weights_not_loaded}"
 
                     logger.warning(warning_msg)
+
             if is_hpu:
                 hpu_distributed_barrier()
 
@@ -426,7 +426,6 @@ class DefaultModelLoader(BaseModelLoader):
                         quant_method.process_weights_after_loading(module)
                     if is_hpu:
                         hpu_distributed_barrier()
-
                 if isinstance(module, Attention) and \
                     hasattr(module, "process_weights_after_loading"):
                     # When attention modules need to process weights after
@@ -436,7 +435,6 @@ class DefaultModelLoader(BaseModelLoader):
                     module.process_weights_after_loading(model_config.dtype)
                     if is_hpu:
                         hpu_distributed_barrier()
-
         return model.eval()
 
 

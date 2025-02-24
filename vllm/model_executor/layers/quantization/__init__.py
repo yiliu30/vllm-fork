@@ -29,6 +29,8 @@ QUANTIZATION_METHODS: List[str] = [
     "neuron_quant",
     "ipex",
     "inc",
+    "inc_p",
+    "inc_q",
     "quark"
 ]
 
@@ -131,6 +133,8 @@ def get_quantization_config(quantization: str) -> Type[QuantizationConfig]:
         "neuron_quant": NeuronQuantConfig,
         "ipex": IPEXConfig,
         "inc": INCConfig,
+        "inc_p": INCConfig,
+        "inc_q": INCConfig,
         "quark": QuarkConfig
     }
     # Update the `method_to_config` with customized quantization methods.
