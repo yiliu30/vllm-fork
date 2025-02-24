@@ -2,6 +2,10 @@ from vllm import LLM, SamplingParams
 
 import argparse
 import os
+
+os.environ["VLLM_MOE_N_SLICE"] = "8"
+os.environ["VLLM_EP_SIZE"] = "8"
+os.environ["VLLM_TP_SIZE"] = "8"
 from typing import Any, List, Tuple
 from transformers import (PreTrainedTokenizerBase, AutoTokenizer)
 import random
