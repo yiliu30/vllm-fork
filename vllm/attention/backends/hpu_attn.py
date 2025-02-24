@@ -224,6 +224,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                 self.rotary_emb(input_positions, q_pe, k_pe)
         else:
             rank_debug(f"prefill  hidden_states_or_q_c: {hidden_states_or_q_c.shape}")
+            rank_debug(f"self.q_proj : {self.q_proj}")
             q = self.q_proj(hidden_states_or_q_c)[0]\
                 .view(-1, self.num_heads, self.qk_head_dim)
             
