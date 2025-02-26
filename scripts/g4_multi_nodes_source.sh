@@ -8,11 +8,11 @@ export PT_HPU_ENABLE_LAZY_COLLECTIVES=true
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 export HCCL_OVER_OFI=1
 export HCCL_GAUDI_DIRECT=1
-export HCCL_SOCKET_IFNAME=enx6c1ff7012f87
-export LIBFABRIC_ROOT=/opt/habanalabs/libfabric-1.22.0
-export LD_LIBRARY_PATH=/opt/amazon/openmpi/lib:/opt/habanalabs/libfabric-1.22.0/lib:/usr/lib/habanalabs
-export GLOO_SOCKET_IFNAME=enx6c1ff7012f87
-export VLLM_HOST_IP=10.239.128.244
+export HCCL_SOCKET_IFNAME=eth0
+# export LIBFABRIC_ROOT=/opt/habanalabs/libfabric-1.22.0
+# export LD_LIBRARY_PATH=/opt/amazon/openmpi/lib:/opt/habanalabs/libfabric-1.22.0/lib:/usr/lib/habanalabs
+export GLOO_SOCKET_IFNAME=eth0
+export VLLM_HOST_IP=10.111.235.43
 export HABANA_VISIBLE_DEVICES="ALL"
 export VLLM_MLA_DISABLE_REQUANTIZATION=1
 export PT_HPU_ENABLE_LAZY_COLLECTIVES="true"
@@ -31,7 +31,7 @@ block_size=128
 # DO NOT change ends...
 
 # INC
-export QUANT_CONFIG="/mnt/disk3/yiliu4/vllm-fork/scripts"
+export QUANT_CONFIG="/home/yiliu4/workspace/inc-fork/3rd-party/vllm-fork/scripts"
 
 # memory footprint tunning params
 export VLLM_GPU_MEMORY_UTILIZATION=0.98

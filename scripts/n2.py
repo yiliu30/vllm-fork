@@ -16,6 +16,7 @@ model_path = "/data/models/DeepSeek-R1/"
 model_path = "/hf/hf_models/DeepSeek-R1"
 # model_path = "deepseek-ai/DeepSeek-V2-Lite"
 model_path = "/mnt/disk5/hf_models/DeepSeek-R1-BF16"
+model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l-real"
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default=model_path, help="The model path.")

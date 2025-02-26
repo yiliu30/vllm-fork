@@ -8,11 +8,11 @@ export PT_HPU_ENABLE_LAZY_COLLECTIVES=true
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 export HCCL_OVER_OFI=1
 export HCCL_GAUDI_DIRECT=1
-export HCCL_SOCKET_IFNAME=enx6c1ff7012f4d
+export HCCL_SOCKET_IFNAME=eth0
 export LIBFABRIC_ROOT=/opt/habanalabs/libfabric-1.22.0
 export LD_LIBRARY_PATH=/opt/amazon/openmpi/lib:/opt/habanalabs/libfabric-1.22.0/lib:/usr/lib/habanalabs
-export GLOO_SOCKET_IFNAME=enx6c1ff7012f4d
-export VLLM_HOST_IP=10.239.129.40
+export GLOO_SOCKET_IFNAME=eth0
+export VLLM_HOST_IP=10.111.238.79
 export HABANA_VISIBLE_DEVICES="ALL"
 export VLLM_MLA_DISABLE_REQUANTIZATION=1
 export PT_HPU_ENABLE_LAZY_COLLECTIVES="true"
@@ -35,7 +35,7 @@ export VLLM_GRAPH_RESERVED_MEM=0.35
 export VLLM_GRAPH_PROMPT_RATIO=0
 
 # INC
-export QUANT_CONFIG="/mnt/disk3/yiliu4/vllm-fork/scripts"
+export QUANT_CONFIG="/home/yiliu4/workspace/inc-fork/3rd-party/vllm-fork/scripts"
 
 # params
 # max_num_batched_tokens=2048
