@@ -362,7 +362,7 @@ class VocabParallelEmbedding(torch.nn.Module):
         # be copied onto all gpus (e.g. g_idx for act_order gptq).
         if output_dim is None:
             assert param.data.shape == loaded_weight.shape
-            param.data.copy_(loaded_weight)
+            param.data = loaded_weight
             return
 
         # Shard indexes for loading the weight
@@ -393,9 +393,9 @@ class VocabParallelEmbedding(torch.nn.Module):
                 torch.zeros(param.shape[0] - loaded_weight.shape[0],
                             *loaded_weight.shape[1:])
             ])
-            param.data.copy_(padded_weight)
+            param.data = padded_weight
         else:
-            param[:loaded_weight.shape[0]].data.copy_(loaded_weight)
+            param[:loaded_weight.shape[0]].data = loaded_weight
             param[loaded_weight.shape[0]:].data.fill_(0)
 
     def forward(self, input_):

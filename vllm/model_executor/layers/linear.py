@@ -498,7 +498,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
                         param_data, loaded_weight, 0)
 
                 assert param_data.shape == loaded_weight.shape
-                param_data.copy_(loaded_weight)
+                param_data = loaded_weight
                 return
             current_shard_offset = 0
             use_bitsandbytes_4bit = getattr(param, "use_bitsandbytes_4bit",
@@ -834,7 +834,7 @@ class QKVParallelLinear(ColumnParallelLinear):
         if is_gguf_weight_type:
             idx_map = {"q": 0, "k": 1, "v": 2}
             if loaded_shard_id is not None:
-                param.data[idx_map[loaded_shard_id]].copy_(loaded_weight)
+                param.data[idx_map[loaded_shard_id]] = loaded_weight
                 param.shard_weight_type[loaded_shard_id] = loaded_weight.item()
             else:
                 param.shard_weight_type = {

@@ -691,7 +691,7 @@ class FusedMoE(torch.nn.Module):
         # for per channel weight quantization
 #        print("layer.py ?????????????? _load_per_channel_weight_scale expert_data shape: " + str(expert_data.shape) + " loaded_weight shape: " + str(loaded_weight.shape) + " shard_dim = " +str(shard_dim))
         if shard_id == "w2":
-            expert_data.copy_(loaded_weight)
+            expert_data = loaded_weight
         elif shard_id in ("w1", "w3"):
             self._load_w13(shard_id=shard_id,
                            shard_dim=shard_dim,
@@ -725,7 +725,7 @@ class FusedMoE(torch.nn.Module):
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
 
 #        print("laery.py ?????????????? _load_w13 After Narrow expert_data shape: " + str(expert_data.shape) + " loaded_weight shape: " + str(loaded_weight.shape))
-        expert_data.copy_(loaded_weight)
+        expert_data = loaded_weight
 
         if is_hpu:
             # FIXME: (Yi) add it back
@@ -751,7 +751,7 @@ class FusedMoE(torch.nn.Module):
                                                  shard_size * tp_rank,
                                                  shard_size)
         # w2, down_proj: Load into only logical weight of w2.
-        expert_data.copy_(loaded_weight)
+        expert_data = loaded_weight
         if is_hpu:
             if _VLLM_HPU_FP8:
                 self.hpu_fused_moe.MoeOp.w2_list[expert_id].set_weight(expert_data)
