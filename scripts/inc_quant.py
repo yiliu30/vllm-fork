@@ -35,6 +35,7 @@ parser.add_argument("--osl", type=int, default=128, help="output sequence length
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
 parser.add_argument("--mode", default=None, type=str, help="mode")
+parser.add_argument("--fp8_inc", action="store_true", help="Using FP8 KV cache.")
 args = parser.parse_args()
 
 # os.environ["VLLM_SKIP_WARMUP"] = "true"
