@@ -252,16 +252,19 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
         # write the latent and rope to kv cache
         if kv_cache is not None and len(kv_cache) == 2:
-            # print(f"k cache shape: {kv_cache[0].shape}")
-            # print(f"v cache shape: {kv_cache[1].shape}")
-            # print(f"latent vec k shape: {latent_vec_k.shape}")
-            # print(f"latent vec v shape: {latent_vec_v.shape}")
+
             latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
             latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
+
+            rank_debug(
+                f"latent vec k: {latent_vec_k.shape} latent vec v : {latent_vec_v.shape}, k cache {kv_cache[0].shape}, v cache shape {kv_cache[1].shape}"
+            )
+
             k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
                                         block_offsets)
             v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
                                         block_offsets)
+            rank_debug(f"k cache shape: {kv_cache[0].shape}, v cache shape: {kv_cache[1].shape}")
             kv_cache = (k_cache, v_cache)
 
 #        if torch.distributed.get_rank() == 0:
