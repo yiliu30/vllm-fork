@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
 from vllm.attention.backends.mla.utils import MLACommonImpl
+import habana_frameworks.torch.core as htcore
 import vllm_hpu_extension.kernels as kernels
 import vllm_hpu_extension.ops as ops
 from vllm_hpu_extension.flags import enabled_flags
@@ -19,6 +20,7 @@ from vllm.attention.backends.utils import CommonAttentionState
 from vllm.attention.ops.hpu_paged_attn import (HPUPagedAttention,
                                                HPUPagedAttentionMetadata)
 from vllm.logger import init_logger
+from vllm.logger import rank_debug
 
 logger = init_logger(__name__)
 
@@ -97,7 +99,9 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
     key = keys_fetch_func(key_cache, block_list).transpose(1, 2)
     value = values_fetch_func(value_cache, block_list).transpose(1, 2)
     # get concat key
+    rank_debug(f"tensor shape: value shape: {value.shape}, key shape: {key.shape}")
     key = torch.concat((value, key), dim=-1)
+    rank_debug(f"concat key shape: {key.shape}")
     block_bias = block_bias.view(key.size(0), 1, 1, -1)
     if kv_heads != q_heads:
         block_bias = block_bias.unsqueeze(1)
@@ -110,6 +114,7 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
 
     attn = matmul_qk_op(query, key)
     attn = attn + block_bias
+    htcore.mark_step()
     attn = ops.pipelined_pa(attn, value, block_groups, block_mapping, block_scales=block_scales,
                         batch_size=batch_size, matmul_av_op=matmul_av_op,
                         batch2block_matmul_op=batch2block_matmul_op, block2batch_matmul_op=block2batch_matmul_op)
@@ -143,7 +148,7 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     cross_attn_bias: Optional[torch.Tensor] = None
     
 
-class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
+class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
     def __init__(
             self,
@@ -159,11 +164,11 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
             attn_type: str,
             # MLA Specific Arguments
             **kwargs) -> None:
-        super().__init__(num_heads, head_size, scale, num_kv_heads,
+        torch.nn.Module.__init__(self)
+        MLACommonImpl.__init__(self, num_heads, head_size, scale, num_kv_heads,
                          alibi_slopes, sliding_window, kv_cache_dtype,
                          blocksparse_params, logits_soft_cap, attn_type,
                          **kwargs)
-        
         self.matmul_qk = Matmul()
         self.softmax = Softmax()
         self.matmul_av = Matmul()
@@ -234,9 +239,10 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
         
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
-
+        rank_debug(f"tensor shapes: k_c_normed: {k_c_normed.shape}, k_pe: {k_pe.shape}")
         latent_vec_k = torch.concat(
                 (k_c_normed, k_pe.view(batch_size, -1, self.qk_rope_head_dim)), dim=-1)
+        rank_debug(f"latent_vec_k shape: {latent_vec_k.shape}")
         # assert layer._k_scale == 0, f"got _k_scale={layer._k_scale}"
         latent_vec_k = latent_vec_k.view(-1, self.qk_rope_head_dim + self.kv_lora_rank)
         #latent_vec_v = k_c_normed.view(-1, self.kv_lora_rank)
@@ -248,17 +254,28 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
 
         # write the latent and rope to kv cache
         if kv_cache is not None and len(kv_cache) == 2:
-            # print(f"k cache shape: {kv_cache[0].shape}")
-            # print(f"v cache shape: {kv_cache[1].shape}")
-            # print(f"latent vec k shape: {latent_vec_k.shape}")
-            # print(f"latent vec v shape: {latent_vec_v.shape}")
+
             latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
             latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
+
+            rank_debug(
+                f"latent vec k: {latent_vec_k.shape} latent vec v : {latent_vec_v.shape}, k cache {kv_cache[0].shape}, v cache shape {kv_cache[1].shape}"
+            )
+
             k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
                                         block_offsets)
             v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
                                         block_offsets)
+            rank_debug(f"k cache shape: {kv_cache[0].shape}, v cache shape: {kv_cache[1].shape}")
             kv_cache = (k_cache, v_cache)
+
+#        if torch.distributed.get_rank() == 0:
+#            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+#            if kv_cache is not None and len(kv_cache) == 2:
+#                print("latent_vec_k: " + str(latent_vec_k.shape))
+#                print("latent_vec_v: " + str(latent_vec_v.shape))
+#                print("k cache: " + str(k_cache.shape) + " v cache: " + str(v_cache.shape))
+
 
         if is_prefill:
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata, batch_size)
@@ -287,6 +304,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
         q = q.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         k = k.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         v_padded = v_padded.view(batch_size, -1, self.num_heads, self.qk_head_dim)
+#        print("q shape: " + str(q.shape) + " k shape: " + str(k.shape) + " v shape: " + str(v_padded.shape) + "  original v shape: " + str(v.shape))
         out = ops.prompt_attention(
                     q,
                     k,
@@ -317,7 +335,8 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
         q = torch.cat([q_nope, q_pe], dim=-1)
         kv_c_and_k_pe_cache = kv_cache[0].unsqueeze(2)
         kv_c_cache = kv_cache[1].unsqueeze(2)
-
+        _prefix = self._prefix
+        rank_debug(f">> start forward mla {_prefix}")
         output = flat_pa_mla(
             query=q,
             key_cache=kv_c_and_k_pe_cache,
@@ -334,9 +353,11 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
             block2batch_matmul_op=self.block2batch_matmul,
             keys_fetch_func=self.latent_cache_k.fetch_from_cache,
             values_fetch_func=self.latent_cache_v.fetch_from_cache)
+        rank_debug(f">> start forward mla {_prefix} output shape: {output.shape}")
         output = output.view(batch_size, 1, -1)
         result = self._v_up_proj_and_o_proj(output)
         result = result.view(batch_size, 1, -1)
+        rank_debug(f">> start forward mla {_prefix} result shape: {result.shape}")
         return result
 
 
