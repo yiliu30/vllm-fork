@@ -227,7 +227,7 @@ class Fp8LinearMethod(LinearMethodBase):
         if self.quant_config.is_checkpoint_fp8_serialized:
             # WEIGHT SCALE
             if not self.block_quant:
-                if self.quant_config.activation_scheme == "dynamic":
+                if current_platform.is_hpu():
                     scale = ChannelQuantScaleParameter(
                         data=torch.empty(output_size_per_partition,
                                          dtype=torch.float32),
@@ -296,7 +296,10 @@ class Fp8LinearMethod(LinearMethodBase):
                 layer.weight_scale_inv = Parameter(weight_scale,
                                                    requires_grad=False)
             return
-        if self.quant_config.activation_scheme == "dynamic" and current_platform.is_hpu():
+        if current_platform.is_hpu():            
+            if self.quant_config.activation_scheme == "static":
+                layer.input_scale = Parameter(layer.input_scale.max(),
+                                              requires_grad=False)
             return
         layer.weight = torch.nn.Parameter(layer.weight.data,
                                           requires_grad=False)
@@ -407,14 +410,31 @@ class Fp8LinearMethod(LinearMethodBase):
                     input_scale=layer.input_scale,
                     bias=bias,
                 )
-        if self.quant_config.activation_scheme == "dynamic" and current_platform.is_hpu():
-            return apply_block_fp8_linear_hpu_dynamic(
-                input=x,
-                weight=layer.weight,
-                weight_scale=layer.weight_scale_inv,
-                input_scale=layer.input_scale,
-                bias=bias,
-            )
+        if current_platform.is_hpu():
+            if self.quant_config.activation_scheme == "dynamic":
+                return apply_block_fp8_linear_hpu_dynamic(
+                    input=x,
+                    weight=layer.weight,
+                    weight_scale=layer.weight_scale_inv,
+                    input_scale=layer.input_scale,
+                    bias=bias,
+                )
+            elif self.quant_config.activation_scheme == "static":
+                x_fp8 = torch.ops.hpu.cast_to_fp8_v2(x, 1.0/layer.input_scale, False, False, torch.float8_e4m3fn)[0]
+                res = torch.ops.hpu.fp8_gemm_v2(
+                    A=x_fp8,
+                    trans_A=False,
+                    B=layer.weight,
+                    trans_B=True,
+                    D=None,
+                    out_dtype=x.dtype,
+                    A_scale_inv=layer.input_scale,
+                    B_scale_inv=layer.weight_scale_inv,
+                    bias=bias,
+                    accumulate=False)
+                return res
+            else:
+                pass
 
         return apply_fp8_linear(
             input=x,
@@ -495,7 +515,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
         # WEIGHT_SCALES
         if not self.block_quant:
-            if self.quant_config.activation_scheme == "dynamic":
+            if current_platform.is_hpu():
                 w13_weight_scale = torch.nn.Parameter(data=torch.ones(
                     num_experts, 2 * intermediate_size_per_partition, dtype=torch.float32),
                                                       requires_grad=False)
@@ -547,7 +567,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 {"quant_method": FusedMoeWeightScaleSupported.BLOCK.value}
             )
         else:
-            if self.quant_config.activation_scheme == "dynamic":
+            if current_platform.is_hpu():
                 extra_weight_attrs.update(
                     {"quant_method": FusedMoeWeightScaleSupported.CHANNEL.value}
                 )
@@ -713,6 +733,15 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                     layer.w2_input_scale = torch.nn.Parameter(
                         w2_input_scale, requires_grad=False)
 
+            if current_platform.is_hpu():
+                if self.quant_config.activation_scheme == "static":
+                    num_experts = layer.w13_weight.shape[0]
+                    self.w13_weight_list = [layer.w13_weight.data[i,...] for i in range(num_experts)]
+                    self.w2_weight_list = [layer.w2_weight.data[i,...] for i in range(num_experts)]
+                    self.w13_weight_scale_list = [layer.w13_weight_scale_inv.data[i,...] for i in range(num_experts)]
+                    self.w2_weight_scale_list = [layer.w2_weight_scale_inv.data[i,...] for i in range(num_experts)]
+                    self.w2_input_scale_list = [layer.w2_input_scale.data.unsqueeze(0).repeat(num_experts)[i] for i in range(num_experts)]
+                return
             # Fp8 moe kernel needs single weight scale for w13 per expert.
             # We take the max then dequant and requant each expert.
             assert layer.w13_weight_scale is not None
@@ -831,6 +860,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         e_score_correction_bias: Optional[torch.Tensor] = None,
         ep_rank=0,
     ):
+        import habana_frameworks.torch as htorch
         batch_size, seq_len, hidden_dim = x.shape
         bt = batch_size * seq_len
         x = x.view(-1, hidden_dim)
@@ -852,6 +882,29 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         num_experts = layer.w13_weight.shape[0]
         total_num_experts = router_logits.size(1)
         ep_shift = ep_rank * num_experts
+
+        if self.quant_config.activation_scheme == "static":
+            x_scale = layer.w13_input_scale.data
+            x_fp8 = torch.ops.hpu.cast_to_fp8_v2(x, 1.0/x_scale, False, False, torch.float8_e4m3fn)[0]
+
+            final_hidden_states = torch.ops.hpu.mixture_of_experts(
+                hidden_states=x_fp8,
+                expert_routing_table=(
+                    topk_ids.to(torch.int64) - ep_shift
+                ),
+                router_weights=topk_weights.to(x.dtype),
+                w12=self.w13_weight_list,
+                w3=self.w2_weight_list,
+                d_scale_hidden_states=x_scale,
+                d_scale_intermediate_hidden_states=self.w2_input_scale_list,
+                d_scale_w12=self.w13_weight_scale_list,
+                d_scale_w3=self.w2_weight_scale_list,
+                permuted_weights=True,
+                activation="silu",
+                experts_min=0,
+                experts_max=(num_experts - 1),
+            )
+            return final_hidden_states.view(-1, x.shape[1])
 
         if self.block_quant:
             orig_M_w13 = layer.orig_M_w13.data
@@ -932,13 +985,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 final_hidden_states = current_hidden_states * padded_weight
             else:
                 final_hidden_states.add_(current_hidden_states * padded_weight)
-        
-        if seq_len > 1:
-            htorch.core.mark_step()
 
         return final_hidden_states.view(-1, x.shape[1])
-
-
 
 
 class Fp8KVCacheMethod(BaseKVCacheMethod):
