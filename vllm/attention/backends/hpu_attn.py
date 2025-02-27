@@ -335,7 +335,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         q = torch.cat([q_nope, q_pe], dim=-1)
         kv_c_and_k_pe_cache = kv_cache[0].unsqueeze(2)
         kv_c_cache = kv_cache[1].unsqueeze(2)
-        _prefix = self.__prefix
+        _prefix = self._prefix
         rank_debug(f">> start forward mla {_prefix}")
         output = flat_pa_mla(
             query=q,
@@ -353,9 +353,11 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             block2batch_matmul_op=self.block2batch_matmul,
             keys_fetch_func=self.latent_cache_k.fetch_from_cache,
             values_fetch_func=self.latent_cache_v.fetch_from_cache)
+        rank_debug(f">> start forward mla {_prefix} output shape: {output.shape}")
         output = output.view(batch_size, 1, -1)
         result = self._v_up_proj_and_o_proj(output)
         result = result.view(batch_size, 1, -1)
+        rank_debug(f">> start forward mla {_prefix} result shape: {result.shape}")
         return result
 
 
