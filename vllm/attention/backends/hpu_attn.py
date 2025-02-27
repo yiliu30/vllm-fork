@@ -335,7 +335,8 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         q = torch.cat([q_nope, q_pe], dim=-1)
         kv_c_and_k_pe_cache = kv_cache[0].unsqueeze(2)
         kv_c_cache = kv_cache[1].unsqueeze(2)
-
+        _prefix = self.__prefix
+        rank_debug(f">> start forward mla {_prefix}")
         output = flat_pa_mla(
             query=q,
             key_cache=kv_c_and_k_pe_cache,

@@ -115,6 +115,7 @@ class Attention(nn.Module):
                              alibi_slopes, sliding_window, kv_cache_dtype,
                              blocksparse_params, logits_soft_cap, attn_type,
                              **extra_impl_args)
+        self.impl.__prefix = prefix
         self.num_heads = num_heads
         self.head_size = head_size
         self.num_kv_heads = num_kv_heads
