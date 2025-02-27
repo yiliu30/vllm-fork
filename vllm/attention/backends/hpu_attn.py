@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
 from vllm.attention.backends.mla.utils import MLACommonImpl
+import habana_frameworks.torch.core as htcore
 import vllm_hpu_extension.kernels as kernels
 import vllm_hpu_extension.ops as ops
 from vllm_hpu_extension.flags import enabled_flags
@@ -113,6 +114,7 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
 
     attn = matmul_qk_op(query, key)
     attn = attn + block_bias
+    htcore.mark_step()
     attn = ops.pipelined_pa(attn, value, block_groups, block_mapping, block_scales=block_scales,
                         batch_size=batch_size, matmul_av_op=matmul_av_op,
                         batch2block_matmul_op=batch2block_matmul_op, block2batch_matmul_op=block2batch_matmul_op)
