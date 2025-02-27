@@ -251,6 +251,7 @@ if __name__ == "__main__":
                     weights_load_device="cpu",
                     kv_cache_dtype="fp8_inc",
                     max_model_len=2048,
+                    max_num_seqs=1,
                     dtype="bfloat16",
                 )
             else:
