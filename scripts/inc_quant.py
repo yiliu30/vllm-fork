@@ -2,6 +2,12 @@ from vllm import LLM, SamplingParams
 
 import argparse
 import os
+
+os.environ["VLLM_MOE_N_SLICE"] = "8"
+os.environ["VLLM_EP_SIZE"] = "8"
+os.environ["VLLM_TP_SIZE"] = "8"
+os.environ["VLLM_SKIP_WARMUP"] = "true"
+
 from typing import Any, List, Tuple
 from transformers import (PreTrainedTokenizerBase, AutoTokenizer)
 import random
@@ -16,6 +22,7 @@ model_path = "/data/models/DeepSeek-R1/"
 model_path = "/hf/hf_models/DeepSeek-R1"
 # model_path = "deepseek-ai/DeepSeek-V2-Lite"
 model_path = "/mnt/disk5/hf_models/DeepSeek-R1-BF16"
+model_path = "/software/users/yiliu4/HF_HOME/hub/deepseekv3-bf16-4l-real"
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default=model_path, help="The model path.")
@@ -27,9 +34,7 @@ parser.add_argument("--isl", type=int, default=1024, help="input sequence length
 parser.add_argument("--osl", type=int, default=128, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
-# add mode
-parser.add_argument("--mode", type=str, default=None, required=False, help="The mode.")
-parser.add_argument("--fp8_inc", action="store_true", help="Using FP8 KV cache.")
+parser.add_argument("--mode", default=None, type=str, help="mode")
 args = parser.parse_args()
 
 # os.environ["VLLM_SKIP_WARMUP"] = "true"
@@ -41,8 +46,7 @@ args = parser.parse_args()
 # os.environ['GLOO_SOCKET_IFNAME']='eth0'
 
 # os.environ["VLLM_MOE_N_SLICE"] = "1" if args.ep_size > 1 else "4"
-os.environ["VLLM_EP_SIZE"] = f"{args.ep_size}"
-os.environ["VLLM_TP_SIZE"] = f"{args.tp_size}"
+# os.environ["VLLM_EP_SIZE"] = f"{args.ep_size}"
 # os.environ["VLLM_MLA_DISABLE_REQUANTIZATION"] = "1"
 
 # os.environ["VLLM_RAY_DISABLE_LOG_TO_DRIVER"] = "0"
@@ -223,8 +227,6 @@ if __name__ == "__main__":
         truncate_prompt_tokens=least_tokens,
     )
     model = args.model
-    assert args.mode in ["p", "q", None], f"Invalid mode: {args.mode}"
-    print(f"Running in {args.mode} mode")
     if args.mode is None:
         llm = LLM(
             model=model, 
@@ -232,39 +234,21 @@ if __name__ == "__main__":
             tensor_parallel_size=args.tp_size,
             distributed_executor_backend='mp',
             trust_remote_code=True,
-            # quantization=quantization,
             max_model_len=16384,
             dtype="bfloat16",
         )
     else:
-        quantization = "inc_q" if args.mode == "q" else "inc_p"
-        if quantization == "inc_q":
-            if args.fp8_inc:
-                print(f">>>>>>>>>>>>>> Using FP8 KV cache.")
-                llm = LLM(
-                    model=model, 
-                    tokenizer=args.tokenizer,
-                    tensor_parallel_size=args.tp_size,
-                    distributed_executor_backend='mp',
-                    trust_remote_code=True,
-                    quantization=quantization,
-                    weights_load_device="cpu",
-                    kv_cache_dtype="fp8_inc",
-                    max_model_len=2048,
-                    dtype="bfloat16",
-                )
-            else:
-                llm = LLM(
-                    model=model, 
-                    tokenizer=args.tokenizer,
-                    tensor_parallel_size=args.tp_size,
-                    distributed_executor_backend='mp',
-                    trust_remote_code=True,
-                    quantization=quantization,
-                    weights_load_device="cpu",
-                    max_model_len=2048,
-                    dtype="bfloat16",
-                )
+        if args.mode == "p":
+            llm = LLM(
+                model=model, 
+                tokenizer=args.tokenizer,
+                tensor_parallel_size=args.tp_size,
+                distributed_executor_backend='mp',
+                trust_remote_code=True,
+                quantization="inc_p",
+                max_model_len=16384,
+                dtype="bfloat16",
+            )
         else:
             llm = LLM(
                 model=model, 
@@ -272,8 +256,10 @@ if __name__ == "__main__":
                 tensor_parallel_size=args.tp_size,
                 distributed_executor_backend='mp',
                 trust_remote_code=True,
-                quantization=quantization,
+                quantization="inc_q",
+                kv_cache_dtype="fp8_inc",
                 max_model_len=16384,
+                weights_load_device="cpu",
                 dtype="bfloat16",
             )
 
