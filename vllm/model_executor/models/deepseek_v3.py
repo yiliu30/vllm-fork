@@ -535,6 +535,7 @@ class DeepseekV3DecoderLayer(nn.Module):
                                           8192)
         # DecoderLayers are created with `make_layers` which passes the prefix
         # with the layer's index.
+        self.prefix = prefix
         layer_idx = int(prefix.split(sep='.')[-1])
         if model_config.use_mla:
             attn_cls = DeepseekV3MLAAttention
@@ -608,7 +609,7 @@ class DeepseekV3DecoderLayer(nn.Module):
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
-        rank_debug(f"DeepseekV3DecoderLayer: after mlp, {hidden_states.shape}")
+        rank_debug(f"{self.prefix} DeepseekV3DecoderLayer: after mlp, {hidden_states.shape}")
         show_mem_info(logger, "DeepseekV3DecoderLayer: after mlp")
         return hidden_states, residual
 
