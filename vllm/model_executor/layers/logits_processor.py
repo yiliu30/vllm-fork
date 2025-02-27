@@ -107,9 +107,9 @@ class LogitsProcessor(nn.Module):
             logits = tensor_model_parallel_gather(logits)
         # Remove paddings in vocab (if any).
         show_mem_info(msg="After gather")
-        rank_debug(f"logits shape before slicing: {logits.shape}")
         if logits is not None:
             logits = logits[..., :self.org_vocab_size]
+            rank_debug(f"logits shape before slicing: {logits.shape}")
         return logits
 
     def extra_repr(self) -> str:
