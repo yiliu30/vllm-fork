@@ -25,6 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import torch
 from torch import nn
 import os
+import torch.distributed
 from transformers import PretrainedConfig
 
 from vllm.attention import Attention, AttentionMetadata
@@ -739,6 +740,7 @@ class DeepseekV3ForCausalLM(nn.Module, SupportsPP):
                                    inputs_embeds)
         rank_debug(f"DeepseekV3ForCausalLM: after model, {hidden_states.shape}")
         htorch.core.mark_step()
+        torch.distributed.barrier()
         rank_debug(f"DeepseekV3ForCausalLM: after model (mark), {hidden_states.shape}")
         return hidden_states
 
