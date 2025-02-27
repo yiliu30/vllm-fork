@@ -13,7 +13,7 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding)
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.platforms import current_platform
-from vllm.logger import rank_debug
+from vllm.logger import rank_debug, show_mem_info
 
 class LogitsProcessor(nn.Module):
     """Process logits and apply logits processors from sampling metadata.
@@ -89,10 +89,12 @@ class LogitsProcessor(nn.Module):
     ) -> Optional[torch.Tensor]:
         # Get the logits for the next tokens.
         rank_debug(f"hidden_states shape before lm-head: {hidden_states.shape}")
+        show_mem_info(msg="After lm-head")
         logits = lm_head.linear_method.apply(lm_head,
                                              hidden_states,
                                              bias=embedding_bias)
-        rank_debug(f"hidden_states shape after lm-head: {hidden_states.shape}")
+        rank_debug(f"logits shape after lm-head: {logits.shape}")
+        show_mem_info(msg="After lm-head")
         if self.use_all_gather:
             # Gather is not supported for some devices such as TPUs.
             # Use all-gather instead.
@@ -104,6 +106,7 @@ class LogitsProcessor(nn.Module):
             # None may be returned for rank > 0
             logits = tensor_model_parallel_gather(logits)
         # Remove paddings in vocab (if any).
+        show_mem_info(msg="After gather")
         rank_debug(f"logits shape before slicing: {logits.shape}")
         if logits is not None:
             logits = logits[..., :self.org_vocab_size]
