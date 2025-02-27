@@ -19,7 +19,7 @@ from vllm.attention.backends.utils import CommonAttentionState
 from vllm.attention.ops.hpu_paged_attn import (HPUPagedAttention,
                                                HPUPagedAttentionMetadata)
 from vllm.logger import init_logger
-
+from vllm.logger import show_mem_info
 logger = init_logger(__name__)
 
 
@@ -326,7 +326,8 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         q = torch.cat([q_nope, q_pe], dim=-1)
         kv_c_and_k_pe_cache = kv_cache[0].unsqueeze(2)
         kv_c_cache = kv_cache[1].unsqueeze(2)
-
+        prefix = self._prefix
+        show_mem_info(logger, msg=f"layer_idx: {prefix}, before flat_pa_mla")
         output = flat_pa_mla(
             query=q,
             key_cache=kv_c_and_k_pe_cache,
@@ -343,6 +344,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             block2batch_matmul_op=self.block2batch_matmul,
             keys_fetch_func=self.latent_cache_k.fetch_from_cache,
             values_fetch_func=self.latent_cache_v.fetch_from_cache)
+        show_mem_info(logger, msg=f"layer_idx: {prefix}, after flat_pa_mla")
         output = output.view(batch_size, 1, -1)
         result = self._v_up_proj_and_o_proj(output)
         result = result.view(batch_size, 1, -1)
