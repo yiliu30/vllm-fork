@@ -19,6 +19,7 @@ from vllm.attention.backends.utils import CommonAttentionState
 from vllm.attention.ops.hpu_paged_attn import (HPUPagedAttention,
                                                HPUPagedAttentionMetadata)
 from vllm.logger import init_logger
+from vllm.logger import rank_debug
 
 logger = init_logger(__name__)
 
@@ -97,7 +98,9 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
     key = keys_fetch_func(key_cache, block_list).transpose(1, 2)
     value = values_fetch_func(value_cache, block_list).transpose(1, 2)
     # get concat key
+    rank_debug(f"tensor shape: value shape: {value.shape}, key shape: {key.shape}")
     key = torch.concat((value, key), dim=-1)
+    rank_debug(f"concat key shape: {key.shape}")
     block_bias = block_bias.view(key.size(0), 1, 1, -1)
     if kv_heads != q_heads:
         block_bias = block_bias.unsqueeze(1)
@@ -234,9 +237,10 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
-
+        rank_debug(f"tensor shapes: k_c_normed: {k_c_normed.shape}, k_pe: {k_pe.shape}")
         latent_vec_k = torch.concat(
                 (k_c_normed, k_pe.view(batch_size, -1, self.qk_rope_head_dim)), dim=-1)
+        rank_debug(f"latent_vec_k shape: {latent_vec_k.shape}")
         # assert layer._k_scale == 0, f"got _k_scale={layer._k_scale}"
         latent_vec_k = latent_vec_k.view(-1, self.qk_rope_head_dim + self.kv_lora_rank)
         #latent_vec_v = k_c_normed.view(-1, self.kv_lora_rank)
