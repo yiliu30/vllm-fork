@@ -751,7 +751,8 @@ class DeepseekV3ForCausalLM(nn.Module, SupportsPP):
         logits = self.logits_processor(self.lm_head, hidden_states,
                                        sampling_metadata)
         htorch.core.mark_step()
-        rank_debug(f"DeepseekV3ForCausalLM: after logits, {logits.shape}")
+        if logits is not None:
+            rank_debug(f"DeepseekV3ForCausalLM: after logits, {logits.shape}")
         return logits
 
     def sample(
