@@ -59,7 +59,7 @@ from vllm.platforms import current_platform
 is_hpu = current_platform.is_hpu()
 
 
-from vllm.logger import show_mem_info
+from vllm.logger import show_mem_info, rank_debug
 from vllm.logger import init_logger
 logger = init_logger(__name__)
 
@@ -601,13 +601,15 @@ class DeepseekV3DecoderLayer(nn.Module):
             kv_cache=kv_cache,
             attn_metadata=attn_metadata,
         )
-        # show_mem_info(logger, "DeepseekV3DecoderLayer: after self_attn")
+        rank_debug(f"DeepseekV3DecoderLayer: after self_attn, {hidden_states.shape}")
+        show_mem_info(logger, "DeepseekV3DecoderLayer: after self_attn")
         htorch.core.mark_step()
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
-        # show_mem_info(logger, "DeepseekV3DecoderLayer: after mlp")
+        rank_debug(f"DeepseekV3DecoderLayer: after mlp, {hidden_states.shape}")
+        show_mem_info(logger, "DeepseekV3DecoderLayer: after mlp")
         return hidden_states, residual
 
 
