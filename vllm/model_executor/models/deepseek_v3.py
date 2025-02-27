@@ -689,8 +689,10 @@ class DeepseekV3Model(nn.Module):
             hidden_states, residual = layer(positions, hidden_states,
                                             kv_caches[i - self.start_layer],
                                             attn_metadata, residual)
+            rank_debug(f"DeepseekV3Model: after layer {i}, {hidden_states.shape}")
             if is_hpu:
                 htorch.core.mark_step()
+            rank_debug(f"DeepseekV3Model: after layer {i} ms, {hidden_states.shape}")
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
@@ -735,6 +737,7 @@ class DeepseekV3ForCausalLM(nn.Module, SupportsPP):
         hidden_states = self.model(input_ids, positions, kv_caches,
                                    attn_metadata, intermediate_tensors,
                                    inputs_embeds)
+        rank_debug(f"DeepseekV3ForCausalLM: after model, {hidden_states.shape}")
         return hidden_states
 
     def compute_logits(
