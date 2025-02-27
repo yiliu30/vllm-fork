@@ -2,6 +2,10 @@ from vllm import LLM, SamplingParams
 
 import argparse
 import os
+
+# export VLLM_GPU_MEMORY_UTILIZATION=0.98
+os.environ["VLLM_GPU_MEMORY_UTILIZATION"] = "0.85"
+
 from typing import Any, List, Tuple
 from transformers import (PreTrainedTokenizerBase, AutoTokenizer)
 import random
