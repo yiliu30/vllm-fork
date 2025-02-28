@@ -1,3 +1,8 @@
+"""
+QUANT_CONFIG=./inc_measure_config.json python test_ray.py
+QUANT_CONFIG=./inc_quant_config.json python test_ray.py
+"""
+
 from vllm import LLM, SamplingParams
 
 import argparse
