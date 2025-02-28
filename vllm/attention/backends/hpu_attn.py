@@ -143,7 +143,7 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     cross_attn_bias: Optional[torch.Tensor] = None
     
 
-class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
+class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
     def __init__(
             self,
@@ -159,11 +159,11 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
             attn_type: str,
             # MLA Specific Arguments
             **kwargs) -> None:
-        super().__init__(num_heads, head_size, scale, num_kv_heads,
+        torch.nn.Module.__init__(self)
+        MLACommonImpl.__init__(self, num_heads, head_size, scale, num_kv_heads,
                          alibi_slopes, sliding_window, kv_cache_dtype,
                          blocksparse_params, logits_soft_cap, attn_type,
                          **kwargs)
-        
         self.matmul_qk = Matmul()
         self.softmax = Softmax()
         self.matmul_av = Matmul()
@@ -260,6 +260,14 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
                                         block_offsets)
             kv_cache = (k_cache, v_cache)
 
+#        if torch.distributed.get_rank() == 0:
+#            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+#            if kv_cache is not None and len(kv_cache) == 2:
+#                print("latent_vec_k: " + str(latent_vec_k.shape))
+#                print("latent_vec_v: " + str(latent_vec_v.shape))
+#                print("k cache: " + str(k_cache.shape) + " v cache: " + str(v_cache.shape))
+
+
         if is_prefill:
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata, batch_size)
         else:
@@ -287,6 +295,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
         q = q.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         k = k.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         v_padded = v_padded.view(batch_size, -1, self.num_heads, self.qk_head_dim)
+#        print("q shape: " + str(q.shape) + " k shape: " + str(k.shape) + " v shape: " + str(v_padded.shape) + "  original v shape: " + str(v.shape))
         out = ops.prompt_attention(
                     q,
                     k,

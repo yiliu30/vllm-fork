@@ -19,6 +19,7 @@ from typing import (TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple,
 import habana_frameworks.torch as htorch
 import habana_frameworks.torch.internal.bridge_config as bc
 import torch
+import torch.distributed
 import torch.nn as nn
 import vllm_hpu_extension.environment as environment
 from vllm_hpu_extension.bucketing import HPUBucketingContext
@@ -30,11 +31,14 @@ from vllm_hpu_extension.profiler import (HabanaHighLevelProfiler,
 
 from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.config import DeviceConfig, VllmConfig
+from vllm.logger import ForkedPdb
 from vllm.distributed import broadcast_tensor_dict
 from vllm.distributed.parallel_state import get_world_group
 from vllm.forward_context import set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
+from vllm.logger import rank_debug
+from vllm.logger import show_mem_info
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
@@ -695,8 +699,45 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.multi_modal_input_mapper = MULTIMODAL_REGISTRY \
             .create_input_mapper(self.model_config)
 
+#        self.skip_warmup = True
         self.skip_warmup = os.environ.get('VLLM_SKIP_WARMUP',
                                           'false').lower() == 'true'
+
+    def _remove_duplicate_submodules_(self, model, inc_config):
+        # FIXME: (Yi)  for deepseek v3 only
+        self_attn = model.model.layers[0].self_attn
+        for layer in model.model.layers:
+            self_attn = layer.self_attn
+            # delete attrs: q_b_proj, kv_b_proj, o_proj in self_attn
+            delattr(self_attn, "q_b_proj")
+            delattr(self_attn, "kv_b_proj")
+            delattr(self_attn, "o_proj")
+
+    def _inc_preprocess(self, model: torch.nn.Module, inc_config) -> torch.nn.Module:
+        self._remove_duplicate_submodules_(model, inc_config)
+        # TEST ARGS
+        # dump args into disk as json
+        import time
+        import datetime
+        timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
+        filename = f'args_{timestamp}.json'
+        import json
+        # with open(filename, 'w') as f:
+        #     json.dump(vars(args), f)
+        #     print(f"args: {vars(args)}")
+        #     print(f"dump args into {filename}")
+
+        # TEST ENVS
+        # os.environ['TEST_NEW_ENVS'] = 'default'
+        TEST_NEW_ENVS = os.getenv('TEST_NEW_ENVS', 'default')
+        os.environ["TEST_NEW_ENVS"] = TEST_NEW_ENVS
+        print(f"TEST_NEW_ENVS: {TEST_NEW_ENVS}")
+        # dump envs into disk as json
+        # filename with timestamp
+        filename = f'envs_{timestamp}.json'
+        with open(filename, 'w') as f:
+            json.dump(dict(os.environ), f)
+            print(f"dump envs into {filename}")
 
     def load_model(self) -> None:
         import habana_frameworks.torch.core as htcore
@@ -748,21 +789,39 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     max_position_embeddings=max_pos_embeddings,
                 )
                 self.model = self.lora_manager.create_lora_manager(self.model)
-
-            if self.model_config.quantization == 'inc':
+            if self.model_config.quantization is not None and "inc" in self.model_config.quantization:
                 logger.info("Preparing model with INC..")
                 with HabanaMemoryProfiler() as m_inc:
                     from neural_compressor.torch.quantization import (
                         FP8Config, convert, prepare)
-                    config = FP8Config.from_json_file(
-                        os.getenv("QUANT_CONFIG", ""))
+                    rank_debug(f"Orig MODEL: \n{self.model}", target_rank=0)
+                    rank_debug(f"Orig MODEL: \n{self.model}", target_rank=15)
+                    quant_method = self.model_config.quantization
+                    if quant_method == "inc":
+                        config = FP8Config.from_json_file(
+                            os.getenv("QUANT_CONFIG", ""))
+                    else:
+                        if quant_method == "inc_p":
+                            config_dir = os.getenv("QUANT_CONFIG", "")
+                            config_path = os.path.join(config_dir, "inc_measure_config.json")
+                        elif quant_method == "inc_q":
+                            config_dir = os.getenv("QUANT_CONFIG", "")
+                            config_path = os.path.join(config_dir, "inc_quant_config.json")
+                        else:
+                            raise ValueError(f"Invalid quantization method: {quant_method}")
+                        config = FP8Config.from_json_file(config_path)
+                    self._inc_preprocess(self.model, config)
                     if config.measure:
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
+                    torch.distributed.barrier()
+                    show_mem_info(logger, msg="After INC")
                     htcore.hpu_initialize(self.model,
                                           mark_only_scales_as_const=True)
                 self.inc_initialized_successfully = True
+                rank_debug(f"INC MODEL: \n{self.model}", target_rank=0)
+                rank_debug(f"INC MODEL: \n{self.model}", target_rank=15)
                 logger.info("Preparing model with INC took %s",
                             m_inc.get_summary_string())
             elif not is_fake_hpu():
@@ -1949,15 +2008,27 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         finalize_calibration(self.model.model)
 
     def shutdown_inc(self):
-        can_finalize_inc = (self.model_config.quantization == 'inc') and \
-            (self.model.model is not None) and \
-            self.inc_initialized_successfully and \
-            not getattr(self, "_is_inc_finalized", False)
+        rank = torch.distributed.get_rank()
+
+        can_finalize_inc = (
+            (
+                self.model_config.quantization is not None
+                and "inc" in self.model_config.quantization
+            )
+            and (self.model.model is not None)
+            and self.inc_initialized_successfully
+            and not getattr(self, "_is_inc_finalized", False)
+        )
+        rank_debug(f"can finalize inc: {can_finalize_inc}", target_rank=0)
         if can_finalize_inc:
             from neural_compressor.torch.quantization import (
                 finalize_calibration)
             finalize_calibration(self.model.model)
+            # import time
+            # # FIXME: (Yi) Maybe no need to sleep here
+            # time.sleep(5)
             self._is_inc_finalized = True
+        torch.distributed.barrier()
 
     @property
     def vocab_size(self) -> int:
@@ -2308,6 +2379,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         import torch.distributed as dist
                         if dist.is_initialized():
                             dist.barrier()
+
                 if self.lora_config:
                     LoraMask.setLoraMask(
                         lora_logits_mask.index_select(
