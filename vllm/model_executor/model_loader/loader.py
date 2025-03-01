@@ -436,7 +436,7 @@ class DefaultModelLoader(BaseModelLoader):
                     if is_hpu:
                         hpu_distributed_barrier()
 
-        if self._need_patch_inc_fp8_kvcache_(model_config):
+        if self._need_patch_inc_fp8_kvcache(vllm_config):
             from neural_compressor.torch.algorithms.fp8_quant._quant_common.helper_modules import PatchedVLLMKVCache
             from neural_compressor.torch.algorithms.fp8_quant._quant_common.quant_config import Fp8cfg
             from neural_compressor.torch.algorithms.fp8_quant.model_configs import ModuleExtraConfig, ModuleConfig
@@ -478,12 +478,13 @@ class DefaultModelLoader(BaseModelLoader):
 
         return model.eval()
 
-    def _need_patch_inc_fp8_kvcache_(self, config):
+    def _need_patch_inc_fp8_kvcache(self, vllm_config: VllmConfig) -> bool:
         user_pass_inc_as_quantization = (
-            config.quantization is not None and "inc" in config.quantization
+            vllm_config.quant_config is not None
+            and "inc" in vllm_config.quant_config.get_name().lower()
         )
         return (
-            config.cache_config.cache_dtype == "fp8_inc"
+            vllm_config.cache_config.cache_dtype == "fp8_inc"
             and not user_pass_inc_as_quantization
         )
 
