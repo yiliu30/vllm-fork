@@ -480,7 +480,7 @@ class DefaultModelLoader(BaseModelLoader):
 
     def _need_patch_inc_fp8_kvcache_(self, config):
         user_pass_inc_as_quantization = (
-            config.model_config.quantization is not None
+            config.quantization is not None
             and "inc" in self.model_config.quantization
         )
         return (
