@@ -33,7 +33,8 @@ logger = init_logger(__name__)
 
 import os
 VLLM_LOAD_FOR_INC = os.environ.get("VLLM_LOAD_FOR_INC", "0") == "1"
-LOW_CPU_MEM = os.environ.get("LOW_CPU_MEM", "0") == "1"
+# LOW_CPU_MEM = os.environ.get("LOW_CPU_MEM", "0") == "1"
+LOW_CPU_MEM = 0
 
 # ==-------------------------------------------------------------------------==
 # VLLM-HPU-EXT PATCH Start
@@ -90,7 +91,8 @@ class VllmMixtureOfExpertsOp(torch.nn.Module):
         assert self.experts_min is not None, "`experts_min` is not set"
         assert self.experts_max is not None, "`experts_max` is not set"
         experts_min, experts_max = self.experts_min, self.experts_max
-        if not LOW_CPU_MEM:
+        # if not LOW_CPU_MEM:
+        if True:
             w1_list = [self.w13_list[i].weight.squeeze() for i in experts_range]
             w2_list = [self.w2_list[i].weight.squeeze() for i in experts_range]
             return torch.ops.hpu.mixture_of_experts.fused_weights(
@@ -104,22 +106,22 @@ class VllmMixtureOfExpertsOp(torch.nn.Module):
                 experts_min=experts_min,
                 experts_max=experts_max,
             )
-        else:
-            w1_list = [self.w1_list[i].weight.squeeze() for i in experts_range]
-            w3_list = [self.w3_list[i].weight.squeeze() for i in experts_range]
-            w2_list = [self.w2_list[i].weight.squeeze() for i in experts_range]
-            return torch.ops.hpu.mixture_of_experts.default(
-                hidden_states=hidden_states,
-                expert_routing_table=expert_routing_table,
-                router_weights=router_weights,
-                w1=w1_list,
-                w2=w2_list,
-                w3=w3_list,
-                permuted_weights=permuted_weights,
-                activation=activation,
-                experts_min=experts_min,
-                experts_max=experts_max,
-            )
+        # else:
+        #     w1_list = [self.w1_list[i].weight.squeeze() for i in experts_range]
+        #     w3_list = [self.w3_list[i].weight.squeeze() for i in experts_range]
+        #     w2_list = [self.w2_list[i].weight.squeeze() for i in experts_range]
+        #     return torch.ops.hpu.mixture_of_experts.default(
+        #         hidden_states=hidden_states,
+        #         expert_routing_table=expert_routing_table,
+        #         router_weights=router_weights,
+        #         w1=w1_list,
+        #         w2=w2_list,
+        #         w3=w3_list,
+        #         permuted_weights=permuted_weights,
+        #         activation=activation,
+        #         experts_min=experts_min,
+        #         experts_max=experts_max,
+        #     )
 
 class _DynamicFusedMOE(torch.nn.Module):
     def __init__(self, num_total_experts):
