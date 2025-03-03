@@ -34,7 +34,7 @@ logger = init_logger(__name__)
 import os
 VLLM_LOAD_FOR_INC = os.environ.get("VLLM_LOAD_FOR_INC", "0") == "1"
 # LOW_CPU_MEM = os.environ.get("LOW_CPU_MEM", "0") == "1"
-LOW_CPU_MEM = 0
+LOW_CPU_MEM = False
 
 # ==-------------------------------------------------------------------------==
 # VLLM-HPU-EXT PATCH Start
