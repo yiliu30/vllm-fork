@@ -97,6 +97,7 @@ class ExecutorBase(ABC):
         num_cpu_blocks refers to "swapped" blocks in CPU memory and cannot be
         appended to.
         """
+        rank_debug(f"self.collective_rpc{self.collective_rpc}, self class {self.__class__}")
         results = self.collective_rpc("determine_num_available_blocks")
         a = min([r[0] for r in results])
         b = min([r[1] for r in results])

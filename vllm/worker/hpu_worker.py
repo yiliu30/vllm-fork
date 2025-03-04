@@ -18,6 +18,7 @@ from vllm_hpu_extension.profiler import HabanaMemoryProfiler, format_bytes
 
 import vllm.envs as envs
 from vllm.config import ParallelConfig, VllmConfig
+from vllm.logger import rank_debug
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment)
 from vllm.logger import init_logger
@@ -344,11 +345,12 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         num_cpu_blocks = max(num_cpu_blocks, 0)
 
         self.model_runner.bucketing_ctx.num_hpu_blocks = num_hpu_blocks
-
+        rank_debug(f"Got num_hpu_blocks: {num_hpu_blocks}, num_cpu_blocks: {num_cpu_blocks}")
         if self.model_runner.lora_manager:
             self.model_runner.remove_all_loras()
 
         gc.collect()
+        rank_debug(f"after gc Got num_hpu_blocks: {num_hpu_blocks}, num_cpu_blocks: {num_cpu_blocks}")
         return num_hpu_blocks, num_cpu_blocks
 
     def initialize_cache(self, num_gpu_blocks: int,
