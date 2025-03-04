@@ -298,7 +298,7 @@ class MessageQueue:
             socket_addr = f"tcp://{handle.connect_ip}:{handle.remote_subscribe_port}"
             logger.debug("Connecting to %s", socket_addr)
             self.remote_socket.connect(socket_addr)
-
+        rank_debug(f"craete_from_handle, rank={rank}, self._is_writer={self._is_writer}, self._is_local_reader={self._is_local_reader}, self._is_remote_reader={self._is_remote_reader}, self:{self}")
         return self
 
     def wait_until_ready(self):
@@ -443,7 +443,7 @@ class MessageQueue:
         assert self._is_writer, "Only writers can enqueue"
         serialized_obj = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
         if self.n_local_reader > 0:
-            rank_debug(f"Enqueueing {len(serialized_obj)} bytes, max_chunk_bytes={self.buffer.max_chunk_bytes}, n_local_reader={self.n_local_reader}")
+            rank_debug(f"Enqueueing {len(serialized_obj)} bytes, max_chunk_bytes={self.buffer.max_chunk_bytes}, n_local_reader={self.n_local_reader}, obj={obj}")
             if len(serialized_obj) >= self.buffer.max_chunk_bytes:
                 with self.acquire_write(timeout) as buf:
                     buf[0] = 1  # overflow
@@ -455,7 +455,7 @@ class MessageQueue:
                     rank_debug(f"Writing {len(serialized_obj)} bytes to buffer")
         if self.n_remote_reader > 0:
             self.remote_socket.send(serialized_obj)
-            rank_debug(f"Enqueueing {len(serialized_obj)} bytes to remote readers, serialized_obj={serialized_obj}")
+            rank_debug(f"Enqueueing {len(serialized_obj)} bytes to remote readers, obj={obj}")
     def dequeue(self, timeout: Optional[float] = None):
         """ Read from message queue with optional timeout (in seconds) """
         if self._is_local_reader:
@@ -470,7 +470,7 @@ class MessageQueue:
             if overflow:
                 recv = self.local_socket.recv()
                 obj = pickle.loads(recv)
-            rank_debug(f"_is_local_reader Dequeueing, max_chunk_bytes={self.buffer.max_chunk_bytes}, n_local_reader={self.n_local_reader}, obj, {obj}")
+            rank_debug(f"_is_local_reader Dequeueing, max_chunk_bytes={self.buffer.max_chunk_bytes}, obj, {obj}")
         elif self._is_remote_reader:
             
             recv = self.remote_socket.recv()
