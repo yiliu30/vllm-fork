@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 import cloudpickle
 import torch
 import torch.nn as nn
-
+from vllm.logger import rank_debug
 from vllm.config import (ObservabilityConfig, VllmConfig,
                          set_current_vllm_config)
 from vllm.distributed import broadcast_tensor_dict, get_pp_group, get_tp_group
@@ -389,6 +389,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         start_time = time.perf_counter()
 
         inputs = self.prepare_input(execute_model_req)
+        rank_debug(f"prepare inputs done: {inputs}")
         if inputs is None:
             return None
 
