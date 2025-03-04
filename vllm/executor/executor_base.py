@@ -8,6 +8,7 @@ from typing_extensions import TypeVar
 
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
+from vllm.logger import rank_debug
 from vllm.lora.request import LoRARequest
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.platforms import current_platform
@@ -108,6 +109,7 @@ class ExecutorBase(ABC):
         logger.info("# %s blocks: %d, # CPU blocks: %d",
                     current_platform.dispatch_key, num_gpu_blocks,
                     num_cpu_blocks)
+        rank_debug(f"# {current_platform.dispatch_key} blocks: {num_gpu_blocks}, # CPU blocks: {num_cpu_blocks}")
         max_concurrency = (num_gpu_blocks * self.cache_config.block_size /
                            self.model_config.max_model_len)
         logger.info("Maximum concurrency for %s tokens per request: %.2fx",
