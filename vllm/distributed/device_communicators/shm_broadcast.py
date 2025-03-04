@@ -96,7 +96,7 @@ class ShmRingBuffer:
         get the name of the shared memory and open it, so that they can access the
         same shared memory buffer.
         """# noqa
-        ForkedPdb().set_trace()
+        # ForkedPdb().set_trace()
         self.n_reader = n_reader
         self.metadata_size = 1 + n_reader
         self.max_chunk_bytes = max_chunk_bytes
@@ -131,7 +131,11 @@ class ShmRingBuffer:
                     # we might deserialize the object in a different node
                     # in this case, this object is not used,
                     # and we should suppress the error
-                    pass
+                    raise RuntimeError(
+                        f"Shared memory {name} not found. "
+                        "This object is not used and should be discarded."
+                    )
+                    # pass
 
     def handle(self):
         return (self.n_reader, self.max_chunk_bytes, self.max_chunks,
@@ -199,6 +203,7 @@ class MessageQueue:
         context = Context()
 
         if n_local_reader > 0:
+            rank_debug(f"n_local_reader: {n_local_reader}, max_chunk_bytes: {max_chunk_bytes}, max_chunks: {max_chunks}")
             # for local readers, we will:
             # 1. create a shared memory ring buffer to communicate small data
             # 2. create a publish-subscribe socket to communicate large data
@@ -229,6 +234,7 @@ class MessageQueue:
         if n_remote_reader > 0:
             # for remote readers, we will:
             # create a publish-subscribe socket to communicate large data
+            rank_debug(f"connect_ip: {connect_ip}, n_remote_reader: {n_remote_reader}")
             self.remote_socket = context.socket(XPUB)
             self.remote_socket.setsockopt(XPUB_VERBOSE, True)
             remote_subscribe_port = get_open_port()
@@ -268,7 +274,7 @@ class MessageQueue:
         self._is_writer = False
 
         context = Context()
-
+        rank_debug(f"craete_from_handle rank: {rank}, handle {handle}, local_reader_ranks: {handle.local_reader_ranks}")
         if rank in handle.local_reader_ranks:
             assert handle.buffer_handle is not None
             self.buffer = ShmRingBuffer(*handle.buffer_handle)
@@ -345,12 +351,13 @@ class MessageQueue:
             with self.buffer.get_metadata(self.current_idx) as metadata_buffer:
                 read_count = sum(metadata_buffer[1:])
                 written_flag = metadata_buffer[0]
+                
                 if written_flag and read_count != self.buffer.n_reader:
                     # this block is written and not read by all readers
                     # for writers, `self.current_idx` is the next block to write
                     # if this block is not ready to write,
                     # we need to wait until it is read by all readers
-
+                    rank_debug(f"read_count: {read_count}, written_flag: {written_flag}")
                     # Release the processor to other threads
                     sched_yield()
 
@@ -360,7 +367,7 @@ class MessageQueue:
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
                         n_warning += 1
-                        ForkedPdb().set_trace()
+                        # ForkedPdb().set_trace()
 
                     # if we time out, raise an exception
                     if (timeout is not None
@@ -401,7 +408,11 @@ class MessageQueue:
             with self.buffer.get_metadata(self.current_idx) as metadata_buffer:
                 read_flag = metadata_buffer[self.local_reader_rank + 1]
                 written_flag = metadata_buffer[0]
+                # rank_debug(f"writen_flag: {written_flag}, read_flag: {read_flag}")
+                # import pdb;
+                # pdb.set_trace()
                 if not written_flag or read_flag:
+                    # rank_debug(f"buffer: {self.buffer}, self.current_idx: {self.current_idx}, written_flag: {written_flag}, read_flag: {read_flag}")
                     # this block is either
                     # (1) not written
                     # (2) already read by this reader
@@ -409,7 +420,7 @@ class MessageQueue:
                     # for readers, `self.current_idx` is the next block to read
                     # if this block is not ready,
                     # we need to wait until it is written
-
+                    
                     # Release the processor to other threads
                     sched_yield()
 
@@ -424,12 +435,12 @@ class MessageQueue:
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
                         rank_debug(f"buffer: {self.buffer}, self.current_idx: {self.current_idx}")
                         # print the stack trace for debugging
-                        import traceback
-                        traceback.print_stack()
+                        # import traceback
+                        # traceback.print_stack()
                         
-                        if torch.distributed.get_rank() == 0:
-                            import pdb
-                            pdb.set_trace()
+                        # if torch.distributed.get_rank() == 0:
+                        #     import pdb
+                        #     pdb.set_trace()
                         n_warning += 1
 
                     # if we time out, raise an exception
@@ -451,9 +462,13 @@ class MessageQueue:
                 break
 
     def enqueue(self, obj, timeout: Optional[float] = None):
+        # import pdb;
+        # pdb.set_trace()
         """ Write to message queue with optional timeout (in seconds) """
         assert self._is_writer, "Only writers can enqueue"
+        
         serialized_obj = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        rank_debug(f"obj: {obj} enqueue, self.n_local_reader: {self.n_local_reader}, len(serialized_obj): {len(serialized_obj)}")
         if self.n_local_reader > 0:
             if len(serialized_obj) >= self.buffer.max_chunk_bytes:
                 with self.acquire_write(timeout) as buf:
@@ -461,9 +476,11 @@ class MessageQueue:
                 self.local_socket.send(serialized_obj)
             else:
                 with self.acquire_write(timeout) as buf:
+                    rank_debug("Writing to buffer")
                     buf[0] = 0  # not overflow
                     buf[1:len(serialized_obj) + 1] = serialized_obj
         if self.n_remote_reader > 0:
+            rank_debug(f"self.remote_socket.send(serialized_obj), len(serialized_obj): {len(serialized_obj)}")
             self.remote_socket.send(serialized_obj)
 
     def dequeue(self, timeout: Optional[float] = None):
@@ -479,9 +496,11 @@ class MessageQueue:
             if overflow:
                 recv = self.local_socket.recv()
                 obj = pickle.loads(recv)
+            rank_debug(f"_is_local_reader obj: {obj} dequeue, self.local_reader_rank: {self.local_reader_rank}")
         elif self._is_remote_reader:
             recv = self.remote_socket.recv()
             obj = pickle.loads(recv)
+            rank_debug(f"_is_remote_reader obj: {obj} dequeue, self.local_reader_rank: {self.local_reader_rank}, len(recv): {len(recv)}")
         else:
             raise RuntimeError("Only readers can dequeue")
         return obj
@@ -515,6 +534,8 @@ class MessageQueue:
         n_local_reader = len(same_node_ranks) - 1
         local_reader_ranks = [i for i in same_node_ranks if i != writer_rank]
         buffer_io: MessageQueue
+        # import pdb; pdb.set_trace()
+        rank_debug(f"create from process group pg:{pg.__class__}, group_rank: {group_rank}, writer_rank: {writer_rank}, n_reader: {n_reader}, n_local_reader: {n_local_reader}")
         if group_rank == writer_rank:
             buffer_io = MessageQueue(
                 n_reader=n_reader,

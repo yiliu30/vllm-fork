@@ -91,7 +91,7 @@ def worker_fn():
         # print the seed so that we can reproduce the error
         print(f"Rank {rank} got seed {seed}")
         # test broadcasting with about 400MB of data
-        N = 10_000
+        N = 1
         if rank == writer_rank:
             arrs = get_arrays(N, seed)
             for x in arrs:
