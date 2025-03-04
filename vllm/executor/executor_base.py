@@ -305,7 +305,9 @@ class DistributedExecutorBase(ExecutorBase):
                        timeout: Optional[float] = None,
                        args: Tuple = (),
                        kwargs: Optional[Dict] = None) -> List[Any]:
-        return self._run_workers(method, *args, **(kwargs or {}))
+        out = self._run_workers(method, *args, **(kwargs or {}))
+        rank_debug(f"out of collective_rpc: {out}")
+        return out  
 
     @abstractmethod
     def _run_workers(

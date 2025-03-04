@@ -476,13 +476,12 @@ class RayDistributedExecutor(DistributedExecutorBase):
             driver_worker_output = [
                 self.driver_worker.execute_method(sent_method, *args, **kwargs)
             ]
-            rank_debug(f"got {len(driver_worker_output)} driver worker outputs")
-            rank_debug(f"f{driver_worker_output}")
+            rank_debug(f"got {len(driver_worker_output)} driver worker outputs; driver_worker_output: {driver_worker_output}")
 
         # Get the results of the ray workers.
         if self.workers:
             ray_worker_outputs = ray.get(ray_worker_outputs)
-            rank_debug(f"got workers again, got {len(ray_worker_outputs)}")
+            rank_debug(f"got workers again, got {len(ray_worker_outputs)}, ray_worker_outputs: {ray_worker_outputs}")
 
         return driver_worker_output + ray_worker_outputs
 
