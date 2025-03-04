@@ -136,8 +136,9 @@ class PaddingAwareSchedulingBudget(SchedulingBudget):
         padded_seq = max_seq_len
 
         hpu_bucketing_global_state = HPUBucketingGlobalState()
-
-        bs_cfg = hpu_bucketing_global_state.prompt_bs_bucket_cfg
+        bs_cfg = None
+        if hasattr(hpu_bucketing_global_state, "prompt_bs_bucket_cfg"):
+            bs_cfg = hpu_bucketing_global_state.prompt_bs_bucket_cfg
         if bs_cfg is not None:
             padded_bs = find_bucket(batch_size, bs_cfg)
         else:
