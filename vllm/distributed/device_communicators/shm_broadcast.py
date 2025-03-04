@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from multiprocessing import shared_memory
 from typing import List, Optional, Tuple, Union
 from unittest.mock import patch
-
+from vllm.logger import rank_debug
 import torch
 import torch.distributed as dist
 from torch.distributed import ProcessGroup
@@ -443,6 +443,7 @@ class MessageQueue:
         assert self._is_writer, "Only writers can enqueue"
         serialized_obj = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
         if self.n_local_reader > 0:
+            rank_debug(f"Enqueueing {len(serialized_obj)} bytes, max_chunk_bytes={self.buffer.max_chunk_bytes}, n_local_reader={self.n_local_reader}")
             if len(serialized_obj) >= self.buffer.max_chunk_bytes:
                 with self.acquire_write(timeout) as buf:
                     buf[0] = 1  # overflow
@@ -451,12 +452,14 @@ class MessageQueue:
                 with self.acquire_write(timeout) as buf:
                     buf[0] = 0  # not overflow
                     buf[1:len(serialized_obj) + 1] = serialized_obj
+                    rank_debug(f"Writing {len(serialized_obj)} bytes to buffer")
         if self.n_remote_reader > 0:
             self.remote_socket.send(serialized_obj)
-
+            rank_debug(f"Enqueueing {len(serialized_obj)} bytes to remote readers, serialized_obj={serialized_obj}")
     def dequeue(self, timeout: Optional[float] = None):
         """ Read from message queue with optional timeout (in seconds) """
         if self._is_local_reader:
+            
             with self.acquire_read(timeout) as buf:
                 overflow = buf[0] == 1
                 if not overflow:
@@ -467,9 +470,12 @@ class MessageQueue:
             if overflow:
                 recv = self.local_socket.recv()
                 obj = pickle.loads(recv)
+            rank_debug(f"_is_local_reader Dequeueing, max_chunk_bytes={self.buffer.max_chunk_bytes}, n_local_reader={self.n_local_reader}, obj, {obj}")
         elif self._is_remote_reader:
+            
             recv = self.remote_socket.recv()
             obj = pickle.loads(recv)
+            rank_debug(f"_is_remote_reader Dequeueing, obj = {obj}")
         else:
             raise RuntimeError("Only readers can dequeue")
         return obj
@@ -487,6 +493,7 @@ class MessageQueue:
                                   max_chunk_bytes,
                                   max_chunks,
                                   writer_rank=0) -> "MessageQueue":
+        
         if isinstance(pg, ProcessGroup):
             group_rank = dist.get_rank(pg)
             group_world_size = dist.get_world_size(pg)
@@ -495,7 +502,7 @@ class MessageQueue:
             group_rank = pg.rank
             group_world_size = pg.world_size
             global_ranks = list(range(pg.world_size))
-
+        rank_debug(f"Creating MessageQueue from {pg}, writer_rank={writer_rank},group_rank:{group_rank},group_world_size: {group_world_size}  max_chunk_bytes={max_chunk_bytes}, max_chunks={max_chunks}")
         from vllm.distributed.parallel_state import in_the_same_node_as
         status = in_the_same_node_as(pg, source_rank=writer_rank)
         same_node_ranks = [i for i, s in enumerate(status) if s]
