@@ -29,6 +29,8 @@ export VLLM_SKIP_WARMUP="true"
 export VLLM_LOGGING_LEVEL="DEBUG"
 export VLLM_TRACE_FUNCTION=1
 
+export RAY_DEDUP_LOGS=0
+
 block_size=128
 # DO NOT change ends...
 # memory footprint tunning params
