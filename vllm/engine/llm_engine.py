@@ -425,8 +425,9 @@ class LLMEngine:
 
         self.cache_config.num_gpu_blocks = num_gpu_blocks
         self.cache_config.num_cpu_blocks = num_cpu_blocks
-        torch.distributed.barrier()
+        
         rank_debug(f"num_gpu_blocks={num_gpu_blocks}, num_cpu_blocks={num_cpu_blocks}")
+        torch.distributed.barrier()
         self.model_executor.initialize_cache(num_gpu_blocks, num_cpu_blocks)
         elapsed = time.time() - start
         logger.info(("init engine (profile, create kv cache, "
