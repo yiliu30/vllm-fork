@@ -397,7 +397,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         num_steps = worker_input.num_steps
 
         self.execute_worker(worker_input)
-
+        rank_debug(f"execute worker done")
         # If there is no input, we don't need to execute the model.
         if worker_input.num_seq_groups == 0:
             return []
@@ -421,6 +421,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             num_steps=num_steps,
             **kwargs,
         )
+        rank_debug(f"execute model done")
 
         model_execute_time = time.perf_counter() - start_time
         if not get_pp_group().is_last_rank:
