@@ -2353,6 +2353,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         **execute_model_kwargs,
                         selected_token_indices=sampling_metadata.
                         selected_token_indices)
+                    rank_debug(f"step {i} hidden_states: {hidden_states.shape if hidden_states is not None else None}")
                     if warmup_mode == True:
                         torch.hpu.synchronize()
                         import torch.distributed as dist
@@ -2388,10 +2389,12 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                                      f'{"prompt" if is_prompt else "decode"}_'
                                      f'bs{batch_size}_'
                                      f'seq{seq_len}')):
+                    rank_debug(f"try to sample token")
                     output = self.model.sample(
                         logits=logits,
                         sampling_metadata=sampling_metadata,
                     )
+                    rank_debug(f"sampled token: {output}")
                     if num_steps > 1:
                         output = output.sampled_token_ids
                         self.cached_step_outputs.append(
@@ -2467,7 +2470,9 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         "attn_metadata": vars(result.attn_metadata),
                         "lora_mask": lora_mask,
                     }
+                    rank_debug(f"broadcasting model_kwargs_broadcast_data: {model_kwargs_broadcast_data}")
                     broadcast_tensor_dict(model_kwargs_broadcast_data, src=0)
+                    rank_debug(f"broadcasted model_kwargs_broadcast_data done")
                 else:
                     try_revert_dummy_output_tokens()
 
