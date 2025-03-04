@@ -345,7 +345,7 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         num_cpu_blocks = max(num_cpu_blocks, 0)
 
         self.model_runner.bucketing_ctx.num_hpu_blocks = num_hpu_blocks
-        rank_debug(f"Got num_hpu_blocks: {num_hpu_blocks}, num_cpu_blocks: {num_cpu_blocks}")
+        # rank_debug(f"Got num_hpu_blocks: {num_hpu_blocks}, num_cpu_blocks: {num_cpu_blocks}")
         if self.model_runner.lora_manager:
             self.model_runner.remove_all_loras()
 

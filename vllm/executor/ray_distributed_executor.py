@@ -8,6 +8,7 @@ import cloudpickle
 import msgspec
 
 import vllm.envs as envs
+from vllm.logger import rank_debug
 from vllm.executor.executor_base import (
     DistributedExecutorBase)  # yapf: disable
 from vllm.executor.msgspec_utils import encode_hook
@@ -459,6 +460,8 @@ class RayDistributedExecutor(DistributedExecutorBase):
             worker.execute_method.remote(sent_method, *args, **kwargs)
             for worker in ray_workers
         ]
+        rank_debug(f"got {len(ray_worker_outputs)} ray worker outputs")
+        rank_debug(f"f{ray_worker_outputs}")
 
         if async_run_tensor_parallel_workers_only:
             # Just return futures
@@ -473,10 +476,13 @@ class RayDistributedExecutor(DistributedExecutorBase):
             driver_worker_output = [
                 self.driver_worker.execute_method(sent_method, *args, **kwargs)
             ]
+            rank_debug(f"got {len(driver_worker_output)} driver worker outputs")
+            rank_debug(f"f{driver_worker_output}")
 
         # Get the results of the ray workers.
         if self.workers:
             ray_worker_outputs = ray.get(ray_worker_outputs)
+            rank_debug(f"got workers again, got {len(ray_worker_outputs)}")
 
         return driver_worker_output + ray_worker_outputs
 
