@@ -2332,7 +2332,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                                 data.output_token_ids[:orig_output_tokens_len]
 
             for i in range(num_steps):
-                rank_debug(f"Step {i} executing")
+                rank_debug(f"[num_steps:{num_steps}] Step {i} executing")
                 if i != 0 and not self.is_driver_worker:
                     broadcast_data = broadcast_tensor_dict(src=0)
                     if 'early_exit' in broadcast_data and broadcast_data[
@@ -2472,6 +2472,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     try_revert_dummy_output_tokens()
 
             if self.is_driver_worker and self.profiler.enabled:
+                rank_debug(f"Recording counters for {batch_size}x{seq_len}")
                 # Stop recording 'execute_model' event
                 self.profiler.end()
                 event_end = self.profiler.get_timestamp_us()
@@ -2484,6 +2485,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     is_prompt=is_prompt)
                 self.profiler.record_counter(self.event_start, counters)
             if num_steps == 1:
+                rank_debug(f"reach end of execute_model")
                 if self.return_hidden_states:
                     # we only need to pass hidden states of most recent token
                     assert model_input.sampling_metadata is not None
@@ -2493,6 +2495,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 return [output] if self.is_driver_worker else []
             else:
                 return []
+            
 
         return output if type(output) is list else [output]
 
