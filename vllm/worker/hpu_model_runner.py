@@ -2489,6 +2489,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     real_batch_size=real_batch_size,
                     is_prompt=is_prompt)
                 self.profiler.record_counter(self.event_start, counters)
+                
+            torch.distributed.barrier()
             if num_steps == 1:
                 rank_debug(f"reach end of execute_model")
                 if self.return_hidden_states:

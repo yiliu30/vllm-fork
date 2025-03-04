@@ -48,7 +48,7 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
-
+from vllm.logger import rank_debug
 from .interfaces import SupportsPP
 from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
@@ -751,6 +751,7 @@ class DeepseekV3ForCausalLM(nn.Module, SupportsPP):
         sampling_metadata: SamplingMetadata,
     ) -> Optional[SamplerOutput]:
         next_tokens = self.sampler(logits, sampling_metadata)
+        rank_debug(f"next_tokens: {next_tokens}")
         return next_tokens
 
     def make_empty_intermediate_tensors(
