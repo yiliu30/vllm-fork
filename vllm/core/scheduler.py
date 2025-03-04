@@ -144,7 +144,9 @@ class PaddingAwareSchedulingBudget(SchedulingBudget):
         else:
             logger.warning(
                 "prompt_bs_bucket_cfg was not set! Using unpadded batch size.")
-        seq_cfg = hpu_bucketing_global_state.prompt_seq_bucket_cfg
+        seq_cfg = None
+        if hasattr(hpu_bucketing_global_state, "prompt_seq_bucket_cfg"):
+            seq_cfg = hpu_bucketing_global_state.prompt_seq_bucket_cfg
         if seq_cfg is not None:
             padded_seq = find_bucket(max_seq_len, seq_cfg)
         else:
