@@ -18,7 +18,7 @@ import vllm.envs as envs
 from vllm.distributed.utils import StatelessProcessGroup
 from vllm.logger import init_logger
 from vllm.utils import get_ip, get_open_port, is_valid_ipv6_address
-from vllm.logger import rank_debug
+from vllm.logger import rank_debug, ForkedPdb
 
 VLLM_RINGBUFFER_WARNING_INTERVAL = envs.VLLM_RINGBUFFER_WARNING_INTERVAL
 
@@ -358,6 +358,7 @@ class MessageQueue:
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
                         n_warning += 1
+                        ForkedPdb().set_trace()
 
                     # if we time out, raise an exception
                     if (timeout is not None
