@@ -96,6 +96,7 @@ class ShmRingBuffer:
         get the name of the shared memory and open it, so that they can access the
         same shared memory buffer.
         """# noqa
+        ForkedPdb().set_trace()
         self.n_reader = n_reader
         self.metadata_size = 1 + n_reader
         self.max_chunk_bytes = max_chunk_bytes
