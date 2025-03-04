@@ -11,9 +11,11 @@ from typing import Sequence as GenericSequence
 from typing import Set, Type, Union, cast, overload
 
 import torch
+import torch.distributed
 from typing_extensions import TypeVar, deprecated
 
 import vllm.envs as envs
+from vllm.logger import rank_debug
 from vllm.config import (DecodingConfig, LoRAConfig, ModelConfig,
                          ObservabilityConfig, ParallelConfig, SchedulerConfig,
                          VllmConfig)
@@ -423,7 +425,8 @@ class LLMEngine:
 
         self.cache_config.num_gpu_blocks = num_gpu_blocks
         self.cache_config.num_cpu_blocks = num_cpu_blocks
-
+        torch.distributed.barrier()
+        rank_debug(f"num_gpu_blocks={num_gpu_blocks}, num_cpu_blocks={num_cpu_blocks}")
         self.model_executor.initialize_cache(num_gpu_blocks, num_cpu_blocks)
         elapsed = time.time() - start
         logger.info(("init engine (profile, create kv cache, "
