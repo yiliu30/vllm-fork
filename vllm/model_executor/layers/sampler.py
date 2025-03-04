@@ -11,7 +11,7 @@ from typing import Dict, Iterator, List, Optional, Tuple, Union
 import msgspec
 import torch
 import torch.nn as nn
-
+from vllm.logger import rank_debug
 import vllm.envs as envs
 from vllm.model_executor.layers.utils import apply_penalties
 from vllm.model_executor.sampling_metadata import (SamplingMetadata,
@@ -244,7 +244,7 @@ class Sampler(nn.Module):
         """
         assert logits is not None
         _, vocab_size = logits.shape
-
+        rank_debug(f"Sampler: logits shape: {logits.shape}, device: {logits.device}, dtype: {logits.dtype}")
         # Prepare sampling tensors with pinned memory to avoid blocking.
         if not sampling_metadata.reuse_sampling_tensors:
             self._init_sampling_tensors(logits, sampling_metadata)
