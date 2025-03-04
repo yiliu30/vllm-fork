@@ -417,7 +417,7 @@ class MessageQueue:
                         rank_debug(
                             f"No available block found in {VLLM_RINGBUFFER_WARNING_INTERVAL} second. ",
                         )
-                        ForkedPdb().set_trace()
+                        # ForkedPdb().set_trace()
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
                         n_warning += 1
