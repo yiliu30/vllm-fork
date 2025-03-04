@@ -11,6 +11,7 @@ from unittest.mock import patch
 import torch
 import torch.distributed as dist
 from torch.distributed import ProcessGroup
+import torch.distributed
 from zmq import IPV6  # type: ignore
 from zmq import SUB, SUBSCRIBE, XPUB, XPUB_VERBOSE, Context  # type: ignore
 
@@ -420,6 +421,14 @@ class MessageQueue:
                         # ForkedPdb().set_trace()
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
+                        rank_debug(f"buffer: {self.buffer}, self.current_idx: {self.current_idx}")
+                        # print the stack trace for debugging
+                        import traceback
+                        traceback.print_stack()
+                        
+                        if torch.distributed.get_rank() == 0:
+                            import pdb
+                            pdb.set_trace()
                         n_warning += 1
 
                     # if we time out, raise an exception
