@@ -30,7 +30,7 @@ from multiprocessing import shared_memory
 from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple,
                     Union)
 from unittest.mock import patch
-
+from vllm.logger import rank_debug
 import torch
 import torch.distributed
 from torch.distributed import Backend, ProcessGroup
@@ -582,7 +582,8 @@ class GroupCoordinator:
         # Bypass the function if we are using only 1 GPU.
         if (not torch.distributed.is_initialized() or self.world_size == 1):
             return tensor_dict
-
+        
+        rank_debug(f"Broadcasting tensor_dict from {src} to {self.rank_in_group}")
         group = self.device_group
         metadata_group = self.cpu_group
         assert src < self.world_size, f"Invalid src rank ({src})"
@@ -652,6 +653,7 @@ class GroupCoordinator:
                     tensor_dict[key] = value
             for async_handle in async_handles:
                 async_handle.wait()
+        rank_debug(f"Broadcasting tensor_dict from {src} to {self.rank_in_group} done")
         return tensor_dict
 
     def send_tensor_dict(
