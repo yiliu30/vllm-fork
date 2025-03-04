@@ -101,6 +101,7 @@ class ExecutorBase(ABC):
         results = self.collective_rpc("determine_num_available_blocks")
         a = min([r[0] for r in results])
         b = min([r[1] for r in results])
+        rank_debug(f"after determine_num_available_blocks: a: {a}, b: {b}")
         return a, b
 
     def initialize_cache(self, num_gpu_blocks: int, num_cpu_blocks) -> None:
