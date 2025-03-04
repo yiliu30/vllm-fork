@@ -340,8 +340,8 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         num_hpu_blocks = int(cache_size_bytes // cache_block_size)
         num_cpu_blocks = int(self.cache_config.swap_space_bytes //
                              cache_block_size)
-        num_hpu_blocks = int( max(num_hpu_blocks, 0) * 0.8)
-        num_cpu_blocks = max(num_cpu_blocks, 0)
+        num_hpu_blocks = int( max(num_hpu_blocks, 0) * 0.5)
+        num_cpu_blocks = int(max(num_cpu_blocks, 0) * 0.5)
 
         self.model_runner.bucketing_ctx.num_hpu_blocks = num_hpu_blocks
 
