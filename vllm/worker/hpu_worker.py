@@ -373,7 +373,9 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         msg = ("Initializing cache engine "
                f"took {m.get_summary_string()}")
         logger.info(msg)
+        rank_debug(f"start to warm up model with num_gpu_blocks: {num_gpu_blocks}, num_cpu_blocks: {num_cpu_blocks}")
         self._warm_up_model()
+        rank_debug("model warmed up")
 
     def _init_cache_engine(self):
         assert self.cache_config.num_gpu_blocks is not None
