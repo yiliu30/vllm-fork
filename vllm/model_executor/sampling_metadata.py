@@ -11,7 +11,7 @@ from vllm.sequence import (VLLM_TOKEN_ID_ARRAY_TYPE, SequenceData,
 from vllm.utils import (PyObjectCache, async_tensor_h2d,
                         is_pin_memory_available, make_tensor_with_pad,
                         make_tensor_with_pad_align)
-
+from vllm.logger import rank_debug
 _SAMPLING_EPS = 1e-5
 
 
@@ -610,7 +610,10 @@ class SamplingTensors:
         )
         # Because the memory is pinned, we can do non-blocking
         # transfer to device.
-
+        rank_debug(f"Copying sampling tensors to device {device}")
+        if current_platform.is_hpu():
+            torch.hpu.synchronize()
+        rank_debug(f"sync done")
         return cls(
             temperatures=temperatures_t.to(device=device, non_blocking=True),
             top_ps=top_ps_t.to(device=device, non_blocking=True),

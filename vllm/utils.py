@@ -52,7 +52,7 @@ from typing_extensions import Never, ParamSpec, TypeIs, assert_never
 
 import vllm.envs as envs
 from vllm.logger import enable_trace_function_call, init_logger
-
+from vllm.logger import rank_debug
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
 
@@ -858,7 +858,7 @@ def make_tensor_with_pad_align(
     tensor = torch.from_numpy(padded_x).to(device)
     if pin_memory:
         tensor = tensor.pin_memory()
-
+    rank_debug(f"make tensor with pad align: {tensor.shape}, {tensor.dtype}, device: {tensor.device}")
     return tensor
 
 

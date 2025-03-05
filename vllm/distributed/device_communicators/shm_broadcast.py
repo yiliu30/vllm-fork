@@ -357,6 +357,7 @@ class MessageQueue:
                             > VLLM_RINGBUFFER_WARNING_INTERVAL * n_warning):
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
+                        rank_debug(f"writen_flag={written_flag}, read_count={read_count}, n_reader={self.buffer.n_reader}")
                         n_warning += 1
 
                     # if we time out, raise an exception
@@ -414,7 +415,7 @@ class MessageQueue:
                     if (time.monotonic() - start_time
                             > VLLM_RINGBUFFER_WARNING_INTERVAL * n_warning):
                         rank_debug(
-                            f"No available block found in {VLLM_RINGBUFFER_WARNING_INTERVAL} second. not written_flag={written_flag}, read_flag={read_flag}",
+                            f"No available block found in {VLLM_RINGBUFFER_WARNING_INTERVAL} second. written_flag={written_flag}, read_flag={read_flag}",
                         )
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)

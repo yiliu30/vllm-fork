@@ -611,10 +611,12 @@ def _greedy_sample(
         same as the length of selected_seq_groups. If the corresponding
         seq_group has do_sample=False, tuple contains ([], [])
     """
+    rank_debug(f"start of _greedy_sample: samples: {samples}, samples.shape: {samples.shape}, device: {samples.device}")
     samples_lst = samples.tolist()
     sample_idx = 0
     results: SampleResultType = []
     for seq_group in selected_seq_groups:
+        rank_debug(f"start of _greedy_sample: seq_group: {seq_group}, len(selected_seq_groups): {len(selected_seq_groups)}, samples_lst: {samples_lst}, sample_idx: {sample_idx}")
         if not seq_group.do_sample:
             results.append(([], []))
             continue
@@ -846,6 +848,7 @@ def get_pythonized_sample_results(
             continue
         (seq_group_id, seq_groups) = sample_metadata[sampling_type]
         if sampling_type == SamplingType.GREEDY:
+            rank_debug(f"start of get_pythonized_sample_results: greedy_samples: {greedy_samples}, greedy_samples.shape: {greedy_samples.shape}, device: {greedy_samples.device}")
             sample_results = _greedy_sample(seq_groups, greedy_samples)
         elif sampling_type in (SamplingType.RANDOM, SamplingType.RANDOM_SEED):
             sample_results = _random_sample(seq_groups,

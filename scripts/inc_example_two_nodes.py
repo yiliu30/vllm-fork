@@ -41,7 +41,7 @@ seed = 42
 # https://github.com/deepseek-ai/DeepSeek-R1/blob/main/README.md#deepseek-r1-evaluation
 # ... benchmarks requiring sampling, we use a temperature of 0.6, a top-p value of 0.95...
 temperature = 0.6
-temperature = 0 # greedy sample
+# temperature = 0 # greedy sample
 top_p = 0.95
 
 
