@@ -36,7 +36,7 @@ export VLLM_GRAPH_PROMPT_RATIO=0
 
 # INC
 unset QUANT_CONFIG
-
+unset LOW_CPU_MEM
 # params
 # max_num_batched_tokens=2048
 # max_num_seqs=1024

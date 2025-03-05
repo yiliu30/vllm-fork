@@ -44,6 +44,7 @@ export VLLM_GRAPH_PROMPT_RATIO=0
 
 # INC
 unset QUANT_CONFIG
+unset LOW_CPU_MEM
 
 # Fot prepare
 max_num_batched_tokens=2048
