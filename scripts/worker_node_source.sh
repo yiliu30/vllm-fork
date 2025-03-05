@@ -58,3 +58,7 @@ unset VLLM_DECODE_BLOCK_BUCKET_MIN VLLM_DECODE_BLOCK_BUCKET_STEP VLLM_DECODE_BLO
 set_bucketing
 echo " environments are reseted "
 env | grep VLLM
+
+# check quant_config and low_cpu_mem
+echo "QUANT_CONFIG: $QUANT_CONFIG"
+echo "LOW_CPU_MEM: $LOW_CPU_MEM"
