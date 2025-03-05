@@ -209,7 +209,7 @@ class Sampler(nn.Module):
         (sampling_tensors, do_penalties, do_top_p_top_k, do_min_p,
          top_k_scalar, top_p_scalar) = SamplingTensors.from_sampling_metadata(
              sampling_metadata, vocab_size, logits.device, logits.dtype)
-
+        rank_debug(f"Sampler: sampling tensors initialized, device: {logits.device}")
         self._sampling_tensors = sampling_tensors
         self._do_penalties = do_penalties
         self._do_top_p_top_k = do_top_p_top_k
@@ -325,7 +325,7 @@ class Sampler(nn.Module):
                                   SampleResultArgsType)
             prompt_logprobs, sample_logprobs = get_logprobs(
                 logprobs, sampling_metadata, maybe_deferred_sample_results)
-
+        rank_debug(f"Sampler: logprobs shape: {logprobs.shape}, device: {logprobs.device}, dtype: {logprobs.dtype}")
         return _build_sampler_output(
             maybe_deferred_sample_results,
             sampling_metadata,
@@ -489,6 +489,7 @@ def _apply_min_tokens_penalty(
     logits_to_penalize: List[Tuple[int, int]] = []
     logits_applied = 0
     for seq_group in sampling_metadata.seq_groups:
+        rank_debug(f"Sampler: seq_group: {seq_group}")
         seq_ids = seq_group.seq_ids
         sampling_params = seq_group.sampling_params
 
@@ -1089,6 +1090,7 @@ def get_logprobs(
     # k token ids from logprobs.
     for (seq_group, sample_result) in zip(sampling_metadata.seq_groups,
                                           sample_results):
+        rank_debug(f"seq_group: {seq_group}")
         sampling_params = seq_group.sampling_params
 
         # Update indices and tokens for prompt logprobs.
