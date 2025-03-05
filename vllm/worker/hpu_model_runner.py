@@ -2361,7 +2361,11 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     LoraMask.setLoraMask(
                         lora_logits_mask.index_select(
                             0, sampling_metadata.selected_token_indices))
-
+                rank_debug(f"before sync before compute_logits")
+                import habana_frameworks.torch.core as htcore
+                htcore.mark_step()
+                torch.hpu.synchronize()
+                rank_debug(f"after sync before compute_logits")
                 # Compute the logits.
                 with self.profiler.record_event(
                         'internal',
@@ -2373,16 +2377,16 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         sampling_metadata.selected_token_indices = None
                     logits = self.model.compute_logits(hidden_states,
                                                        sampling_metadata)
+
+                htorch.core.mark_step()
+                # Only perform sampling in the driver worker.
+                if not self.is_driver_worker:
+                    continue
                 rank_debug(f"before sync before sample")
                 import habana_frameworks.torch.core as htcore
                 htcore.mark_step()
                 torch.hpu.synchronize()
                 rank_debug(f"after sync before sample")
-                htorch.core.mark_step()
-                # Only perform sampling in the driver worker.
-                if not self.is_driver_worker:
-                    continue
-
                 if model_input.async_callback is not None:
                     model_input.async_callback()
                 # Sample the next token.
