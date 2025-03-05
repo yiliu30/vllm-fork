@@ -2373,6 +2373,11 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         sampling_metadata.selected_token_indices = None
                     logits = self.model.compute_logits(hidden_states,
                                                        sampling_metadata)
+                rank_debug(f"before sync before sample")
+                import habana_frameworks.torch.core as htcore
+                htcore.mark_step()
+                torch.hpu.synchronize()
+                rank_debug(f"after sync before sample")
                 htorch.core.mark_step()
                 # Only perform sampling in the driver worker.
                 if not self.is_driver_worker:
