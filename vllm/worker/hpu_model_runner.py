@@ -2361,11 +2361,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     LoraMask.setLoraMask(
                         lora_logits_mask.index_select(
                             0, sampling_metadata.selected_token_indices))
-                rank_debug(f"before sync before compute_logits")
-                import habana_frameworks.torch.core as htcore
-                # htcore.mark_step()
+                # NOTE: In case the driver rank's compute_logits hangs on two nodes.
                 torch.hpu.synchronize()
-                rank_debug(f"after sync before compute_logits")
                 # Compute the logits.
                 with self.profiler.record_event(
                         'internal',
