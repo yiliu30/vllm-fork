@@ -2363,7 +2363,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                             0, sampling_metadata.selected_token_indices))
                 rank_debug(f"before sync before compute_logits")
                 import habana_frameworks.torch.core as htcore
-                htcore.mark_step()
+                # htcore.mark_step()
                 torch.hpu.synchronize()
                 rank_debug(f"after sync before compute_logits")
                 # Compute the logits.
