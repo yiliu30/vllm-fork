@@ -565,6 +565,7 @@ class SamplingTensors:
             empty_tensor = torch.empty(0, device=device, dtype=torch.long)
             prompt_t = empty_tensor
             output_t = empty_tensor
+            rank_debug(f"Got empty tensors for prompt and output tokens, {prompt_t}, {output_t}")
 
         temperatures_t = torch.tensor(
             temperatures,
@@ -613,19 +614,23 @@ class SamplingTensors:
         # breakpoint()
         rank_debug(f"do_penalties {do_penalties}, Copying sampling tensors to device {device}")
         if current_platform.is_hpu():
+            import habana_frameworks.torch.core as htcore
+            htcore.mark_step()
             torch.hpu.synchronize()
         rank_debug(f"sync done")
-        return cls(
-            temperatures=temperatures_t.to(device=device, non_blocking=True),
-            top_ps=top_ps_t.to(device=device, non_blocking=True),
-            top_ks=top_ks_t.to(device=device, non_blocking=True),
-            min_ps=min_ps_t.to(device=device, non_blocking=True),
+        non_blocking = pin_memory
+        res = cls(
+            temperatures=temperatures_t.to(device=device, non_blocking=non_blocking),
+            top_ps=top_ps_t.to(device=device, non_blocking=non_blocking),
+            top_ks=top_ks_t.to(device=device, non_blocking=non_blocking),
+            min_ps=min_ps_t.to(device=device, non_blocking=non_blocking),
             presence_penalties=presence_penalties_t.to(device=device,
-                                                       non_blocking=True),
+                                                       non_blocking=non_blocking),
             frequency_penalties=frequency_penalties_t.to(device=device,
-                                                         non_blocking=True),
+                                                         non_blocking=non_blocking),
             repetition_penalties=repetition_penalties_t.to(device=device,
-                                                           non_blocking=True),
-            prompt_tokens=prompt_t.to(device=device, non_blocking=True),
-            output_tokens=output_t.to(device=device, non_blocking=True),
+                                                           non_blocking=non_blocking),
+            prompt_tokens=prompt_t.to(device=device, non_blocking=non_blocking),
+            output_tokens=output_t.to(device=device, non_blocking=non_blocking),
         )
+        return res
