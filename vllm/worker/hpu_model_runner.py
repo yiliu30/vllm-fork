@@ -2382,11 +2382,11 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 # Only perform sampling in the driver worker.
                 if not self.is_driver_worker:
                     continue
-                rank_debug(f"before sync before sample")
-                import habana_frameworks.torch.core as htcore
-                htcore.mark_step()
-                torch.hpu.synchronize()
-                rank_debug(f"after sync before sample")
+                # rank_debug(f"before sync before sample")
+                # import habana_frameworks.torch.core as htcore
+                # htcore.mark_step()
+                # torch.hpu.synchronize()
+                # rank_debug(f"after sync before sample")
                 if model_input.async_callback is not None:
                     model_input.async_callback()
                 # Sample the next token.
