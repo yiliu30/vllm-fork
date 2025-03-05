@@ -610,7 +610,8 @@ class SamplingTensors:
         )
         # Because the memory is pinned, we can do non-blocking
         # transfer to device.
-        rank_debug(f"Copying sampling tensors to device {device}")
+        breakpoint()
+        rank_debug(f"do_penalties {do_penalties}, Copying sampling tensors to device {device}")
         if current_platform.is_hpu():
             torch.hpu.synchronize()
         rank_debug(f"sync done")
