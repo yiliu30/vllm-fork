@@ -4,7 +4,7 @@ BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
 source "$BASH_DIR"/utils.sh
 ray stop --force
 # DO NOT change unless you fully undersand its purpose
-export PT_HPU_ENABLE_LAZY_COLLECTIVES=true
+# export PT_HPU_ENABLE_LAZY_COLLECTIVES=true
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 export HCCL_OVER_OFI=1
 export HCCL_GAUDI_DIRECT=1
@@ -24,9 +24,11 @@ export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 export VLLM_MOE_N_SLICE=8
 export VLLM_EP_SIZE=16
 export VLLM_TP_SIZE=16
-export PT_HPU_RECIPE_CACHE_CONFIG=/tmp/recipe_cache,True,16384
+export PT_HPU_RECIPE_CACHE_CONFIG=/tmp/recipe_cache,False,16384
 export VLLM_SKIP_WARMUP="true"
 export VLLM_LOGGING_LEVEL="DEBUG"
+export RAY_DEDUP_LOGS=0
+export VLLM_TRACE_FUNCTION=1
 block_size=128
 # DO NOT change ends...
 
