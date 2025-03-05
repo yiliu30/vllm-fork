@@ -489,7 +489,7 @@ def _apply_min_tokens_penalty(
     logits_to_penalize: List[Tuple[int, int]] = []
     logits_applied = 0
     for seq_group in sampling_metadata.seq_groups:
-        rank_debug(f"Sampler: seq_group: {seq_group}")
+        rank_debug(f"len(sampling_metadata.seq_groups): {len(sampling_metadata.seq_groups)} Sampler: seq_group: {seq_group}")
         seq_ids = seq_group.seq_ids
         sampling_params = seq_group.sampling_params
 

@@ -414,7 +414,7 @@ class MessageQueue:
                     if (time.monotonic() - start_time
                             > VLLM_RINGBUFFER_WARNING_INTERVAL * n_warning):
                         rank_debug(
-                            f"No available block found in {VLLM_RINGBUFFER_WARNING_INTERVAL} second. ",
+                            f"No available block found in {VLLM_RINGBUFFER_WARNING_INTERVAL} second. not written_flag={written_flag}, read_flag={read_flag}",
                         )
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)

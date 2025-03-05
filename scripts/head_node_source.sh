@@ -4,7 +4,7 @@ BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
 source "$BASH_DIR"/utils.sh
 ray stop --force
 # DO NOT change unless you fully undersand its purpose
-# export PT_HPU_ENABLE_LAZY_COLLECTIVES=true
+export PT_HPU_ENABLE_LAZY_COLLECTIVES=true
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 export HCCL_OVER_OFI=1
 export HCCL_GAUDI_DIRECT=1
