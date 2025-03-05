@@ -244,6 +244,12 @@ class Sampler(nn.Module):
         """
         assert logits is not None
         _, vocab_size = logits.shape
+        if current_platform.is_hpu():
+            rank_debug(f"before sync in forward")
+            import habana_frameworks.torch.core as htcore
+            htcore.mark_step()
+            torch.hpu.synchronize()
+            rank_debug(f"after sync in forward")
         rank_debug(f"Sampler: logits shape: {logits.shape}, device: {logits.device}, dtype: {logits.dtype}")
         # Prepare sampling tensors with pinned memory to avoid blocking.
         if not sampling_metadata.reuse_sampling_tensors:
