@@ -754,6 +754,7 @@ def _multinomial(
     num_samples: int,
     seq_groups: Optional[List[SequenceGroupToSample]] = None,
 ) -> torch.Tensor:
+    rank_debug(f"start of _multinomial: probs: {probs}, probs.shape: {probs.shape},probs.device: {probs.device}, num_samples: {num_samples}, seq_groups: {seq_groups}")
     if num_samples > 1:
         probs = probs.repeat_interleave(num_samples, dim=0)
     q = torch.empty_like(probs)
@@ -768,6 +769,7 @@ def _multinomial(
             q[sample_idx:sample_idx +
               stride].exponential_(generator=seq_group.generator)
             sample_idx += stride
+            rank_debug(f"start of _multinomial: sample_idx: {sample_idx}, stride: {stride}")
     return probs.div_(q).argmax(dim=1).view(-1, num_samples)
 
 
