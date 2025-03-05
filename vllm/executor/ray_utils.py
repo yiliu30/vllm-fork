@@ -276,11 +276,11 @@ def initialize_ray_cluster(
         ray.init(
             address=ray_address, 
             ignore_reinit_error=True,
-            runtime_env={
-                "env_vars": {
-                    "RAY_DEBUG": "1"
-                    }, 
-                }
+            # runtime_env={
+            #     "env_vars": {
+            #         "RAY_DEBUG": "1"
+            #         }, 
+            #     }
         )
         
 
