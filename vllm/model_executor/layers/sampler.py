@@ -488,6 +488,13 @@ def _apply_min_tokens_penalty(
     # list of indices in logits that will be set to -inf
     logits_to_penalize: List[Tuple[int, int]] = []
     logits_applied = 0
+
+    if current_platform.is_hpu():
+        rank_debug(f"before sync in _apply_min_tokens_penalty")
+        import habana_frameworks.torch.core as htcore
+        htcore.mark_step()
+        torch.hpu.synchronize()
+        rank_debug(f"after sync in _apply_min_tokens_penalty")
     for seq_group in sampling_metadata.seq_groups:
         rank_debug(f"len(sampling_metadata.seq_groups): {len(sampling_metadata.seq_groups)} Sampler: seq_group: {seq_group}")
         seq_ids = seq_group.seq_ids
@@ -515,6 +522,12 @@ def _apply_min_tokens_penalty(
                 # itertools.product pairs each seq index with every token id
                 logits_to_penalize.extend(
                     itertools.product(seqs_to_penalize, token_ids_to_penalize))
+        if current_platform.is_hpu():
+            rank_debug(f"_apply_min_tokens_penalty sync start")
+            import habana_frameworks.torch.core as htcore
+            htcore.mark_step()
+            torch.hpu.synchronize()
+            rank_debug(f"_apply_min_tokens_penalty sync done")
 
     if logits_to_penalize:
         # use zip and * to group indices along each dimension
@@ -943,6 +956,13 @@ def _sample_with_torch(
                                              greedy_samples)
 
         elif sampling_type in (SamplingType.RANDOM, SamplingType.RANDOM_SEED):
+            rank_debug(f"start to sample for sampling_type: {sampling_type}, long_sample_indices: {long_sample_indices}")
+            if current_platform.is_hpu():
+                
+                import habana_frameworks.torch.core as htcore
+                htcore.mark_step()
+                torch.hpu.synchronize()
+                rank_debug(f"sync done")
             max_n_in_batch = 1
             for seq_group in seq_groups:
                 if seq_group.is_prompt:
