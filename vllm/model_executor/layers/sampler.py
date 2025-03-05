@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from importlib.util import find_spec
 from math import inf
 from typing import Dict, Iterator, List, Optional, Tuple, Union
-
+from vllm.platforms import current_platform
 import msgspec
 import torch
 import torch.nn as nn
@@ -844,6 +844,7 @@ def get_pythonized_sample_results(
     )
 
     for sampling_type in SamplingType:
+        rank_debug(f"start to handle sampling_type: {sampling_type}")
         if sampling_type not in sample_metadata:
             continue
         (seq_group_id, seq_groups) = sample_metadata[sampling_type]
@@ -912,6 +913,7 @@ def _sample_with_torch(
     # Counterintiutively, having two loops here is actually faster.
     # The first loop can run without waiting on GPU<->CPU sync.
     for sampling_type in SamplingType:
+        
         sample_indices = categorized_sample_indices[sampling_type]
         num_tokens = len(sample_indices)
         if num_tokens == 0:
@@ -971,7 +973,11 @@ def _sample_with_torch(
             beam_search_logprobs = logprobs[sample_indices]
         else:
             raise ValueError(f"Unsupported sampling type: {sampling_type}")
-
+        if current_platform.is_hpu():
+            rank_debug(f"start to synchronize for sampling_type: {sampling_type}")
+            import habana_frameworks.torch.core as htcore
+            htcore.mark_step()
+            torch.hpu.synchronize()
     # Encapsulate arguments for computing Pythonized sampler
     # results, whether deferred or otherwise.
     maybe_deferred_args = SampleResultArgsType(

@@ -633,5 +633,9 @@ class SamplingTensors:
             prompt_tokens=prompt_t.to(device=device, non_blocking=non_blocking),
             output_tokens=output_t.to(device=device, non_blocking=non_blocking),
         )
+        # if current_platform.is_hpu():
+        #     import habana_frameworks.torch.core as htcore
+        #     htcore.mark_step()
+        #     torch.hpu.synchronize()
         rank_debug(f"Copying sampling tensors to device {device} done")
         return res
