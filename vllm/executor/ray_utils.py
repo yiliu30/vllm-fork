@@ -273,7 +273,17 @@ def initialize_ray_cluster(
                      ignore_reinit_error=True,
                      num_gpus=parallel_config.world_size)
     else:
-        ray.init(address=ray_address, ignore_reinit_error=True)
+        ray.init(
+            address=ray_address, 
+            ignore_reinit_error=True,
+            runtime_env={
+                "env_vars": {
+                    "RAY_DEBUG": "1"
+                    }, 
+                }
+        )
+        
+
 
     if parallel_config.placement_group:
         # Placement group is already set.
