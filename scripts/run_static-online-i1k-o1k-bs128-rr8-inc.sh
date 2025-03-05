@@ -42,7 +42,7 @@ python -m vllm.entrypoints.openai.api_server \
     --use-v2-block-manager \
     --num_scheduler_steps ${multi_step}\
     --max-model-len 2048 \
-    --distributed_executor_backend ray \
+    --distributed_executor_backend mp \
     --gpu_memory_utilization ${gpu_utils} \
     --trust_remote_code \
     --quantization inc \
@@ -52,7 +52,7 @@ pid=$(($!-1))
 
 until [[ "$n" -ge 100 ]] || [[ $ready == true ]]; do
     n=$((n+1))
-    if grep -q "Uvicorn running on" benchmark_logs/serving.log; then
+    if grep -q "Uvicorn running on" benchmark_logs/serving_inc.log; then
         break
     fi
     sleep 5s
@@ -60,16 +60,16 @@ done
 sleep 5s
 echo ${pid}
 
-num_prompts=300
-request_rate=8
-start_time=$(date +%s)
-echo "Start to benchmark"
-python benchmarks/benchmark_serving.py --backend vllm --model ${model} --tokenizer ${tokenizer} --dataset-name sonnet --dataset-path benchmarks/sonnet.txt --request-rate ${request_rate} --num-prompts ${num_prompts} --port ${vllm_port} --sonnet-input-len ${in_len} --sonnet-output-len ${out_len} --sonnet-prefix-len 100 \
---save-result 2>&1 | tee benchmark_logs/static-online-gaudi3-${gpu_utils}util-TPparallel${tp_parrallel}-multistep${multi_step}_nprompt${num_prompts}_rrate${request_rate}_bs${bs}_i${in_len}_o${out_len}_prepad.log
-end_time=$(date +%s)
-echo "Time elapsed: $((end_time - start_time))s"
+# num_prompts=300
+# request_rate=8
+# start_time=$(date +%s)
+# echo "Start to benchmark"
+# python benchmarks/benchmark_serving.py --backend vllm --model ${model} --tokenizer ${tokenizer} --dataset-name sonnet --dataset-path benchmarks/sonnet.txt --request-rate ${request_rate} --num-prompts ${num_prompts} --port ${vllm_port} --sonnet-input-len ${in_len} --sonnet-output-len ${out_len} --sonnet-prefix-len 100 \
+# --save-result 2>&1 | tee benchmark_logs/static-online-gaudi3-${gpu_utils}util-TPparallel${tp_parrallel}-multistep${multi_step}_nprompt${num_prompts}_rrate${request_rate}_bs${bs}_i${in_len}_o${out_len}_prepad.log
+# end_time=$(date +%s)
+# echo "Time elapsed: $((end_time - start_time))s"
 
-sleep 10
+# sleep 10
 
-kill ${pid}
-#--backend openai-chat --endpoint "v1/chat/completions"
+# kill ${pid}
+# #--backend openai-chat --endpoint "v1/chat/completions"
