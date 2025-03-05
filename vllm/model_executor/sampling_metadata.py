@@ -613,10 +613,10 @@ class SamplingTensors:
         # transfer to device.
         # breakpoint()
         rank_debug(f"do_penalties {do_penalties}, Copying sampling tensors to device {device}")
-        if current_platform.is_hpu():
-            import habana_frameworks.torch.core as htcore
-            htcore.mark_step()
-            torch.hpu.synchronize()
+        # if current_platform.is_hpu():
+        #     import habana_frameworks.torch.core as htcore
+        #     htcore.mark_step()
+        #     torch.hpu.synchronize()
         rank_debug(f"sync done")
         non_blocking = pin_memory
         res = cls(
@@ -633,4 +633,5 @@ class SamplingTensors:
             prompt_tokens=prompt_t.to(device=device, non_blocking=non_blocking),
             output_tokens=output_t.to(device=device, non_blocking=non_blocking),
         )
+        rank_debug(f"Copying sampling tensors to device {device} done")
         return res
