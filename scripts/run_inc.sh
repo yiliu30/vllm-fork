@@ -31,11 +31,12 @@ start_worker() {
     sleep 3
     ray status
 
+    # Reset the environment and start the Ray cluster, skip run application
     if [[ "$SKIP" == "yes" ]]; then
         echo "Skipping the prepare/quant step..."
         return
     fi
-    # Start quant or measure with or without smoke
+    # Start quant or measure
     sleep 3
     if [[ "$SMOKE" == "yes" ]]; then
         if [[ "$MODE" == "quant" ]]; then
