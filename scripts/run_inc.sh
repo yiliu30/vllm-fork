@@ -20,7 +20,7 @@ start_worker() {
     
     # Check if quant mode is selected
     if [[ "$MODE" == "quant" ]]; then
-        export QUANT_CONFIG=$INC_quant_CONFIG_FILENAME
+        export QUANT_CONFIG=$INC_QUANT_CONFIG_FILENAME
     else
         export QUANT_CONFIG=$INC_MEASURE_CONFIG_FILENAME
     fi
@@ -31,10 +31,14 @@ start_worker() {
     sleep 3
     ray status
 
-    # Start quant
+    # Start quant or measure with or without smoke
     sleep 3
     echo "Starting prepare"
-    python inc_example_two_nodes.py --mode prepare --smoke
+    if [[ "$SMOKE" == "yes" ]]; then
+        python inc_example_two_nodes.py --mode prepare --smoke
+    else
+        python inc_example_two_nodes.py --mode prepare
+    fi
 }
 
 # Function to start the Ray head node
@@ -44,7 +48,7 @@ start_head() {
     
     # Check if quant mode is selected
     if [[ "$MODE" == "quant" ]]; then
-        export QUANT_CONFIG=$INC_quant_CONFIG_FILENAME
+        export QUANT_CONFIG=$INC_QUANT_CONFIG_FILENAME
     else
         export QUANT_CONFIG=$INC_MEASURE_CONFIG_FILENAME
     fi
@@ -62,6 +66,10 @@ while [[ "$#" -gt 0 ]]; do
         --mode)
             MODE="$2"
             shift 2
+            ;;
+        --smoke)
+            SMOKE="yes"
+            shift
             ;;
         *)
             echo "Unknown option: $1"
@@ -98,6 +106,9 @@ fi
 
 set +x
 
+
 # Example to run:
-# bash run_inc.sh --node head --mode quant
-# bash run_inc.sh --node worker --mode measure
+# bash run_inc.sh --node head --mode quant --smoke
+# bash run_inc.sh --node worker --mode quant --smoke
+# bash run_inc.sh --node head --mode measure --smoke
+# bash run_inc.sh --node worker --mode measure --smoke
