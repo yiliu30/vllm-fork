@@ -6,11 +6,13 @@ load_config() {
     CONFIG_FILE="devices.conf"
     if [[ -f "$CONFIG_FILE" ]]; then
         source "$CONFIG_FILE"
+        echo "Config file sourced successfully"
     else
         echo "Config file not found!"
         exit 1
     fi
 }
+
 
 # Function to start the Ray worker node
 start_worker() {
@@ -35,8 +37,6 @@ start_head() {
     BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
     source "$BASH_DIR"/"$HEAD_NODE_SOURCE_FILENAME"
     export QUANT_CONFIG=$INC_MEASURE_CONFIG_FILENAME
-    # echo ray port
-    echo "got ray port: $RAY_CLUSTER_PORT"
     ray start --head --port $RAY_CLUSTER_PORT
 }
 
