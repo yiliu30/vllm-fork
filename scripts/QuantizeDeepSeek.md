@@ -85,7 +85,7 @@ VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation
 ### Exporting Environment Variables
 >
 > [!NOTE]
-> Please update the `VLLM_HOST_IP`, `HCCL_SOCKET_IFNAME` and `GLOO_SOCKET_IFNAME` variables in the `head_node_source.sh` and `worker_node_source.sh` scripts to match your devices.
+> Please update the `VLLM_HOST_IP`, `HCCL_SOCKET_IFNAME` and `GLOO_SOCKET_IFNAME` variables in the `devices.conf` to match your devices.
 
 - Head Node
 
