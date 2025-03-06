@@ -10,6 +10,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 file_path = os.path.abspath(__file__)
 dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
 
+default_dataset_path = "./tc_datasets/qa_out_0216_r1_300_max_30k_formatted.jsonl"
+
 model_path = "/data/models/DeepSeek-R1/"
 model_path = "/hf/hf_models/DeepSeek-R1"
 model_path = "/mnt/disk5/hf_models/DeepSeek-R1-BF16"
@@ -20,6 +22,7 @@ parser.add_argument("--tokenizer", type=str, default=model_path, help="The model
 parser.add_argument("--tp_size", type=int, default=16, help="The number of threads.")
 parser.add_argument("--ep_size", type=int, default=16, help="The number of threads.")
 parser.add_argument("--dataset", type=str, default=None, help="The dataset.")
+parser.add_argument("-dpath","--dataset_path", type=str, default=default_dataset_path, help="The dataset path.")
 parser.add_argument("--isl", type=int, default=1024, help="input sequence length.")
 parser.add_argument("--osl", type=int, default=128, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
@@ -54,10 +57,32 @@ if __name__ == "__main__":
     ]
 
     from utils import get_prompts, get_prompt_token_ids, get_pile_prompts
-    if args.smoke:
-        prompts = get_prompts()
+    if args.dataset == "tc":
+        print("Using tc dataset.")
+        from utils import get_prompts, get_prompt_token_ids, get_pile_prompts
+        dataset_path = args.dataset_path
+        from utils import get_tokenizer, sample_tc_requests
+        tokenizer = get_tokenizer(args.tokenizer)
+        num_requests = None
+        if args.smoke:
+            num_requests = 3
+        prompts = sample_tc_requests(
+            filepath=dataset_path,
+            tokenizer=tokenizer,
+            num_requests=num_requests,
+            do_random=args.random,
+        )
+        # FIXME: (Yi) 1024 is too small for tc dataset
+        prompt_token_ids = get_prompt_token_ids(
+            args.model, prompts, least_tokens
+        )
+        gt = None
+        print(f"Got {len(prompts)} prompts.")
     else:
-        prompts = get_pile_prompts(args.model, num_samples)
+        if args.smoke:
+            prompts = get_prompts()
+        else:
+            prompts = get_pile_prompts(args.model, num_samples)
     prompt_token_ids = get_prompt_token_ids(
         args.model, prompts, least_tokens
     )
