@@ -21,3 +21,5 @@ ray start --address="$HEAD_NODE_IP:$RAY_CLUSTER_PORT"
 # check ray status
 sleep 3
 ray status
+
+set +x

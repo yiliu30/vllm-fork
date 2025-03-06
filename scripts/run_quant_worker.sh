@@ -16,3 +16,9 @@ source "$BASH_DIR"/worker_node_source.sh
 export QUANT_CONFIG=$INC_QUANT_CONFIG_FILENAME
 
 ray start --address="$HEAD_NODE_IP:$RAY_CLUSTER_PORT"
+
+# check ray status
+sleep 3
+ray status
+
+set +x

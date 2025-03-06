@@ -15,3 +15,5 @@ BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
 source "$BASH_DIR"/head_node_source.sh
 export QUANT_CONFIG=$INC_QUANT_CONFIG_FILENAME
 ray start --head --port $RAY_CLUSTER_PORT
+
+set +x
