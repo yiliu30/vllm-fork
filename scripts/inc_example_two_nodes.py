@@ -25,6 +25,7 @@ parser.add_argument("--dataset", type=str, default=None, help="The dataset.")
 parser.add_argument("-dpath","--dataset_path", type=str, default=default_dataset_path, help="The dataset path.")
 parser.add_argument("--isl", type=int, default=1024, help="input sequence length.")
 parser.add_argument("--osl", type=int, default=128, help="output sequence length.")
+parser.add_argument("--least_tokens", type=int, default=1024, help="calibration input sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--mode", type=str, default=None, choices=["quant", "prepare"], help="The mode.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
@@ -37,7 +38,7 @@ max_num_seqs = 4
 # ==-------------------------------------------------------------------------==
 # Calibration parameters
 # ==-------------------------------------------------------------------------==
-least_tokens = 1024
+least_tokens = args.least_tokens
 num_samples = 512
 max_new_tokens = 32
 seed = 42
@@ -73,11 +74,6 @@ if __name__ == "__main__":
             do_random=args.random,
         )
         # FIXME: (Yi) 1024 is too small for tc dataset
-        prompt_token_ids = get_prompt_token_ids(
-            args.model, prompts, least_tokens
-        )
-        gt = None
-        print(f"Got {len(prompts)} prompts.")
     else:
         if args.smoke:
             prompts = get_prompts()
@@ -86,6 +82,7 @@ if __name__ == "__main__":
     prompt_token_ids = get_prompt_token_ids(
         args.model, prompts, least_tokens
     )
+    print(f"Got {len(prompts)} prompts, length of first prompt: {len(prompt_token_ids[0])}.")
     gt = None
     # Create a sampling params object.
     sampling_params = SamplingParams(
@@ -164,6 +161,7 @@ if __name__ == "__main__":
         prompt_token_ids = output.prompt_token_ids
         generated_text = output.outputs[0].text
         print("====================================")
+        print(f"#Prompt tokens: {len(prompt_token_ids)}")
         print(f"Prompt[:10]: {prompt_token_ids[:10]!r}")
         print(f"Prompt[-10:]: {prompt_token_ids[-10:]!r}")
         print(f"Generated text: {generated_text!r}")

@@ -57,10 +57,10 @@ unset QUANT_CONFIG
 unset LOW_CPU_MEM
 
 # Fot prepare
-max_num_batched_tokens=2048
-max_num_seqs=1024
-input_min=1024
-input_max=1024
+max_num_batched_tokens=8096
+max_num_seqs=4
+input_min=4096
+input_max=4096
 output_max=32
 
 
