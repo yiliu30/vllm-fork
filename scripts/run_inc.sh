@@ -31,17 +31,21 @@ start_worker() {
     sleep 3
     ray status
 
+    if [[ "$SKIP" == "yes" ]]; then
+        echo "Skipping the prepare/quant step..."
+        return
+    fi
     # Start quant or measure with or without smoke
     sleep 3
     if [[ "$SMOKE" == "yes" ]]; then
         if [[ "$MODE" == "quant" ]]; then
-            python inc_example_two_nodes.py --mode quant --smoke
+            python inc_example_two_nodes.py --mode quant --smoke --fp8_kvcache
         else
             python inc_example_two_nodes.py --mode prepare --smoke
         fi
     else
         if [[ "$MODE" == "quant" ]]; then
-            python inc_example_two_nodes.py --mode quant
+            python inc_example_two_nodes.py --mode quant --fp8_kvcache
         else
             python inc_example_two_nodes.py --mode prepare
         fi
@@ -76,6 +80,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --smoke)
             SMOKE="yes"
+            shift
+            ;;
+        --skip)
+            SKIP="yes"
             shift
             ;;
         *)
@@ -115,7 +123,8 @@ set +x
 
 
 # Example to run:
+# For reset the environment and start the ray cluster only
+# bash run_inc.sh --node head --mode quant --smoke --skip
+# For reset the environment and start the ray cluster and start apply the quant or measure
 # bash run_inc.sh --node head --mode quant --smoke
-# bash run_inc.sh --node worker --mode quant --smoke
 # bash run_inc.sh --node head --mode measure --smoke
-# bash run_inc.sh --node worker --mode measure --smoke
