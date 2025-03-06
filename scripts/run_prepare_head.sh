@@ -13,7 +13,7 @@ fi
 
 # reset the environment and start the ray cluster
 BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
-source "$BASH_DIR"/head_node_source.sh
+source "$BASH_DIR"/"$HEAD_NODE_SOURCE_FILENAME"
 export QUANT_CONFIG=$INC_MEASURE_CONFIG_FILENAME
 
 ray start --head --port $RAY_CLUSTER_PORT

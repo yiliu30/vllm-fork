@@ -21,4 +21,10 @@ ray start --address="$HEAD_NODE_IP:$RAY_CLUSTER_PORT"
 sleep 3
 ray status
 
+
+# start quant
+sleep 3
+echo "Starting quant"
+python inc_example_two_nodes.py --mode quant --smoke
+
 set +x
