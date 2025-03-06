@@ -33,11 +33,18 @@ start_worker() {
 
     # Start quant or measure with or without smoke
     sleep 3
-    echo "Starting prepare"
     if [[ "$SMOKE" == "yes" ]]; then
-        python inc_example_two_nodes.py --mode prepare --smoke
+        if [[ "$MODE" == "quant" ]]; then
+            python inc_example_two_nodes.py --mode quant --smoke
+        else
+            python inc_example_two_nodes.py --mode prepare --smoke
+        fi
     else
-        python inc_example_two_nodes.py --mode prepare
+        if [[ "$MODE" == "quant" ]]; then
+            python inc_example_two_nodes.py --mode quant
+        else
+            python inc_example_two_nodes.py --mode prepare
+        fi
     fi
 }
 
