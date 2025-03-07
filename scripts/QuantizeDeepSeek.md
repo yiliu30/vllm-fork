@@ -13,8 +13,8 @@
     - [Inference with FP8 Models on a Single Node](#inference-with-fp8-models-on-a-single-node)
         - [Prerequisites](#prerequisites)
         - [Running the Example](#running-the-example)
-    - [Calibration with Custom Dataset](#calibration-with-custom-dataset)
     - [Accuracy Evaluation WIP](#accuracy-evaluation-wip)
+    - [Calibration with Custom Dataset WIP](#calibration-with-custom-dataset-wip)
 
 <!-- /TOC -->
 
@@ -56,6 +56,8 @@ For more details, please refer to the <https://github.com/yangulei/vllm-fork/blo
 - Docker: 1.20.0-521
 
 ### Install Dependencies
+
+- INC https://github.com/intel/neural-compressor/tree/dev/ds_r1
 
 ```bash
 git clone https://github.com/intel/neural-compressor.git inc
