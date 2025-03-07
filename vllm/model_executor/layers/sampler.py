@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from importlib.util import find_spec
 from math import inf
 from typing import Dict, Iterator, List, Optional, Tuple, Union
-
+from vllm.logger import ForkedPdb, show_mem_info
 import msgspec
 import torch
 import torch.nn as nn
-
 import vllm.envs as envs
+from vllm.platforms import current_platform
 from vllm.model_executor.layers.utils import apply_penalties
 from vllm.model_executor.sampling_metadata import (SamplingMetadata,
                                                    SamplingTensors,
@@ -323,6 +323,11 @@ class Sampler(nn.Module):
             # Pythonize logprobs now (GPU -> CPU); do not defer.
             assert not isinstance(maybe_deferred_sample_results,
                                   SampleResultArgsType)
+            if current_platform.is_hpu():
+                # FIXME: the program crash when evaluating the mmlu
+                import habana_frameworks.torch.core as htcore
+                htcore.mark_step()
+                torch.hpu.synchronize() 
             prompt_logprobs, sample_logprobs = get_logprobs(
                 logprobs, sampling_metadata, maybe_deferred_sample_results)
 

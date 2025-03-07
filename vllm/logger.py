@@ -61,6 +61,13 @@ class ForkedPdb(pdb.Pdb):
             sys.stdin = _stdin
 
 
+
+def debug_rank0():
+    import torch.distributed as dist
+    import pdb
+    if dist.get_rank() == 0:  # Debug only rank 0 process
+        pdb.set_trace()
+
 @lru_cache
 def _print_info_once(logger: Logger, msg: str) -> None:
     # Set the stacklevel to 2 to print the original caller's line info
