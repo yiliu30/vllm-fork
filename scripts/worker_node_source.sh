@@ -56,10 +56,10 @@ unset LOW_CPU_MEM
 # output_max=1024
 
 # Fot prepare
-max_num_batched_tokens=2048
-max_num_seqs=1024
-input_min=1024
-input_max=1024
+max_num_seqs=$CALIBRATION_MAX_BATCH_SIZE
+input_min=$CALIBRATION_SAMPLE_LENGTH
+input_max=$CALIBRATION_SAMPLE_LENGTH
+max_num_batched_tokens=$((2 * input_max))
 output_max=32
 
 unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX

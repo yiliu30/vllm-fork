@@ -125,7 +125,7 @@ set +x
 
 # Example to run:
 # For reset the environment and start the ray cluster only
-# bash run_inc.sh --node head --mode quant --smoke --skip
+# source run_inc.sh --node head --mode quant --smoke --skip
 # For reset the environment and start the ray cluster and start apply the quant or measure
-# bash run_inc.sh --node head --mode quant --smoke
-# bash run_inc.sh --node head --mode measure --smoke
+# source run_inc.sh --node head --mode quant --smoke
+# source run_inc.sh --node head --mode measure --smoke
