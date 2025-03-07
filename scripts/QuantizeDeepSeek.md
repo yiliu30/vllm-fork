@@ -57,24 +57,6 @@ For more details, please refer to the <https://github.com/yangulei/vllm-fork/blo
 
 ### Install Dependencies
 
-<!-- TOC -->
-
-- [BKC for Quantizing DeepSeek V3/R1 with vLLM and INC](#bkc-for-quantizing-deepseek-v3r1-with-vllm-and-inc)
-    - [Support Matrix](#support-matrix)
-    - [Setting Up a Two-Node Environment](#setting-up-a-two-node-environment)
-        - [Prerequisites](#prerequisites)
-        - [Install Dependencies](#install-dependencies)
-        - [Exporting Environment Variables](#exporting-environment-variables)
-    - [Calibration](#calibration)
-    - [Inference with FP8 Models on Two Nodes](#inference-with-fp8-models-on-two-nodes)
-    - [Inference with FP8 Models on a Single Node](#inference-with-fp8-models-on-a-single-node)
-        - [Prerequisites](#prerequisites)
-        - [Running the Example](#running-the-example)
-    - [Accuracy Evaluation WIP](#accuracy-evaluation-wip)
-    - [Calibration with Custom Dataset](#calibration-with-custom-dataset)
-
-<!-- /TOC -->- INC https://github.com/intel/neural-compressor/tree/dev/ds_r1
-
 ```bash
 git clone https://github.com/intel/neural-compressor.git inc
 cd inc
