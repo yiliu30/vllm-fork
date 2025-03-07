@@ -13,8 +13,8 @@
     - [Inference with FP8 Models on a Single Node](#inference-with-fp8-models-on-a-single-node)
         - [Prerequisites](#prerequisites)
         - [Running the Example](#running-the-example)
+    - [Calibration with Custom Dataset](#calibration-with-custom-dataset)
     - [Accuracy Evaluation WIP](#accuracy-evaluation-wip)
-    - [Calibration with Custom Dataset WIP](#calibration-with-custom-dataset-wip)
 
 <!-- /TOC -->
 
@@ -57,7 +57,23 @@ For more details, please refer to the <https://github.com/yangulei/vllm-fork/blo
 
 ### Install Dependencies
 
-- INC https://github.com/intel/neural-compressor/tree/dev/ds_r1
+<!-- TOC -->
+
+- [BKC for Quantizing DeepSeek V3/R1 with vLLM and INC](#bkc-for-quantizing-deepseek-v3r1-with-vllm-and-inc)
+    - [Support Matrix](#support-matrix)
+    - [Setting Up a Two-Node Environment](#setting-up-a-two-node-environment)
+        - [Prerequisites](#prerequisites)
+        - [Install Dependencies](#install-dependencies)
+        - [Exporting Environment Variables](#exporting-environment-variables)
+    - [Calibration](#calibration)
+    - [Inference with FP8 Models on Two Nodes](#inference-with-fp8-models-on-two-nodes)
+    - [Inference with FP8 Models on a Single Node](#inference-with-fp8-models-on-a-single-node)
+        - [Prerequisites](#prerequisites)
+        - [Running the Example](#running-the-example)
+    - [Accuracy Evaluation WIP](#accuracy-evaluation-wip)
+    - [Calibration with Custom Dataset](#calibration-with-custom-dataset)
+
+<!-- /TOC -->- INC https://github.com/intel/neural-compressor/tree/dev/ds_r1
 
 ```bash
 git clone https://github.com/intel/neural-compressor.git inc
@@ -182,6 +198,19 @@ QUANT_CONFIG=inc_quant_with_fp8kv_one_node_config.json python inc_example_one_no
 > If your DRAM is less than 2T, please use `LOW_CPU_MEM=1` to open layer-by-layer conversion.
 
 
-## Accuracy Evaluation (WIP)
+## Calibration with Custom Dataset
 
-## Calibration with Custom Dataset (WIP)
+> [!NOTE]
+> Please update the `CALIBRATION_SAMPLE_LENGTH` to `4096` and `CALIBRATION_MAX_BATCH_SIZE` to `1` in the `devices.conf` before proceeding.
+
+Taking the FP8 KVCache as an example, we can run the calibration procedure with the `tc` dataset as follows:
+
+```bash
+# vllm root
+cd vllm/scripts
+export QUANT_CONFIG=inc_measure_with_fp8kv_config.json
+# restart ray 
+python inc_example_two_nodes.py --mode prepare --dataset tc --dpatch /path/to/dataset --least_tokens 4096
+```
+
+## Accuracy Evaluation (WIP)

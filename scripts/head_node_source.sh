@@ -57,10 +57,10 @@ unset QUANT_CONFIG
 unset LOW_CPU_MEM
 
 # Fot prepare
-max_num_batched_tokens=8096
-max_num_seqs=4
-input_min=4096
-input_max=4096
+max_num_seqs=$CALIBRATION_MAX_BATCH_SIZE
+input_min=$CALIBRATION_SAMPLE_LENGTH
+input_max=$CALIBRATION_SAMPLE_LENGTH
+max_num_batched_tokens=$((2 * input_max))
 output_max=32
 
 
