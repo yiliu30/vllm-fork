@@ -5,6 +5,7 @@ import os
 import json
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_DATASETS_TRUST_REMOTE_CODE"] = "True"
 
 model_path = "/data/models/DeepSeek-R1/"
 #model_path = "/mnt/workdisk/dohayon/Projects/R1/DeepSeek-R1-fp8/"
@@ -40,7 +41,7 @@ os.environ["VLLM_GRAPH_PROMPT_RATIO "] = "0.5"
 # os.environ["VLLM_MLA_DISABLE_REQUANTIZATION"] = "1"
 # os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 
-max_num_seqs = 4
+max_num_seqs = 8
 
 if __name__ == "__main__":
 
@@ -137,9 +138,9 @@ if __name__ == "__main__":
         with open(f"{tasks_name}_ep{args.ep_size}_result_samples.jsonl", "w") as f:
             json.dump(results['results'], f)
             f.write("\n")
-            for sample in results['samples'][tasks_name]:
-                json.dump(sample, f)
-                f.write("\n")
+            # for sample in results['samples'][tasks_name]:
+            #     json.dump(sample, f)
+            #     f.write("\n")
             
     
     del llm
