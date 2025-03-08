@@ -32,9 +32,9 @@ block_size=128
 
 
 # memory footprint tunning params
-export VLLM_GPU_MEMORY_UTILIZATION=0.98
-export VLLM_GRAPH_RESERVED_MEM=0.35
-export VLLM_GRAPH_PROMPT_RATIO=0
+export VLLM_GPU_MEMORY_UTILIZATION=0.5
+export VLLM_GRAPH_RESERVED_MEM=0.5
+export VLLM_GRAPH_PROMPT_RATIO=0.5
 # params
 # max_num_batched_tokens=2048
 # max_num_seqs=1024
@@ -47,11 +47,12 @@ unset QUANT_CONFIG
 unset LOW_CPU_MEM
 
 # Fot prepare
-max_num_batched_tokens=2048
-max_num_seqs=1024
-input_min=1024
+
+max_num_seqs=16
+input_min=128
 input_max=1024
-output_max=32
+max_num_batched_tokens=$(( $max_num_seqs * $input_max ))
+output_max=4
 
 
 unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX

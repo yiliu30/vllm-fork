@@ -1399,6 +1399,7 @@ class Scheduler:
         # Schedule sequence groups.
         # This function call changes the internal states of the scheduler
         # such as self.running, self.swapped, and self.waiting.
+        # logger.info(f"start scheduling")
         scheduler_start_time = time.perf_counter()
 
         scheduler_outputs: SchedulerOutputs = self._schedule()
@@ -1536,6 +1537,7 @@ class Scheduler:
         # Add this to scheduler time to all the sequences that are currently
         # running. This will help estimate if the scheduler is a significant
         # component in the e2e latency.
+        # logger.info(f"end scheduling, took {scheduler_time:.2f} seconds")
         for seq_group in self.running:
             if seq_group is not None and seq_group.metrics is not None:
                 if seq_group.metrics.scheduler_time is not None:

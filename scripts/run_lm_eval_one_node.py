@@ -23,11 +23,40 @@ args = parser.parse_args()
 
 os.environ["VLLM_EP_SIZE"] = f"{args.ep_size}"
 os.environ["VLLM_TP_SIZE"] = f"{args.tp_size}"
-os.environ["VLLM_SKIP_WARMUP"] = "true"
+os.environ["VLLM_SKIP_WARMUP"] = "false"
 os.environ["QUANT_CONFIG"] = "inc_quant_with_fp8kv_one_node_config.json"
 gpu_memory_utilization = 0.5
 os.environ["VLLM_GRAPH_RESERVED_MEM"] = "0.5"
 os.environ["VLLM_GRAPH_PROMPT_RATIO "] = "0.5"
+
+# VLLM_DECODE_BS_BUCKET_STEP=1
+os.environ["VLLM_TRACE_FUNCTION"]="1"
+
+os.environ["VLLM_PROMPT_BS_BUCKET_MIN"] = "1"
+os.environ["VLLM_PROMPT_BS_BUCKET_MAX"] = "1"
+os.environ["VLLM_PROMPT_BS_BUCKET_STEP"] = "1"
+
+os.environ["VLLM_PROMPT_SEQ_BUCKET_MIN"] = "256"
+os.environ["VLLM_PROMPT_SEQ_BUCKET_MAX"] = "1024"
+os.environ["VLLM_PROMPT_SEQ_BUCKET_STEP"] = "512"
+
+os.environ["VLLM_DECODE_BS_BUCKET_STEP"] = "1"
+os.environ["VLLM_DECODE_BS_BUCKET_MIN"] = "1"
+os.environ["VLLM_DECODE_BS_BUCKET_MAX"] = "1"
+
+os.environ["VLLM_DECODE_BLOCK_BUCKET_MAX"] = "16"
+os.environ["VLLM_DECODE_BLOCK_BUCKET_MIN"] = "16"
+os.environ["VLLM_DECODE_BLOCK_BUCKET_STEP"] = "16"
+
+
+
+# print new VLLM ENVS
+print("VLLM ENVS:")
+for k, v in os.environ.items():
+    if "VLLM" in k:
+        print(f"{k}: {v}")
+print("============")
+
 # os.environ["HABANA_VISIBLE_DEVICES"] = "ALL"
 # os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
 # if args.ep_size > 1:
@@ -40,7 +69,8 @@ os.environ["VLLM_GRAPH_PROMPT_RATIO "] = "0.5"
 # os.environ["VLLM_MLA_DISABLE_REQUANTIZATION"] = "1"
 # os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 
-max_num_seqs = 4
+
+max_num_seqs = 1
 
 if __name__ == "__main__":
 
@@ -67,9 +97,10 @@ if __name__ == "__main__":
             weights_load_device="cpu",
             kv_cache_dtype="fp8_inc",
             trust_remote_code=True,
-            max_model_len=4096,
+            max_model_len=2048,
             dtype="bfloat16",
             max_num_seqs=max_num_seqs,
+            batch_size=max_num_seqs,
             gpu_memory_utilization=gpu_memory_utilization,
         )
 
@@ -128,6 +159,7 @@ if __name__ == "__main__":
             model=llm,
             tasks=tasks,
             batch_size=max_num_seqs,
+            max_batch_size=max_num_seqs,
             limit=args.limit,
         )
         print("Evaluation Results Table: ")

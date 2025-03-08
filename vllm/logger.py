@@ -73,6 +73,10 @@ def _print_info_once(logger: Logger, msg: str) -> None:
     # Set the stacklevel to 2 to print the original caller's line info
     logger.info(msg, stacklevel=2)
 
+def _rank_info(logger: Logger, msg: str) -> None:
+    import torch
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else -1
+    logger.info(f"[Rank {rank}] {msg}", stacklevel=2)
 
 @lru_cache
 def _print_warning_once(logger: Logger, msg: str) -> None:
@@ -149,6 +153,7 @@ def init_logger(name: str) -> _VllmLogger:
     methods_to_patch = {
         "info_once": _print_info_once,
         "warning_once": _print_warning_once,
+        "rank_info": _rank_info,
     }
 
     for method_name, method in methods_to_patch.items():
