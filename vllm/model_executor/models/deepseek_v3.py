@@ -673,7 +673,7 @@ class DeepseekV3Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        logger.rank_info(f"input_ids shape : {input_ids.shape}")
+        logger.warning_once(f"input_ids shape : {input_ids.shape}")
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
