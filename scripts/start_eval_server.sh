@@ -4,10 +4,10 @@ model_path="/mnt/disk5/hf_models/DeepSeek-R1-BF16"
 
 
 tp_parrallel=8
-bs=16
+bs=4
 in_len=1024
-out_len=32
-model_max_len=8192
+out_len=4
+model_max_len=2048
 multi_step=1
 total_len=$((in_len + out_len))
 ep_size=8
@@ -68,7 +68,7 @@ python -m vllm.entrypoints.openai.api_server \
     --trust_remote_code \
     --quantization inc \
     --weights_load_device cpu \
-    --kv_cache_dtype fp8_inc  2>&1 | tee benchmark_logs/${log_name}_serving_lm_eval.log
+    --kv_cache_dtype fp8_inc  2>&1 | tee eval_logs/${log_name}_serving_lm_eval.log
 
 
 

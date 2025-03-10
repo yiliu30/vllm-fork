@@ -45,11 +45,11 @@ unset LOW_CPU_MEM
 # output_max=1024
 
 # Fot prepare
-max_num_batched_tokens=2048
-max_num_seqs=1024
-input_min=1024
-input_max=1024
-output_max=32
+max_num_batched_tokens=8192
+max_num_seqs=4
+input_min=128
+input_max=2048
+output_max=16
 
 unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX
 unset VLLM_PROMPT_SEQ_BUCKET_MIN VLLM_PROMPT_SEQ_BUCKET_STEP VLLM_PROMPT_SEQ_BUCKET_MAX

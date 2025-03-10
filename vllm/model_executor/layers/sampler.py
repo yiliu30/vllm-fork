@@ -8,6 +8,7 @@ from importlib.util import find_spec
 from math import inf
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 from vllm.logger import ForkedPdb, show_mem_info
+from vllm.logger import init_logger
 import msgspec
 import torch
 import torch.nn as nn
@@ -22,6 +23,8 @@ from vllm.sequence import (VLLM_INVALID_TOKEN_ID,
                            CompletionSequenceGroupOutput, Logprob,
                            PromptLogprobs, SampleLogprobs, SequenceOutput)
 from vllm.spec_decode.metrics import SpecDecodeWorkerMetrics
+
+logger = init_logger(__name__)
 
 if envs.VLLM_USE_FLASHINFER_SAMPLER and find_spec("flashinfer"):
     import flashinfer.sampling
@@ -1123,6 +1126,12 @@ def get_logprobs(
 
         assert len(next_token_ids) == len(query_indices)
 
+    if current_platform.is_hpu():
+        # FIXME: the program crash when evaluating the mmlu
+        import habana_frameworks.torch.core as htcore
+        htcore.mark_step()
+        torch.hpu.synchronize()
+
     if len(query_indices) == 0:
         empty_sampled_logprob: SampleLogprobs = []
         empty_prompt_logprob: Optional[PromptLogprobs] = None
@@ -1149,7 +1158,7 @@ def get_logprobs(
             next_token_ids_gpu,
         )
         assert selected_logprobs.shape[0] == ranks.shape[0]
-
+        show_mem_info(logger, f"Before topk logprobs")
         # We need to compute top k only if there exists logprobs > 0.
         if largest_num_logprobs > 0:
             # Logprobs of topk tokens for a batch of sequence groups.

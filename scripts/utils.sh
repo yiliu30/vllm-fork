@@ -59,7 +59,7 @@ set_bucketing(){
     export VLLM_PROMPT_BS_BUCKET_STEP=${VLLM_PROMPT_BS_BUCKET_STEP:-$prompt_bs_step}
     export VLLM_PROMPT_BS_BUCKET_MAX=${VLLM_PROMPT_BS_BUCKET_MAX:-$prompt_bs_max}
 
-    prompt_seq_step=128
+    prompt_seq_step=512
     # prompt_seq_min = CEILING.MATH(input_min, prompt_seq_step)
     prompt_seq_min=$(( ($input_min + $prompt_seq_step -1) / $prompt_seq_step * $prompt_seq_step ))
     # prompt_seq_max = CEILING.MATH(input_max, prompt_seq_step) + prompt_seq_step
