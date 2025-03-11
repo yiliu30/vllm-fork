@@ -229,4 +229,5 @@ python3 -m vllm.entrypoints.openai.api_server \
     --num-scheduler-steps "${scheduler_steps}" \
     --distributed_executor_backend mp \
     --gpu-memory-utilization "${gpu_memory_utilization}" \
+    --save-results "${case_name}".json \
     |& tee "${case_name}".log

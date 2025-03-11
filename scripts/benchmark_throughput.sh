@@ -254,4 +254,5 @@ python "$BASH_DIR/../benchmarks/benchmark_throughput.py" \
     --num-scheduler-steps "${scheduler_steps}" \
     --distributed_executor_backend mp \
     --gpu-memory-utilization "${gpu_memory_utilization}" \
+    --save-results "${case_name}".json \
     |& tee "${case_name}".log
