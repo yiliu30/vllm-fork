@@ -416,7 +416,8 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T], torch.nn.Module):
             # NOTE: We need transfer them to the accelerator in case they are initialized on the CPU.
             self.W_UV_O = torch.nn.Parameter(self.W_UV_O, requires_grad=False)
             self.W_Q_UK = torch.nn.Parameter(self.W_Q_UK, requires_grad=False)
-            self.W_UK = torch.nn.Parameter(self.W_UK, requires_grad=False)
+            if hasattr(self, "W_UK"):
+                self.W_UK = torch.nn.Parameter(self.W_UK, requires_grad=False)
             self.W_QR = torch.nn.Parameter(self.W_QR, requires_grad=False)
             self.tp_size = get_tensor_model_parallel_world_size()
         else:
