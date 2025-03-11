@@ -33,7 +33,7 @@ parser.add_argument("--smoke", action="store_true", help="Smoke test")
 parser.add_argument("--fp8_kvcache", action="store_true", help="Using FP8 KV cache.")
 args = parser.parse_args()
 
-max_num_seqs = 4
+max_num_seqs = 1
 
 # ==-------------------------------------------------------------------------==
 # Calibration parameters
