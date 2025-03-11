@@ -99,14 +99,16 @@ def get_dataset(filepath: str) -> List[List[Dict[str, str]]]:
 
 def sample_tc_requests(
     filepath: str,
-    num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
+    num_requests: int = None,
     do_random: bool = False,
 ) -> List[str]:
     dataset = get_dataset(filepath)
     prompts = dataset
     few_shots = 0
     sampled_requests: List[str] = []
+    if num_requests is None:
+        num_requests = len(prompts)
     for j in range(num_requests):
         i = (
             random.choice(range(len(prompts[few_shots:])))

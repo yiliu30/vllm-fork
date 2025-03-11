@@ -10,11 +10,11 @@
         - [Exporting Environment Variables](#exporting-environment-variables)
     - [Calibration](#calibration)
     - [Inference with FP8 Models on Two Nodes](#inference-with-fp8-models-on-two-nodes)
-    - [Inference with FP8 Models on a Single Node WIP](#inference-with-fp8-models-on-a-single-node-wip)
+    - [Inference with FP8 Models on a Single Node](#inference-with-fp8-models-on-a-single-node)
         - [Prerequisites](#prerequisites)
         - [Running the Example](#running-the-example)
+    - [Calibration with Custom Dataset](#calibration-with-custom-dataset)
     - [Accuracy Evaluation WIP](#accuracy-evaluation-wip)
-    - [Calibration with Custom Dataset WIP](#calibration-with-custom-dataset-wip)
 
 <!-- /TOC -->
 
@@ -63,10 +63,12 @@ For more details, please refer to the <https://github.com/yangulei/vllm-fork/blo
 git clone https://github.com/intel/neural-compressor.git inc
 cd inc
 git checkout dev/ds_r1
+pip install -r requirements.txt
+pip install -r requirements_pt.txt
 python setup.py pt develop
 ```
 
-- vLLM https://github.com/yiliu30/vllm-fork/tree/p22-rebase-kvcache-tc
+- vLLM https://github.com/yiliu30/vllm-fork/tree/dev/yi/ds_r1
 
 ```
 git clone https://github.com/yiliu30/vllm-fork.git vllm
@@ -83,7 +85,7 @@ VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation
 ### Exporting Environment Variables
 >
 > [!NOTE]
-> Please update the `VLLM_HOST_IP`, `HCCL_SOCKET_IFNAME` and `GLOO_SOCKET_IFNAME` variables in the `head_node_source.sh` and `worker_node_source.sh` scripts to match your devices.
+> Please update the `VLLM_HOST_IP`, `HCCL_SOCKET_IFNAME` and `GLOO_SOCKET_IFNAME` variables in the `devices.conf` to match your devices.
 
 - Head Node
 
@@ -147,19 +149,16 @@ export QUANT_CONFIG=inc_quant_with_fp8kv_config.json
 python inc_example_two_nodes.py --mode quant --fp8_kvcache
 ```
 
-## Inference with FP8 Models on a Single Node (WIP)
+## Inference with FP8 Models on a Single Node
 
 In this section, we load the BF16 model on DRAM and quantize it to FP8 model using unified measurement results obtained from the two-node calibration.
 
 ### Prerequisites
 
-- Hardware: 1x8G3 or 1x8G2(WIP), 2T DRAM
+- Hardware: 1x8G3 or 1x8G2
 - Docker: 1.20.0-521
 
 ### Running the Example
-
-Quantize model weights to FP8 and using BF16 KVCache(WIP)
-
 
 - BF16 KVCache
 ```bash
@@ -179,6 +178,23 @@ huggingface-cli download Yi30/inc-tp8-ep8-full-kvcache-from-tp16-ep16 --local-di
 QUANT_CONFIG=inc_quant_with_fp8kv_one_node_config.json python inc_example_one_node.py --fp8_kvcache
 ```
 
-## Accuracy Evaluation (WIP)
+> [!NOTE]
+> If your DRAM is less than 2T, please use `LOW_CPU_MEM=1` to open layer-by-layer conversion.
 
-## Calibration with Custom Dataset (WIP)
+
+## Calibration with Custom Dataset
+
+> [!NOTE]
+> Please update the `CALIBRATION_SAMPLE_LENGTH` to `4096` and `CALIBRATION_MAX_BATCH_SIZE` to `1` in the `devices.conf` before proceeding.
+
+Taking the FP8 KVCache as an example, we can run the calibration procedure with the `tc` dataset as follows:
+
+```bash
+# vllm root
+cd vllm/scripts
+export QUANT_CONFIG=inc_measure_with_fp8kv_config.json
+# restart ray 
+python inc_example_two_nodes.py --mode prepare --dataset tc --dpatch /path/to/dataset --least_tokens 4096
+```
+
+## Accuracy Evaluation (WIP)
