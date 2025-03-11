@@ -144,8 +144,9 @@ case "$dtype" in
         echo Running with dtype="$dtype" ;;
     "fp8")
         echo Running with dtype="$dtype"
-        export QUANT_CONFIG=quantization/${model_name}/maxabs_quant_g2.json
-        QUANT_FLAGS=(--quantization inc --kv-cache-dtype fp8_inc)
+        # export QUANT_CONFIG=quantization/${model_name}/maxabs_quant_g2.json
+        # QUANT_FLAGS=(--quantization inc --kv-cache-dtype fp8_inc)
+        QUANT_FLAGS=(--kv-cache-dtype fp8_inc)
         dtype="bfloat16"
         ;;
     "awq")
@@ -199,56 +200,19 @@ fi
 
 export TOKENIZERS_PARALLELISM=true
 export PT_HPU_WEIGHT_SHARING=0
-export VLLM_MLA_DISABLE_REQUANTIZATION=1
+export VLLM_MLA_DISABLE_REQUANTIZATION=${VLLM_MLA_DISABLE_REQUANTIZATION:-"1"}
 export RAY_IGNORE_UNHANDLED_ERRORS="1"
 export VLLM_RAY_DISABLE_LOG_TO_DRIVER="1"
 export VLLM_GRAPH_RESERVED_MEM=${VLLM_GRAPH_RESERVED_MEM:-"0.2"}
-export VLLM_GRAPH_PROMPT_RATIO=${VLLM_GRAPH_PROMPT_RATIO:-"0"}
-export VLLM_EP_SIZE=${VLLM_EP_SIZE:-"8"}
-export VLLM_MOE_N_SLICE=${VLLM_MOE_N_SLICE:-"16"}
-export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
+export VLLM_GRAPH_PROMPT_RATIO=${VLLM_GRAPH_PROMPT_RATIO:-"0.8"}
+export VLLM_EP_SIZE=${VLLM_EP_SIZE:-"${num_hpu}"}
+export VLLM_MOE_N_SLICE=${VLLM_MOE_N_SLICE:-"4"}
 
 gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION:-"0.9"}
-
-
-# set up bucketing based on input/output range and max_num_batched_tokens
-set_bucketing_new(){
-    max_model_len=${max_model_len:-8192}
-    max_num_seqs=${max_num_seqs:-128}
-
-    prompt_bs_min=1
-    prompt_bs_step=$(( $max_num_seqs > 32 ? 32 : $max_num_seqs ))
-    prompt_bs_max=$(( $max_num_seqs > 64 ? 64 : $max_num_seqs ))
-    export VLLM_PROMPT_BS_BUCKET_MIN=${VLLM_PROMPT_BS_BUCKET_MIN:-$prompt_bs_min}
-    export VLLM_PROMPT_BS_BUCKET_STEP=${VLLM_PROMPT_BS_BUCKET_STEP:-$prompt_bs_step}
-    export VLLM_PROMPT_BS_BUCKET_MAX=${VLLM_PROMPT_BS_BUCKET_MAX:-$prompt_bs_max}
-
-    prompt_seq_step=128
-    prompt_seq_min=128
-    prompt_seq_max=$max_model_len
-    export VLLM_PROMPT_SEQ_BUCKET_MIN=${VLLM_PROMPT_SEQ_BUCKET_MIN:-$prompt_seq_min}
-    export VLLM_PROMPT_SEQ_BUCKET_STEP=${VLLM_PROMPT_SEQ_BUCKET_STEP:-$prompt_seq_step}
-    export VLLM_PROMPT_SEQ_BUCKET_MAX=${VLLM_PROMPT_SEQ_BUCKET_MAX:-$prompt_seq_max}
-
-    decode_bs_min=1
-    decode_bs_step=$(( $max_num_seqs > 32 ? 32 : $max_num_seqs ))
-    decode_bs_max=$max_num_seqs
-    export VLLM_DECODE_BS_BUCKET_MIN=${VLLM_DECODE_BS_BUCKET_MIN:-$decode_bs_min}
-    export VLLM_DECODE_BS_BUCKET_STEP=${VLLM_DECODE_BS_BUCKET_STEP:-$decode_bs_step}
-    export VLLM_DECODE_BS_BUCKET_MAX=${VLLM_DECODE_BS_BUCKET_MAX:-$decode_bs_max}
-
-    decode_block_min=128
-    decode_block_step=128
-    block_size=128
-    decode_block_max=$(( ((max_num_seqs * max_model_len / block_size) > 128) ? (max_num_seqs * max_model_len / block_size) : 128 ))
-    export VLLM_DECODE_BLOCK_BUCKET_MIN=${VLLM_DECODE_BLOCK_BUCKET_MIN:-$decode_block_min}
-    export VLLM_DECODE_BLOCK_BUCKET_STEP=${VLLM_DECODE_BLOCK_BUCKET_STEP:-$decode_block_step}
-    export VLLM_DECODE_BLOCK_BUCKET_MAX=${VLLM_DECODE_BLOCK_BUCKET_MAX:-$decode_block_max}
-}
-
+max_seq_len_to_capture=${VLLM_MAX_SEQ_LEN_TO_CAPTURE:-"4096"}
 
 set_numactl
-set_bucketing_new
+set_bucketing
 
 ${NUMA_CTL} \
 python3 -m vllm.entrypoints.openai.api_server \
@@ -262,6 +226,7 @@ python3 -m vllm.entrypoints.openai.api_server \
     --max-num-seqs "$max_num_seqs" \
     --max-num-batched-tokens "$max_num_batched_tokens" \
     --max-model-len "$max_model_len" \
+    --max-seq-len-to-capture "$max_seq_len_to_capture" \
     --disable-log-requests \
     --use-v2-block-manager \
     --use-padding-aware-scheduling \

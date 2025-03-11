@@ -28,8 +28,8 @@ export VLLM_SKIP_WARMUP=1
 block_size=128
 # DO NOT change ends...
 # memory footprint tunning params
-export VLLM_GPU_MEMORY_UTILIZATION=0.98
-export VLLM_GRAPH_RESERVED_MEM=0.35
+export VLLM_GPU_MEMORY_UTILIZATION=0.9
+export VLLM_GRAPH_RESERVED_MEM=0.1
 export VLLM_GRAPH_PROMPT_RATIO=0
 # params
 max_num_batched_tokens=2048

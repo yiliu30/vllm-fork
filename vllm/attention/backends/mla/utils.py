@@ -22,10 +22,12 @@ from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsW8A8Fp8)
 from vllm.model_executor.layers.quantization.fp8 import Fp8LinearMethod
 from vllm.model_executor.layers.quantization.utils.fp8_utils import (
-    apply_fp8_linear_generic, current_platform_fp8_dtype, is_fp8)
+    apply_fp8_linear_generic, apply_block_fp8_linear_hpu_dynamic, current_platform_fp8_dtype, is_fp8)
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
     scaled_dequantize, scaled_quantize)
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
+from vllm.platforms import current_platform
+
 # from vllm.vllm_flash_attn import flash_attn_varlen_func
 
 
@@ -179,10 +181,19 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T], torch.nn.Module):
     def _v_up_proj_and_o_proj(self, x):
         if envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION:
             if is_fp8(self.W_UV_O):
-                output_parallel = apply_fp8_linear_generic(
-                    x.flatten(start_dim=1), self.W_UV_O, self.W_UV_O_scales,
-                    self.reqaunt_input_group_shape,
-                    self.reqaunt_weight_group_shape)
+                if current_platform.is_hpu():
+                    output_parallel = apply_block_fp8_linear_hpu_dynamic(
+                        input=x.flatten(start_dim=1),
+                        weight=self.W_UV_O,
+                        weight_scale=self.W_UV_O_scales,
+                        input_scale=None,
+                        bias=None,
+                    )
+                else:
+                    output_parallel = apply_fp8_linear_generic(
+                        x.flatten(start_dim=1), self.W_UV_O, self.W_UV_O_scales,
+                        self.reqaunt_input_group_shape,
+                        self.reqaunt_weight_group_shape)
             else:
                 output_parallel = torch.matmul(x.flatten(start_dim=1),
                                                self.W_UV_O)
@@ -199,11 +210,20 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T], torch.nn.Module):
     def _q_proj_and_k_up_proj(self, x):
         if envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION:
             if is_fp8(self.W_Q_UK):
-                return apply_fp8_linear_generic(
-                    x, self.W_Q_UK, self.W_Q_UK_scales,
-                    self.reqaunt_input_group_shape,
-                    self.reqaunt_weight_group_shape).view(
-                        -1, self.num_heads, self.kv_lora_rank)
+                if current_platform.is_hpu():
+                    return apply_block_fp8_linear_hpu_dynamic(
+                        input=x,
+                        weight=self.W_Q_UK,
+                        weight_scale=self.W_Q_UK_scales,
+                        input_scale=None,
+                        bias=None,
+                    ).view(-1, self.num_heads, self.kv_lora_rank)
+                else:
+                    return apply_fp8_linear_generic(
+                        x, self.W_Q_UK, self.W_Q_UK_scales,
+                        self.reqaunt_input_group_shape,
+                        self.reqaunt_weight_group_shape).view(
+                            -1, self.num_heads, self.kv_lora_rank)
             return torch.matmul(x, self.W_Q_UK)\
                 .view(-1, self.num_heads, self.kv_lora_rank)
         else:
@@ -232,13 +252,15 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T], torch.nn.Module):
         def get_scale_group_shapes_for_fp8(layer: LinearBase) -> \
             Tuple[Tuple[int, int], Tuple[int, int]]:
             if isinstance(layer.quant_method, Fp8LinearMethod):
-                if layer.quant_method.block_quant is not None:
+                if layer.quant_method.block_quant:
                     weight_block_size = \
                         layer.quant_method.quant_config.weight_block_size
                     # per-token-group (1, X), block-quantized (X, Y)
                     return (1, weight_block_size[-1]), weight_block_size
                 else:
                     return (-1, -1), (-1, -1)  # per-tensor, per-tensor
+            elif current_platform.is_hpu():
+                return (-1, -1), (-1, 1)  # per-tensor, per-channel
             elif isinstance(layer.quant_method, CompressedTensorsLinearMethod)\
                 and isinstance(layer.scheme, CompressedTensorsW8A8Fp8):
                 # this is hacky but we always assume the for
@@ -277,6 +299,7 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T], torch.nn.Module):
                 else:
                     weight = layer.weight
                 
+                # TODO@yangulei: check if needs to restore it
                 scales = get_scales(layer)
                 if len(scales.shape) > 1:
                     _, weight_scale_group_shape = \
@@ -352,8 +375,8 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T], torch.nn.Module):
             # for decode, as a result we end up with absorbed weights for decode
             # and another copy of raw weights for prefill.
             #
-            self.W_UK, self.W_UV = kv_b_proj_weight.split(
-                [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+            # self.W_UK, self.W_UV = kv_b_proj_weight.split(
+            #     [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
             # We absorb `W_UK` into `W_Q` resulting in either W_Q_UK or W_UQ_UK
             # depending q_lora_rank, the former if q_lora_rank is None, the
             # latter otherwise
@@ -393,7 +416,8 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T], torch.nn.Module):
             # NOTE: We need transfer them to the accelerator in case they are initialized on the CPU.
             self.W_UV_O = torch.nn.Parameter(self.W_UV_O, requires_grad=False)
             self.W_Q_UK = torch.nn.Parameter(self.W_Q_UK, requires_grad=False)
-            self.W_UK = torch.nn.Parameter(self.W_UK, requires_grad=False)
+            if hasattr(self, "W_UK"):
+                self.W_UK = torch.nn.Parameter(self.W_UK, requires_grad=False)
             self.W_QR = torch.nn.Parameter(self.W_QR, requires_grad=False)
             self.tp_size = get_tensor_model_parallel_world_size()
         else:

@@ -161,8 +161,9 @@ case "$dtype" in
         echo Running with dtype="$dtype" ;;
     "fp8")
         echo Running with dtype="$dtype"
-        export QUANT_CONFIG=quantization/${model_name}/maxabs_quant_g2.json
-        QUANT_FLAGS=(--quantization inc --kv-cache-dtype fp8_inc)
+        # export QUANT_CONFIG=quantization/${model_name}/maxabs_quant_g2.json
+        # QUANT_FLAGS=(--quantization inc --kv-cache-dtype fp8_inc)
+        QUANT_FLAGS=(--kv-cache-dtype fp8_inc)
         dtype="bfloat16"
         ;;
     "awq")
@@ -216,15 +217,16 @@ fi
 
 export TOKENIZERS_PARALLELISM=true
 export PT_HPU_WEIGHT_SHARING=0
-export VLLM_MLA_DISABLE_REQUANTIZATION=1
+export VLLM_MLA_DISABLE_REQUANTIZATION=${VLLM_MLA_DISABLE_REQUANTIZATION:-"1"}
 export RAY_IGNORE_UNHANDLED_ERRORS="1"
 export VLLM_RAY_DISABLE_LOG_TO_DRIVER="1"
 export VLLM_GRAPH_RESERVED_MEM=${VLLM_GRAPH_RESERVED_MEM:-"0.2"}
 export VLLM_GRAPH_PROMPT_RATIO=${VLLM_GRAPH_PROMPT_RATIO:-"0.8"}
-export VLLM_EP_SIZE=${VLLM_EP_SIZE:-"1"}
+export VLLM_EP_SIZE=${VLLM_EP_SIZE:-"${num_hpu}"}
 export VLLM_MOE_N_SLICE=${VLLM_MOE_N_SLICE:-"4"}
 
 gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION:-"0.9"}
+max_seq_len_to_capture=${VLLM_MAX_SEQ_LEN_TO_CAPTURE:-"4096"}
 
 set_numactl
 set_bucketing
@@ -244,6 +246,7 @@ python "$BASH_DIR/../benchmarks/benchmark_throughput.py" \
     --max-num-seqs "${max_num_seqs}" \
     --max-num-batched-tokens "${max_num_batched_tokens}" \
     --max-model-len "${max_model_len}" \
+    --max-seq-len-to-capture "$max_seq_len_to_capture" \
     --num-prompts "${num_prompts}" \
     --disable-log-requests \
     --use-v2-block-manager \
