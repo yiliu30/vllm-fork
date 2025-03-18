@@ -107,6 +107,9 @@ source worker_node_source.sh
 
 This process runs the BF16 model on a calibration dataset to observe the ranges of model weights and inputs.
 
+> [!TIP]
+> You can skip this step by downloading the pre-measured calibration result. Please refer to the inference section for more details.
+
 - BF16 KVCache
 
 ```bash
@@ -132,8 +135,11 @@ python inc_example_two_nodes.py --mode prepare
 This script loads the BF16 model into DRAM, transfers  it to the HPU, and quantizes the model layer by layer.
 
 - BF16 KVCache
+
 ```bash
 cd vllm/scripts
+# Optional: download the pre-measured calibration result.
+huggingface-cli download Yi30/inc-2nodes-pile-1024-correct-311 --local-dir nc_workspace_measure
 # vllm root
 export QUANT_CONFIG=inc_quant_config.json
 # restart ray
@@ -143,6 +149,8 @@ python inc_example_two_nodes.py --mode quant
 - FP8 KVCache
 ```bash
 cd vllm/scripts
+# Optional: download the pre-measured calibration result.
+huggingface-cli download Yi30/inc-2nodes-pile-1024-correct-311 --local-dir nc_workspace_measure_kvache
 # vllm root
 export QUANT_CONFIG=inc_quant_with_fp8kv_config.json
 # restart ray
