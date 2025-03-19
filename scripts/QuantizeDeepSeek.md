@@ -15,6 +15,7 @@
         - [Running the Example](#running-the-example)
     - [Calibration with Custom Dataset](#calibration-with-custom-dataset)
     - [Accuracy Evaluation WIP](#accuracy-evaluation-wip)
+        - [Ablation Study on Calibration Datasets](#ablation-study-on-calibration-datasets)
 
 <!-- /TOC -->
 
@@ -206,3 +207,21 @@ python inc_example_two_nodes.py --mode prepare --dataset tc --dpatch /path/to/da
 ```
 
 ## Accuracy Evaluation (WIP)
+
+### Ablation Study on Calibration Datasets
+To analyze the impact of the calibration dataset, we collect the maximum values of `latent_cache_k` and `latent_cache_v` across four different settings.
+
+The results, illustrated below, show that the maximum values for key and value remain similar across different datasets and sample lengths.
+
+- Pile-1024: Samples truncated to 1024 from [NeelNanda/pile-10k](https://huggingface.co/datasets/NeelNanda/pile-10k)
+- Pile-512: Samples truncated to 512 from [NeelNanda/pile-10k](https://huggingface.co/datasets/NeelNanda/pile-10k)
+- Pile-4096: Samples truncated to 4096 from [NeelNanda/pile-10k](https://huggingface.co/datasets/NeelNanda/pile-10k)
+- Custom-CN: Samples truncated to 4096 from a custom Chinese dataset
+
+- latent_cache_k
+
+![latent_cache_k](./k.png)
+
+- latent_cache_k
+
+![latent_cache_v](./v.png)
