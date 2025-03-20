@@ -275,6 +275,17 @@ class Fp8LinearMethod(LinearMethodBase):
             else:
                 layer.register_parameter("input_scale", None)
 
+    def dequant_block_fp8_weight_for_inc(self, layer):
+        dequant_weight = dequant_block_fp8_weight_naive(
+            layer.weight,
+            layer.weight_scale_inv.data,
+            self.quant_config.weight_block_size,
+            original_M=layer.orig_M,
+            original_N=layer.orig_N,
+            do_unpad=True,
+        )
+        return dequant_weight
+
     def process_weights_after_loading(self, layer: Module) -> None:
         # TODO(rob): refactor block quant into separate class.
         if self.block_quant:

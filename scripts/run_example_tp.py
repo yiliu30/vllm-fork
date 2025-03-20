@@ -216,7 +216,7 @@ if __name__ == "__main__":
                 tensor_parallel_size=args.tp_size,
                 distributed_executor_backend='mp',
                 trust_remote_code=True,
-                quantization="inc",
+                # quantization="inc",
                 kv_cache_dtype="fp8_inc",
                 max_model_len=16384,
                 block_size=256,
