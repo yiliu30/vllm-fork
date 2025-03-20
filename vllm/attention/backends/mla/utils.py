@@ -192,10 +192,24 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
     def _v_up_proj_and_o_proj(self, x):
         if envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION:
             if is_fp8(self.W_UV_O):
-                output_parallel = apply_fp8_linear_generic(
-                    x.flatten(start_dim=1), self.W_UV_O, self.W_UV_O_scales,
-                    self.reqaunt_input_group_shape,
-                    self.reqaunt_weight_group_shape)
+                if current_platform.is_hpu():
+                    x_fp8 = torch.ops.hpu.cast_to_fp8_v2(x, 1.0/self.kv_b_proj.input_scale, False, False, torch.float8_e4m3fn)[0]
+                    output_parallel = torch.ops.hpu.fp8_gemm_v2(
+                        A=x_fp8.flatten(start_dim=1),
+                        trans_A=False,
+                        B=self.W_UV_O,
+                        trans_B=True,
+                        D=None,
+                        out_dtype=x.dtype,
+                        A_scale_inv=self.kv_b_proj.input_scale,
+                        B_scale_inv=self.W_UV_O_scales,
+                        bias=None,
+                        accumulate=False)
+                else:
+                    output_parallel = apply_fp8_linear_generic(
+                        x.flatten(start_dim=1), self.W_UV_O, self.W_UV_O_scales,
+                        self.reqaunt_input_group_shape,
+                        self.reqaunt_weight_group_shape)
             else:
                 output_parallel = torch.matmul(x.flatten(start_dim=1),
                                                self.W_UV_O)
@@ -212,11 +226,26 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
     def _q_proj_and_k_up_proj(self, x):
         if envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION:
             if is_fp8(self.W_Q_UK):
-                return apply_fp8_linear_generic(
-                    x, self.W_Q_UK, self.W_Q_UK_scales,
-                    self.reqaunt_input_group_shape,
-                    self.reqaunt_weight_group_shape).view(
-                        -1, self.num_heads, self.kv_lora_rank)
+                if current_platform.is_hpu():
+                    x_fp8 = torch.ops.hpu.cast_to_fp8_v2(x, 1.0/self.q_proj.input_scale, False, False, torch.float8_e4m3fn)[0]
+                    return torch.ops.hpu.fp8_gemm_v2(
+                        A=x_fp8,
+                        trans_A=False,
+                        B=self.W_Q_UK,
+                        trans_B=True,
+                        D=None,
+                        out_dtype=x.dtype,
+                        A_scale_inv=self.q_proj.input_scale,
+                        B_scale_inv=self.W_Q_UK_scales,
+                        bias=None,
+                        accumulate=False).view(
+                            -1, self.num_heads, self.kv_lora_rank)
+                else:
+                    return apply_fp8_linear_generic(
+                        x, self.W_Q_UK, self.W_Q_UK_scales,
+                        self.reqaunt_input_group_shape,
+                        self.reqaunt_weight_group_shape).view(
+                            -1, self.num_heads, self.kv_lora_rank)
             return torch.matmul(x, self.W_Q_UK)\
                 .view(-1, self.num_heads, self.kv_lora_rank)
         else:
@@ -352,8 +381,8 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
             # for decode, as a result we end up with absorbed weights for decode
             # and another copy of raw weights for prefill.
             #
-            self.W_UK, self.W_UV = kv_b_proj_weight.split(
-                [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+            # self.W_UK, self.W_UV = kv_b_proj_weight.split(
+            #     [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
             # We absorb `W_UK` into `W_Q` resulting in either W_Q_UK or W_UQ_UK
             # depending q_lora_rank, the former if q_lora_rank is None, the
             # latter otherwise
