@@ -14,7 +14,7 @@ file_path = os.path.abspath(__file__)
 dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
 
 model_path = "/data/models/DeepSeek-R1-static/"
-
+model_path = "/software/users/yiliu4/HF_HOME/hub/DeepSeek-R1-Official-Slink/"
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default=model_path, help="The model path.")
@@ -26,6 +26,8 @@ parser.add_argument("--isl", type=int, default=1024, help="input sequence length
 parser.add_argument("--osl", type=int, default=1024, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
+parser.add_argument("--prepare", action="store_true", help="INC prepare.")
+parser.add_argument("--quant", action="store_true", help="INC prepare.")
 parser.add_argument("--fp8_kv_cache", action="store_true", help="Use fp8 for kv cache.")
 args = parser.parse_args()
 
@@ -189,17 +191,50 @@ if __name__ == "__main__":
             **param
         )
     else:
-        llm = LLM(
-            model=model, 
-            tokenizer=args.tokenizer,
-            tensor_parallel_size=args.tp_size,
-            distributed_executor_backend='mp',
-            trust_remote_code=True,
-            max_model_len=16384,
-            dtype="bfloat16",
-            gpu_memory_utilization=0.8,
-            **param
-        )
+        if args.prepare:
+            os.environ["QUANT_CONFIG"]="inc_measure_with_fp8kv_config.json"
+            os.environ["VLLM_FORCE_INC"] = "1"
+            os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
+            llm = LLM(
+                model=model, 
+                tokenizer=args.tokenizer,
+                tensor_parallel_size=args.tp_size,
+                distributed_executor_backend='mp',
+                trust_remote_code=True,
+                # quantization="inc",
+                max_model_len=16384,
+                block_size=256,
+                dtype="bfloat16",
+            )
+        elif args.quant:
+            os.environ["QUANT_CONFIG"]="inc_quant_with_fp8kv_config.json"
+            os.environ["VLLM_FORCE_INC"] = "1"
+            os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
+            llm = LLM(
+                model=model, 
+                tokenizer=args.tokenizer,
+                tensor_parallel_size=args.tp_size,
+                distributed_executor_backend='mp',
+                trust_remote_code=True,
+                quantization="inc",
+                kv_cache_dtype="fp8_inc",
+                max_model_len=16384,
+                block_size=256,
+                dtype="bfloat16",
+            )
+        else:
+            llm = LLM(
+                model=model, 
+                tokenizer=args.tokenizer,
+                tensor_parallel_size=args.tp_size,
+                distributed_executor_backend='mp',
+                trust_remote_code=True,
+                max_model_len=16384,
+                dtype="bfloat16",
+                gpu_memory_utilization=0.8,
+                **param
+            )
+
 
     # Generate texts from the prompts. The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
@@ -218,4 +253,5 @@ if __name__ == "__main__":
         print(f"Generated text: {generated_text!r}")
         print(f"Ground truth: {gt_i!r}")
         print("====================================")
+    llm.llm_engine.model_executor.shutdown()
     del llm

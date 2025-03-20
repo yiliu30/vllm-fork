@@ -117,7 +117,8 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         num_expert_group: Optional[int] = None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
-        e_score_correction_bias: Optional[torch.Tensor] = None
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        ep_rank: Optional[int] = None,
     ) -> torch.Tensor:
         return self.forward(x=x,
                             layer=layer,
@@ -129,7 +130,9 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                             num_expert_group=num_expert_group,
                             custom_routing_function=custom_routing_function,
                             scoring_func=scoring_func,
-                            e_score_correction_bias=e_score_correction_bias)
+                            e_score_correction_bias=e_score_correction_bias,
+                            ep_rank= ep_rank,
+                            )
 
     def forward_cuda(
         self,
@@ -176,8 +179,11 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         num_expert_group: Optional[int] = None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
-        e_score_correction_bias: Optional[torch.Tensor] = None
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        ep_rank = None,
     ):
+        bs, seq_len, hidden_size = x.shape
+        x = x.reshape(bs * seq_len, hidden_size)
         assert len(x.shape) == 2
         import habana_frameworks.torch as htorch
         htorch.core.mark_step()
@@ -203,8 +209,16 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             topk_weights = topk_weights.to(x.dtype)
 
         final_hidden_states = torch.zeros_like(x)
-        num_experts = layer.w13_weight.shape[0]
-        n_expert_slice = layer.w13_weight.shape[0] // 8
+        num_experts = layer.num_experts
+        if hasattr(layer, "w13_weight") and layer.w13_weight is not None:
+            assert (
+                layer.w13_weight.shape[0] == num_experts
+            ), f"Expected {layer.w13_weight.shape[0]} experts, got {num_experts}"
+        # For mixtral, the `num_expert_group` is 8.
+        if num_expert_group is None:
+            num_expert_group = 8
+        num_expert_group = num_expert_group
+        n_expert_slice = num_experts // num_expert_group
         assert n_expert_slice * 8 == num_experts
 
         # w13_list = layer.hpu_fused_moe.MoeOp.w13_list

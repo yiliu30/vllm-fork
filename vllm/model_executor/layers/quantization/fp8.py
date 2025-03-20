@@ -553,6 +553,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                                                     requires_grad=False)
             layer.register_parameter("w13_weight_scale_inv", w13_weight_scale)
             layer.register_parameter("w2_weight_scale_inv", w2_weight_scale)
+            if torch.distributed.get_rank() == 0:
+                import pdb; pdb.set_trace()
         elif not self.block_quant:
             # Allocate 2 scales for w1 and w3 respectively.
             # They will be combined to a single scale after weight loading.
@@ -635,6 +637,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
     def process_weights_after_loading(self, layer: Module) -> None:
         # TODO (rob): refactor block quant into separate class.
+        # if torch.distributed.get_rank() == 0:
+        #     import pdb; pdb.set_trace()
         if self.block_quant:
             if current_platform.is_hpu():
                 if self.quant_config.enable_runtime_dequant:
