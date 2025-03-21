@@ -853,7 +853,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     #     import pdb;pdb.set_trace()
 
                     # torch.distributed.barrier()
-                    logger.info(f"INC model \n {self.model}")
+                    # logger.info(f"INC model \n {self.model}")
                     htcore.hpu_initialize(
                         self.model, mark_only_scales_as_const=True
                     )

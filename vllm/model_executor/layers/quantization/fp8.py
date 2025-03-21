@@ -571,8 +571,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                                                     requires_grad=False)
             layer.register_parameter("w13_weight_scale_inv", w13_weight_scale)
             layer.register_parameter("w2_weight_scale_inv", w2_weight_scale)
-            if torch.distributed.get_rank() == 0:
-                import pdb; pdb.set_trace()
         elif not self.block_quant:
             # Allocate 2 scales for w1 and w3 respectively.
             # They will be combined to a single scale after weight loading.
@@ -1097,6 +1095,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                         n_expert_slice,
                         ep_shift,
                     )
+                    htorch.core.mark_step()
+                    logger.info(f"Finished expert group {i}, final_hidden_states shape: {final_hidden_states.shape}")
                 return final_hidden_states.view(-1, x.shape[1])
             w13_weight_fp8 = layer.w13_weight.data
             w13_weight_scale_inv_fp8 = layer.w13_weight_scale_inv.data
