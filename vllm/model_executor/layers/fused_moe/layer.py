@@ -198,10 +198,16 @@ class MoeFP8Matmul(torch.nn.Module):
         raise NotImplementedError()
 
     def dequant_block_fp8_weight_for_inc(self, layer: "MoeFP8Matmul"):
+        # The function will be called by INC either in the measurement or the quantization phase.
+        # At quantization phase, INC requantizes the BF16 weight to FP8 and updates the weight.
+        # At measurement phase, INC only measures the BF16 weight and does NOT update the weight.
+        # We not track the BF16 weight which will cause OoM.
+        if self.is_dequantized:
+            return layer.weight
         from vllm.model_executor.layers.quantization.utils.fp8_utils import (
             dequant_block_fp8_weight_naive,
         )
-
+        
         dequant_weight = dequant_block_fp8_weight_naive(
             layer.weight.data,
             layer.scale_inv_fp8.data,
@@ -626,8 +632,10 @@ class FusedMoE(torch.nn.Module):
         self.topk_group = topk_group
         self.custom_routing_function = custom_routing_function
         if is_hpu:
-            from vllm_hpu_extension.ops import DynamicFusedMOE
-            self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
+            # FIXME: (Yi) WA, should use DynamicFusedMOE for INC
+            if not VLLM_FORCE_INC:
+                from vllm_hpu_extension.ops import DynamicFusedMOE
+                self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
 
         self.scoring_func = scoring_func
         self.e_score_correction_bias = e_score_correction_bias
@@ -812,7 +820,7 @@ class FusedMoE(torch.nn.Module):
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
         expert_data.copy_(loaded_weight)
 
-        if is_hpu:
+        if is_hpu and not VLLM_FORCE_INC:
             self.hpu_fused_moe.MoeOp.w13_list[expert_id].set_weight(
                 orig_exp_data)
             # print(f"loaded w13 for hpu for expert_id: {expert_id}, orig_exp_data.shape: {orig_exp_data.shape}")
@@ -835,7 +843,7 @@ class FusedMoE(torch.nn.Module):
                                                  shard_size)
         # w2, down_proj: Load into only logical weight of w2.
         expert_data.copy_(loaded_weight)
-        if is_hpu:
+        if is_hpu and not VLLM_FORCE_INC:
             self.hpu_fused_moe.MoeOp.w2_list[expert_id].set_weight(expert_data)
             # print(f"loaded w2 for hpu for expert_id: {expert_id}, expert_data.shape: {expert_data.shape}")
 
