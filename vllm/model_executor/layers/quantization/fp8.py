@@ -1095,8 +1095,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                         n_expert_slice,
                         ep_shift,
                     )
-                    htorch.core.mark_step()
-                    logger.info(f"Finished expert group {i}, final_hidden_states shape: {final_hidden_states.shape}")
+                    # htorch.core.mark_step()
+                    # logger.info(f"Finished expert group {i}, final_hidden_states shape: {final_hidden_states.shape}")
                 return final_hidden_states.view(-1, x.shape[1])
             w13_weight_fp8 = layer.w13_weight.data
             w13_weight_scale_inv_fp8 = layer.w13_weight_scale_inv.data
