@@ -184,6 +184,12 @@ class LinearBase(torch.nn.Module):
                 x: torch.Tensor) -> tuple[torch.Tensor, Optional[Parameter]]:
         raise NotImplementedError
 
+    def get_post_process_weights_func(self):
+        if self.quant_method is not None:
+            quant_method = self.quant_method
+            if hasattr(quant_method, "dequant_block_fp8_weight_for_inc"):
+                return quant_method.dequant_block_fp8_weight_for_inc
+
 
 class ReplicatedLinear(LinearBase):
     """Replicated linear layer.
