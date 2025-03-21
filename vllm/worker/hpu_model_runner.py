@@ -779,7 +779,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def _is_quant_with_inc(self):
         return (
             self.model_config.quantization == "inc"
-            or os.getenv("VLLM_FORCE_INC", "0") == "1"
+            or os.getenv("VLLM_FORCE_INC", "0") in ["1", "true"]
         )
     
     def load_model(self) -> None:
@@ -849,9 +849,15 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    torch.distributed.barrier()
-                    # htcore.hpu_initialize(self.model,
-                    #                       mark_only_scales_as_const=True)
+                    # if torch.distributed.get_rank() == 0:
+                    #     import pdb;pdb.set_trace()
+
+                    # torch.distributed.barrier()
+                    logger.info(f"INC model \n {self.model}")
+                    htcore.hpu_initialize(
+                        self.model, mark_only_scales_as_const=True
+                    )
+                                    
                 self.inc_initialized_successfully = True
                 logger.info("Preparing model with INC took %s",
                             m_inc.get_summary_string())

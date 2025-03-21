@@ -23,7 +23,7 @@ parser.add_argument("--tp_size", type=int, default=8, help="The number of thread
 parser.add_argument("--ep_size", type=int, default=8, help="The number of threads.")
 parser.add_argument("--dataset", type=str, default=None, help="The dataset.")
 parser.add_argument("--isl", type=int, default=1024, help="input sequence length.")
-parser.add_argument("--osl", type=int, default=1024, help="output sequence length.")
+parser.add_argument("--osl", type=int, default=32, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
 parser.add_argument("--prepare", action="store_true", help="INC prepare.")
@@ -195,6 +195,8 @@ if __name__ == "__main__":
             os.environ["QUANT_CONFIG"]="inc_measure_with_fp8kv_config.json"
             os.environ["VLLM_FORCE_INC"] = "1"
             os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
+            # FIXME: (Yi) remove it on INC side
+            os.environ["NUM_EXPERTS_GROUPS"]="1"
             llm = LLM(
                 model=model, 
                 tokenizer=args.tokenizer,
@@ -210,6 +212,8 @@ if __name__ == "__main__":
             os.environ["QUANT_CONFIG"]="inc_quant_with_fp8kv_config.json"
             os.environ["VLLM_FORCE_INC"] = "1"
             os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
+            # FIXME: (Yi) remove it on INC side
+            os.environ["NUM_EXPERTS_GROUPS"]="1"
             llm = LLM(
                 model=model, 
                 tokenizer=args.tokenizer,
@@ -223,6 +227,7 @@ if __name__ == "__main__":
                 dtype="bfloat16",
             )
         else:
+            os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
             llm = LLM(
                 model=model, 
                 tokenizer=args.tokenizer,

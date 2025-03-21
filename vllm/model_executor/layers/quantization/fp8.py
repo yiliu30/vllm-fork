@@ -49,6 +49,9 @@ ACTIVATION_SCHEMES = ["static", "dynamic"]
 
 logger = init_logger(__name__)
 
+VLLM_FORCE_INC = os.getenv("VLLM_FORCE_INC", "0") in ["1", "true"]
+
+
 class Fp8Config(QuantizationConfig):
     """Config class for FP8."""
 
@@ -509,6 +512,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
     def create_weights(self, layer: Module, num_experts: int, hidden_size: int,
                        intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
+        layer.quant_config = self.quant_config
         if self.quant_config.is_checkpoint_fp8_serialized:
             params_dtype = torch.float8_e4m3fn
         if self.block_quant:
@@ -1080,7 +1084,33 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
         if self.quant_config.activation_scheme == "dynamic":
             if self.quant_config.enable_runtime_dequant:
-                final_hidden_states = do_dynamic_moe_with_dequant(x, topk_ids, topk_weights, w13_weight_fp8, w2_weight_fp8, moe_n_slice, n_expert_slice, w13_weight_scale_inv_fp8, w2_weight_scale_inv_fp8)
+                if VLLM_FORCE_INC:
+                    # FIXME: handle the case where moe_n_slice > 1
+                    final_hidden_states: torch.Tensor = torch.zeros_like(x)
+                    for i in range(moe_n_slice):
+                        _temp_expert_group = getattr(
+                            layer, f"_temp_expert_group_{i}"
+                        )
+                        final_hidden_states += _temp_expert_group(
+                            x,
+                            topk_ids,
+                            topk_weights,
+                            moe_n_slice,
+                            n_expert_slice,
+                            ep_shift,
+                        )
+                else:
+                    final_hidden_states = do_dynamic_moe_with_dequant(
+                        x,
+                        topk_ids,
+                        topk_weights,
+                        w13_weight_fp8,
+                        w2_weight_fp8,
+                        moe_n_slice,
+                        n_expert_slice,
+                        w13_weight_scale_inv_fp8,
+                        w2_weight_scale_inv_fp8,
+                    )
             elif not use_static_moe and self.enable_dmoe_dynamic_scale:
                 final_hidden_states = do_dynamic_moe_with_dynamic_scaling(x, topk_ids, topk_weights, w13_weight_fp8, w2_weight_fp8, moe_n_slice, n_expert_slice, w13_weight_scale_inv_fp8, w2_weight_scale_inv_fp8)
             else:
