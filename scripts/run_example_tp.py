@@ -41,6 +41,27 @@ os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 #os.environ['VLLM_DMOE_DYNAMIC_SCALE']='1' # only works for 1.20 + dmoe patch
 
+# # For Calibration
+# os.environ["VLLM_SKIP_WARMUP"] = "false"
+
+# os.environ["VLLM_PROMPT_BS_BUCKET_MIN"] = "1"
+# os.environ["VLLM_PROMPT_BS_BUCKET_STEP"] = "32"
+# os.environ["VLLM_PROMPT_BS_BUCKET_MAX"] = "1"
+
+# os.environ["VLLM_PROMPT_SEQ_BUCKET_MIN"] = "1024"
+# os.environ["VLLM_PROMPT_SEQ_BUCKET_STEP"] = "512"
+# os.environ["VLLM_PROMPT_SEQ_BUCKET_MAX"] = "1024"
+
+# os.environ["VLLM_DECODE_BS_BUCKET_MIN"] = "1"
+# os.environ["VLLM_DECODE_BS_BUCKET_STEP"] = "32"
+# os.environ["VLLM_DECODE_BS_BUCKET_MAX"] = "1"
+
+# os.environ["VLLM_DECODE_BLOCK_BUCKET_MIN"] = "1"
+# os.environ["VLLM_DECODE_BLOCK_BUCKET_STEP"] = "16"
+# os.environ["VLLM_DECODE_BLOCK_BUCKET_MAX"] = "32"
+
+
+
 def sample_sonnet_requests(
     dataset_path: str,
     num_requests: int,
@@ -163,6 +184,16 @@ if __name__ == "__main__":
             tokenizer=tokenizer,
             do_random=args.random,
         )
+    elif args.dataset == "pile":
+        from utils import get_prompts, get_prompt_token_ids, get_pile_prompts
+        least_tokens = args.isl
+        num_samples = args.nprompts
+        prompts = get_pile_prompts(args.model, num_samples)
+        prompt_token_ids = get_prompt_token_ids(
+            args.model, prompts, least_tokens
+        )
+        print(f"Got {len(prompts)} prompts, length of first prompt: {len(prompt_token_ids[0])}.")
+        gt = None
     else:
         prompts = [
             "Hello, my name is",
@@ -206,6 +237,7 @@ if __name__ == "__main__":
                 trust_remote_code=True,
                 # quantization="inc",
                 max_model_len=16384,
+                max_num_seqs=1,
                 block_size=256,
                 dtype="bfloat16",
             )
@@ -222,6 +254,7 @@ if __name__ == "__main__":
                 distributed_executor_backend='mp',
                 trust_remote_code=True,
                 # quantization="inc",
+                max_num_seqs=1,
                 kv_cache_dtype="fp8_inc",
                 max_model_len=16384,
                 block_size=256,
@@ -245,7 +278,12 @@ if __name__ == "__main__":
     # Generate texts from the prompts. The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
     start = time.perf_counter()
-    outputs = llm.generate(prompts, sampling_params)
+    if args.dataset == "pile":
+        outputs = llm.generate(
+            prompts=None, sampling_params=sampling_params, prompt_token_ids=prompt_token_ids
+        )
+    else:
+        outputs = llm.generate(prompts, sampling_params)
     end = time.perf_counter()
     # Print the outputs.
     print(f"e2e took {end - start} seconds")
