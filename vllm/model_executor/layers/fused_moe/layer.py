@@ -679,8 +679,11 @@ class FusedMoE(torch.nn.Module):
             # if torch.distributed.get_rank() == 0:
             #     import pdb; pdb.set_trace()
             # torch.distributed.barrier()
-            for i in range(num_expert_group):
-                _temp_expert_group = DynamicMoeRuntimeDequantFP8(
+            moe_n_slice = int(os.environ.get("VLLM_MOE_N_SLICE", 4))
+            assert moe_n_slice == 1, f"moe_n_slice is {moe_n_slice}, expected 1 for INC"
+            moe_lst = []
+            for i in range(moe_n_slice):
+                sub_expert_group = DynamicMoeRuntimeDequantFP8(
                     num_expert_per_group
                 )
                 min_expert = i * n_expert_slice
@@ -701,35 +704,38 @@ class FusedMoE(torch.nn.Module):
                     for j in range(min_expert, max_expert)
                 ]
                 for index in range(len(w2_list_slice)):
-                    _temp_expert_group.w13_list[index].set_weight(
+                    sub_expert_group.w13_list[index].set_weight(
                         w13_list_slice[index]
                     )
-                    _temp_expert_group.w13_list[index].set_scale_inv_fp8(
+                    sub_expert_group.w13_list[index].set_scale_inv_fp8(
                         w13_weight_scale_inv_fp8_list[index]
                     )
-                    _temp_expert_group.w13_list[index].set_weight_block_size(
+                    sub_expert_group.w13_list[index].set_weight_block_size(
                         layer.quant_config.weight_block_size
                     )
 
-                    _temp_expert_group.w2_list[index].set_weight(
+                    sub_expert_group.w2_list[index].set_weight(
                         w2_list_slice[index]
                     )
-                    _temp_expert_group.w2_list[index].set_scale_inv_fp8(
+                    sub_expert_group.w2_list[index].set_scale_inv_fp8(
                         w2_weight_scale_inv_fp8_list[index]
                     )
-                    _temp_expert_group.w2_list[index].set_weight_block_size(
+                    sub_expert_group.w2_list[index].set_weight_block_size(
                         layer.quant_config.weight_block_size
                     )
 
                 # FIXME: (Yi) pass `experts_min` and `experts_max` to MoeOp.
                 setattr(
-                    _temp_expert_group, "experts_min", min_expert + ep_shift
+                    sub_expert_group, "experts_min", min_expert + ep_shift
                 )
                 setattr(
-                    _temp_expert_group, "experts_max", max_expert - 1 + ep_shift
+                    sub_expert_group, "experts_max", max_expert - 1 + ep_shift
                 )
-                setattr(self, f"_temp_expert_group_{i}", _temp_expert_group)
+                # setattr(self, f"sub_expert_group_{i}", sub_expert_group)
+                moe_lst.append(sub_expert_group)
                 htorch.core.mark_step()
+            self.moe_lst = torch.nn.ModuleList(moe_lst)
+            htorch.core.mark_step()
 
     def _load_per_tensor_weight_scale(self, shard_id: str,
                                       param: torch.nn.Parameter,

@@ -1081,13 +1081,11 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             moe_n_slice = self.moe_n_slice
             n_expert_slice = actual_num_experts // moe_n_slice
             if self.quant_config.enable_runtime_dequant and VLLM_FORCE_INC:
-                # FIXME: handle the case where moe_n_slice > 1
+                assert not use_partial_experts, "Partial experts not supported with VLLM_FORCE_INC"
+                # FIXME: (Yi) handle the case where moe_n_slice > 1
                 final_hidden_states: torch.Tensor = torch.zeros_like(x)
-                for i in range(moe_n_slice):
-                    _temp_expert_group = getattr(
-                        layer, f"_temp_expert_group_{i}"
-                    )
-                    final_hidden_states += _temp_expert_group(
+                for moe in layer.moe_lst:
+                    final_hidden_states += moe(
                         x,
                         topk_ids,
                         topk_weights,
@@ -1095,8 +1093,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                         n_expert_slice,
                         ep_shift,
                     )
-                    # htorch.core.mark_step()
-                    # logger.info(f"Finished expert group {i}, final_hidden_states shape: {final_hidden_states.shape}")
                 return final_hidden_states.view(-1, x.shape[1])
             w13_weight_fp8 = layer.w13_weight.data
             w13_weight_scale_inv_fp8 = layer.w13_weight_scale_inv.data
