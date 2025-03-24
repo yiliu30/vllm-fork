@@ -197,7 +197,7 @@ class MoeFP8Matmul(torch.nn.Module):
     def forward(self, state, expert_id, w):
         raise NotImplementedError()
 
-    def dequant_block_fp8_weight_for_inc(self, layer: "MoeFP8Matmul"):
+    def dequant_block_fp8_weight(self, layer: "MoeFP8Matmul") -> torch.Tensor:
         # The function will be called by INC either in the measurement or the quantization phase.
         # At quantization phase, INC requantizes the BF16 weight to FP8 and updates the weight.
         # At measurement phase, INC only measures the BF16 weight and does NOT update the weight.
@@ -216,8 +216,10 @@ class MoeFP8Matmul(torch.nn.Module):
         layer.is_dequantized = True
         return dequant_weight
 
-    def get_post_process_weights_func(self):
-        return self.dequant_block_fp8_weight_for_inc
+    def get_dequant_weights_func(
+        self,
+    ) -> Optional[Callable[[torch.nn.Module], torch.Tensor]]:
+        return self.dequant_block_fp8_weight
 
 
 class VllmMixtureOfExpertsOpFP8(torch.nn.Module):

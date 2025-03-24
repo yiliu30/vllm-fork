@@ -278,7 +278,7 @@ class Fp8LinearMethod(LinearMethodBase):
             else:
                 layer.register_parameter("input_scale", None)
 
-    def dequant_block_fp8_weight_for_inc(self, layer):
+    def dequant_block_fp8_weight(self, layer) -> torch.Tensor:
         dequant_weight = dequant_block_fp8_weight_naive(
             layer.weight,
             layer.weight_scale_inv.data,
