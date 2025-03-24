@@ -294,5 +294,6 @@ if __name__ == "__main__":
         print(f"Generated text: {generated_text!r}")
         print(f"Ground truth: {gt_i!r}")
         print("====================================")
-    llm.llm_engine.model_executor.shutdown()
+    if args.prepare:
+        llm.llm_engine.model_executor.shutdown()
     del llm

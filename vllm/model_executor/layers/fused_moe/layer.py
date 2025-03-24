@@ -220,7 +220,7 @@ class MoeFP8Matmul(torch.nn.Module):
         return self.dequant_block_fp8_weight_for_inc
 
 
-class DynamicMoeRuntimeDequantFP8(torch.nn.Module):
+class VllmMixtureOfExpertsOpFP8(torch.nn.Module):
     def __init__(self, num_total_experts: int):
         super().__init__()
         if not LOW_CPU_MEM:
@@ -251,36 +251,26 @@ class DynamicMoeRuntimeDequantFP8(torch.nn.Module):
         n_expert_slice,
         ep_shift,
     ):
-        # w13_weight = self.w13_moe_matmul.get_dequant_weight()
-        # w2_weight = self.w2_moe_matmul.get_dequant_weight()
+        min_expert = self.experts_min
+        max_expert = self.experts_max
+        w13_list_slice = []
+        w2_list_slice = []
+        for j in range(self.num_experts):
+            w13_list_slice.append(self.w13_list[j].get_dequant_weight())
+            w2_list_slice.append(self.w2_list[j].get_dequant_weight())
 
-        # FIXME: (Yi) Assume moe_n_slice is 1 ?
-        assert moe_n_slice == 1, f"moe_n_slice is {moe_n_slice}, expected 1"
-        for i in range(moe_n_slice):
-            min_expert = i * n_expert_slice
-            max_expert = (i + 1) * n_expert_slice
-            w13_list_slice = []
-            w2_list_slice = []
-            for j in range(min_expert, max_expert):
-                w13_list_slice.append(self.w13_list[j].get_dequant_weight())
-                w2_list_slice.append(self.w2_list[j].get_dequant_weight())
-
-            current_hidden_states = torch.ops.hpu.mixture_of_experts(
-                hidden_states=x,
-                expert_routing_table=topk_ids.to(torch.int64),
-                router_weights=topk_weights.to(x.dtype),
-                w12=w13_list_slice,
-                w3=w2_list_slice,
-                permuted_weights=True,
-                activation="silu",
-                experts_min=min_expert + ep_shift,
-                experts_max=max_expert - 1 + ep_shift,
-            )
-            htorch.core.mark_step()
-            if i == 0:
-                final_hidden_states = current_hidden_states
-            else:
-                final_hidden_states.add_(current_hidden_states)
+        final_hidden_states = torch.ops.hpu.mixture_of_experts(
+            hidden_states=x,
+            expert_routing_table=topk_ids.to(torch.int64),
+            router_weights=topk_weights.to(x.dtype),
+            w12=w13_list_slice,
+            w3=w2_list_slice,
+            permuted_weights=True,
+            activation="silu",
+            experts_min=min_expert,
+            experts_max=max_expert,
+        )
+        htorch.core.mark_step()
         return final_hidden_states
 
 
@@ -671,7 +661,6 @@ class FusedMoE(torch.nn.Module):
         ep_shift = self.ep_rank * self.num_experts
         if VLLM_FORCE_INC:
             num_experts_on_rank = self.num_experts
-            # if num_expert_group is None:
             num_expert_group = 1
             num_expert_per_group = num_experts_on_rank // num_expert_group
             n_expert_slice = num_experts_on_rank // num_expert_group
@@ -683,7 +672,7 @@ class FusedMoE(torch.nn.Module):
             assert moe_n_slice == 1, f"moe_n_slice is {moe_n_slice}, expected 1 for INC"
             moe_lst = []
             for i in range(moe_n_slice):
-                sub_expert_group = DynamicMoeRuntimeDequantFP8(
+                sub_expert_group = VllmMixtureOfExpertsOpFP8(
                     num_expert_per_group
                 )
                 min_expert = i * n_expert_slice
