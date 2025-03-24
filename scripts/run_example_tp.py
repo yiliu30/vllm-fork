@@ -15,6 +15,7 @@ dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
 
 model_path = "/data/models/DeepSeek-R1-static/"
 model_path = "/software/users/yiliu4/HF_HOME/hub/DeepSeek-R1-Official-Slink/"
+model_path = "/data/models/DeepSeek-R1/"
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default=model_path, help="The model path.")
@@ -227,8 +228,6 @@ if __name__ == "__main__":
             os.environ["QUANT_CONFIG"]="inc_measure_with_fp8kv_config.json"
             os.environ["VLLM_FORCE_INC"] = "1"
             os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
-            # FIXME: (Yi) remove it on INC side
-            os.environ["NUM_EXPERTS_GROUPS"]="1"
             llm = LLM(
                 model=model, 
                 tokenizer=args.tokenizer,
@@ -245,8 +244,6 @@ if __name__ == "__main__":
             os.environ["QUANT_CONFIG"]="inc_quant_with_fp8kv_config.json"
             os.environ["VLLM_FORCE_INC"] = "1"
             os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
-            # FIXME: (Yi) remove it on INC side
-            os.environ["NUM_EXPERTS_GROUPS"]="1"
             llm = LLM(
                 model=model, 
                 tokenizer=args.tokenizer,
