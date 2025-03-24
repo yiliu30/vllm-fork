@@ -255,7 +255,7 @@ class VllmMixtureOfExpertsOpFP8(torch.nn.Module):
         max_expert = self.experts_max
         w13_list_slice = []
         w2_list_slice = []
-        for j in range(min_expert, max_expert):
+        for j in range(self.num_experts):
             w13_list_slice.append(self.w13_list[j].get_dequant_weight())
             w2_list_slice.append(self.w2_list[j].get_dequant_weight())
 
