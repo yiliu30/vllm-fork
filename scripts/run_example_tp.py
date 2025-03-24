@@ -41,24 +41,6 @@ os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 #os.environ['VLLM_DMOE_DYNAMIC_SCALE']='1' # only works for 1.20 + dmoe patch
 
-# # For Calibration
-# os.environ["VLLM_SKIP_WARMUP"] = "false"
-
-# os.environ["VLLM_PROMPT_BS_BUCKET_MIN"] = "1"
-# os.environ["VLLM_PROMPT_BS_BUCKET_STEP"] = "32"
-# os.environ["VLLM_PROMPT_BS_BUCKET_MAX"] = "1"
-
-# os.environ["VLLM_PROMPT_SEQ_BUCKET_MIN"] = "1024"
-# os.environ["VLLM_PROMPT_SEQ_BUCKET_STEP"] = "512"
-# os.environ["VLLM_PROMPT_SEQ_BUCKET_MAX"] = "1024"
-
-# os.environ["VLLM_DECODE_BS_BUCKET_MIN"] = "1"
-# os.environ["VLLM_DECODE_BS_BUCKET_STEP"] = "32"
-# os.environ["VLLM_DECODE_BS_BUCKET_MAX"] = "1"
-
-# os.environ["VLLM_DECODE_BLOCK_BUCKET_MIN"] = "1"
-# os.environ["VLLM_DECODE_BLOCK_BUCKET_STEP"] = "16"
-# os.environ["VLLM_DECODE_BLOCK_BUCKET_MAX"] = "32"
 
 
 
