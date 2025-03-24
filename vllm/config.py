@@ -1559,7 +1559,7 @@ class SchedulerConfig:
     def _verify_args(self) -> None:
         if (self.max_num_batched_tokens < self.max_model_len
                 and not self.chunked_prefill_enabled):
-            if self.max_model_len == 131072 and self.max_num_batched_tokens == 65536:
+            if self.max_model_len == 131072 and self.max_num_batched_tokens <= 76800:
                 logger.warning(" --------- trigger a temp w/a of 128k model len, with up to 64k input ---------")
             else:
                 raise ValueError(
