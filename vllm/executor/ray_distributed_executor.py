@@ -301,7 +301,9 @@ class RayDistributedExecutor(DistributedExecutorBase):
         all_args_to_update_environment_variables = [{
             current_platform.device_control_env_var:
             ",".join(map(str, node_gpus[node_id])),
-        } for (node_id, _) in worker_node_and_gpu_ids]
+            "ID":
+            gpu_id[0],
+        } for (node_id, gpu_id) in worker_node_and_gpu_ids]
 
         for args in all_args_to_update_environment_variables:
             # some carry-over env vars from the driver
