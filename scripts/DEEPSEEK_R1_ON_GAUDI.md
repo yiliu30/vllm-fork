@@ -89,3 +89,19 @@ ray start --address='${head_ip}:6379' --resources='{"HPU": 8, "TPU": 0}'
 python scripts/run_example_tp_2nodes.py --model ${YOUR_PATH}/DeepSeek-R1-static
 ```
 
+# Requantize the official FP8 Model Using INC
+- INC: https://github.com/yiliu30/vllm-fork/tree/r1-woq
+
+- Calibration
+```bash
+export OFFICIAL_FP8_MODEL=deepseek-ai/DeepSeek-R1
+# For quick test
+python run_example_tp.py --prepare --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL}
+# For calibration with pile dataset
+python run_example_tp.py --prepare --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --nprompts 512 --dataset pile --osl 32
+```
+- Quantizatiion
+```bash
+python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --quant
+```
+

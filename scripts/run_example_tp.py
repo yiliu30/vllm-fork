@@ -14,7 +14,6 @@ file_path = os.path.abspath(__file__)
 dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
 
 model_path = "/data/models/DeepSeek-R1-static/"
-model_path = "/software/users/yiliu4/HF_HOME/hub/DeepSeek-R1-Official-Slink/"
 model_path = "/data/models/DeepSeek-R1/"
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()
@@ -24,7 +23,7 @@ parser.add_argument("--tp_size", type=int, default=8, help="The number of thread
 parser.add_argument("--ep_size", type=int, default=8, help="The number of threads.")
 parser.add_argument("--dataset", type=str, default=None, help="The dataset.")
 parser.add_argument("--isl", type=int, default=1024, help="input sequence length.")
-parser.add_argument("--osl", type=int, default=32, help="output sequence length.")
+parser.add_argument("--osl", type=int, default=1024, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
 parser.add_argument("--prepare", action="store_true", help="INC prepare.")
