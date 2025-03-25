@@ -89,7 +89,7 @@ ray start --address='${head_ip}:6379' --resources='{"HPU": 8, "TPU": 0}'
 python scripts/run_example_tp_2nodes.py --model ${YOUR_PATH}/DeepSeek-R1-static
 ```
 
-# Requantize the official FP8 Model Using INC
+# Requantize the Official FP8 Model Using INC
 - INC: https://github.com/yiliu30/vllm-fork/tree/r1-woq
 
 - Calibration
@@ -98,10 +98,13 @@ export OFFICIAL_FP8_MODEL=deepseek-ai/DeepSeek-R1
 # For quick test
 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --osl 32 --max_num_seqs 1
 # For calibration with pile dataset
-VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --prepare --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --osl 32 --max_num_seqs 1 --nprompts 512 --dataset pile
+VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --osl 32 --max_num_seqs 1 --nprompts 512 --dataset pile
 ```
 - Quantizatiion
 ```bash
 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --max_num_seqs 1 --fp8_kv_cache
-```
 
+- Evaluation
+```bash
+VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_lm_eval.py  --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --fp8_kv_cache -l 64 --batch_size 1 
+```
