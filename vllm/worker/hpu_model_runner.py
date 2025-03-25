@@ -765,7 +765,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self_attn = model.model.layers[0].self_attn
         for layer in model.model.layers:
             self_attn = layer.self_attn
-            # delete attrs: q_b_proj, kv_b_proj, o_proj in self_attn
+            # delete attrs: q_b_proj, kv_b_proj, o_proj in self_attn,
+            # as they have been transferred to the MLAImpl.
             if hasattr(self_attn, "q_b_proj"):
                 delattr(self_attn, "q_b_proj")
             if hasattr(self_attn, "kv_b_proj"):
