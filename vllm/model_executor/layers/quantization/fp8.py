@@ -1098,17 +1098,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
         if self.quant_config.activation_scheme == "dynamic":
             if self.quant_config.enable_runtime_dequant:
-                final_hidden_states = do_dynamic_moe_with_dequant(
-                    x,
-                    topk_ids,
-                    topk_weights,
-                    w13_weight_fp8,
-                    w2_weight_fp8,
-                    moe_n_slice,
-                    n_expert_slice,
-                    w13_weight_scale_inv_fp8,
-                    w2_weight_scale_inv_fp8,
-                )
+                final_hidden_states = do_dynamic_moe_with_dequant(x, topk_ids, topk_weights, w13_weight_fp8, w2_weight_fp8, moe_n_slice, n_expert_slice, w13_weight_scale_inv_fp8, w2_weight_scale_inv_fp8)
             elif not use_static_moe and self.enable_dmoe_dynamic_scale:
                 final_hidden_states = do_dynamic_moe_with_dynamic_scaling(x, topk_ids, topk_weights, w13_weight_fp8, w2_weight_fp8, moe_n_slice, n_expert_slice, w13_weight_scale_inv_fp8, w2_weight_scale_inv_fp8)
             else:

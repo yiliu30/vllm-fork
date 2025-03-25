@@ -66,12 +66,6 @@ class MoeFP8Matmul(torch.nn.Module):
         self.block_size = block_size
 
     def get_dequant_weight(self):
-        """
-        w13_weight = dequant_block_fp8_weight_naive(w13_weight_fp8,
-                                                    w13_weight_scale_inv_fp8,
-                                                    block_size=self.quant_config.weight_block_size,
-                                                    dtype=x.dtype)
-        """
         from vllm.model_executor.layers.quantization.utils.fp8_utils import (
             dequant_block_fp8_weight_naive,
         )
@@ -93,14 +87,12 @@ class MoeFP8Matmul(torch.nn.Module):
         # We not track the BF16 weight which will cause OoM.
         if self.is_dequantized:
             return layer.weight
-        from vllm.model_executor.layers.quantization.utils.fp8_utils import (
-            dequant_block_fp8_weight_naive,
-        )
         
-        dequant_weight = dequant_block_fp8_weight_naive(
+        dequant_weight = self.get_dequant_weight(
             layer.weight.data,
             layer.scale_inv_fp8.data,
             layer.block_size,
+            layer.high_precision,
         )
         layer.is_dequantized = True
         return dequant_weight
@@ -538,7 +530,7 @@ class FusedMoE(torch.nn.Module):
 
         self.quant_method.create_weights(layer=self, **moe_quant_params)
 
-        # FIXME: (Yi) we need to wrap the `torch.ops.hpu.mixture_of_experts` as `VllmMixtureOfExpertsOp`,
+        # FIXME: (Yi) we need to wrap the `torch.ops.hpu.mixture_of_experts` as a module,
         # so that INC can patch it for measurement and quantization.
         layer = self
         ep_shift = self.ep_rank * self.num_experts
