@@ -26,8 +26,6 @@ parser.add_argument("--osl", type=int, default=1024, help="output sequence lengt
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
 parser.add_argument("--max_num_seqs", type=int, default=None, help="The max number of sequences.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
-parser.add_argument("--prepare", action="store_true", help="INC prepare.")
-parser.add_argument("--quant", action="store_true", help="INC prepare.")
 parser.add_argument("--fp8_kv_cache", action="store_true", help="Use fp8 for kv cache.")
 args = parser.parse_args()
 
