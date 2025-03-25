@@ -54,9 +54,8 @@ def get_pile_prompts(model_name, num_samples=512):
     import transformers
 
     """
-    这个是Heng这边autoround calibration static model的方法：
-    “数据集NeelNanda/pile-10k,随机采样 seed=42, iters=1相当于使用rtn, nsamples=512 
-    采样512条数据，seqlen=1024选取大于长度大于1024的数据” 
+    autoround calibration static model：
+        NeelNanda/pile-10k,seed=42, iters=1 rtn, nsamples=512 seqlen=1024 
     """
 
     # ==-------------------------------------------------------------------------==
