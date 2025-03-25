@@ -49,7 +49,7 @@ ACTIVATION_SCHEMES = ["static", "dynamic"]
 
 logger = init_logger(__name__)
 
-VLLM_FORCE_INC = os.getenv("VLLM_FORCE_INC", "0") in ["1", "true"]
+VLLM_REQUANT_FP8_INC = os.getenv("VLLM_REQUANT_FP8_INC", "0") in ["1", "true"]
 
 
 class Fp8Config(QuantizationConfig):
@@ -1080,8 +1080,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             actual_num_experts = num_experts
             moe_n_slice = self.moe_n_slice
             n_expert_slice = actual_num_experts // moe_n_slice
-            if self.quant_config.enable_runtime_dequant and VLLM_FORCE_INC:
-                assert not use_partial_experts, "Partial experts not supported with VLLM_FORCE_INC"
+            if self.quant_config.enable_runtime_dequant and VLLM_REQUANT_FP8_INC:
+                assert not use_partial_experts, "Partial experts not supported with VLLM_REQUANT_FP8_INC"
                 # FIXME: (Yi) handle the case where moe_n_slice > 1
                 final_hidden_states: torch.Tensor = torch.zeros_like(x)
                 for moe in layer.moe_lst:

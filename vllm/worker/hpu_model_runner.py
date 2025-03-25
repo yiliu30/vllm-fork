@@ -779,7 +779,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def _is_quant_with_inc(self):
         return (
             self.model_config.quantization == "inc"
-            or os.getenv("VLLM_FORCE_INC", "0") in ["1", "true"]
+            or os.getenv("VLLM_REQUANT_FP8_INC", "0") in ["1", "true"]
         )
     
     def load_model(self) -> None:

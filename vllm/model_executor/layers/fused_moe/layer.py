@@ -32,7 +32,7 @@ logger = init_logger(__name__)
 
 import os
 LOW_CPU_MEM = False
-VLLM_FORCE_INC = os.getenv("VLLM_FORCE_INC", "0") in ["1", "true"]
+VLLM_REQUANT_FP8_INC = os.getenv("VLLM_REQUANT_FP8_INC", "0") in ["1", "true"]
 
 # ==-------------------------------------------------------------------------==
 # VLLM-HPU-EXT PATCH Start
@@ -625,7 +625,7 @@ class FusedMoE(torch.nn.Module):
         self.custom_routing_function = custom_routing_function
         if is_hpu:
             # FIXME: (Yi) WA, should use DynamicFusedMOE for INC
-            if not VLLM_FORCE_INC:
+            if not VLLM_REQUANT_FP8_INC:
                 from vllm_hpu_extension.ops import DynamicFusedMOE
                 self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
 
@@ -661,7 +661,7 @@ class FusedMoE(torch.nn.Module):
         # so that INC can patch it for measurement and quantization.
         layer = self
         ep_shift = self.ep_rank * self.num_experts
-        if VLLM_FORCE_INC:
+        if VLLM_REQUANT_FP8_INC:
             num_experts_on_rank = self.num_experts
             num_expert_group = 1
             num_expert_per_group = num_experts_on_rank // num_expert_group
@@ -817,7 +817,7 @@ class FusedMoE(torch.nn.Module):
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
         expert_data.copy_(loaded_weight)
 
-        if is_hpu and not VLLM_FORCE_INC:
+        if is_hpu and not VLLM_REQUANT_FP8_INC:
             self.hpu_fused_moe.MoeOp.w13_list[expert_id].set_weight(
                 orig_exp_data)
             # print(f"loaded w13 for hpu for expert_id: {expert_id}, orig_exp_data.shape: {orig_exp_data.shape}")
@@ -840,7 +840,7 @@ class FusedMoE(torch.nn.Module):
                                                  shard_size)
         # w2, down_proj: Load into only logical weight of w2.
         expert_data.copy_(loaded_weight)
-        if is_hpu and not VLLM_FORCE_INC:
+        if is_hpu and not VLLM_REQUANT_FP8_INC:
             self.hpu_fused_moe.MoeOp.w2_list[expert_id].set_weight(expert_data)
             # print(f"loaded w2 for hpu for expert_id: {expert_id}, expert_data.shape: {expert_data.shape}")
 
