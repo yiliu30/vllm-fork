@@ -837,7 +837,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             if self._is_quant_with_inc():
                 logger.info("Preparing model with INC..")
                 if torch.distributed.get_rank() == 0:
-                    logger.info(f"Original model \n {self.model}")
+                    logger.debug(f"Original model \n {self.model}")
                 with HabanaMemoryProfiler() as m_inc:
                     from neural_compressor.torch.quantization import (
                         FP8Config, convert, prepare)
@@ -854,7 +854,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                           mark_only_scales_as_const=True)
                     torch.distributed.barrier()
                     if torch.distributed.get_rank() == 0:
-                        logger.info(f"INC model \n {self.model}")
+                        logger.debug(f"INC model \n {self.model}")
                                     
                 self.inc_initialized_successfully = True
                 logger.info("Preparing model with INC took %s",

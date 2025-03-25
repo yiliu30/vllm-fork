@@ -492,7 +492,6 @@ class FusedMoE(torch.nn.Module):
         self.topk_group = topk_group
         self.custom_routing_function = custom_routing_function
         if is_hpu:
-            # FIXME: (Yi) WA, should use DynamicFusedMOE for INC
             if not VLLM_REQUANT_FP8_INC:
                 from vllm_hpu_extension.ops import DynamicFusedMOE
                 self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
