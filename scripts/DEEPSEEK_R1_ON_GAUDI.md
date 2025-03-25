@@ -103,6 +103,7 @@ VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENAB
 - Quantizatiion
 ```bash
 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --max_num_seqs 1 --fp8_kv_cache
+```
 
 - Evaluation
 ```bash

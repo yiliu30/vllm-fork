@@ -241,6 +241,6 @@ if __name__ == "__main__":
         print(f"Generated text: {generated_text!r}")
         print(f"Ground truth: {gt_i!r}")
         print("====================================")
-    if os.getenv("VLLM_FORCE_INC", None) is not None:
+    if os.getenv("VLLM_REQUANT_FP8_INC", None) is not None:
         llm.llm_engine.model_executor.shutdown()
     del llm
