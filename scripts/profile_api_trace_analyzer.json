@@ -55,7 +55,7 @@
                 "parseOptions": {
                     "traceAnalyzer": {
                         "traceAnalyzerXlsx": {
-                            "value": true
+                            "value": false
                         }
                     }
                 }
