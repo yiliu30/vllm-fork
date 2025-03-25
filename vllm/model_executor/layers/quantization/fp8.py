@@ -293,9 +293,6 @@ class Fp8LinearMethod(LinearMethodBase):
         # TODO(rob): refactor block quant into separate class.
         if self.block_quant:
             if current_platform.is_hpu():
-                # if torch.distributed.get_rank() == 0:
-                #     import pdb; pdb.set_trace()
-                # torch.distributed.barrier()
                 from vllm.model_executor.layers.quantization.utils.fp8_utils import pad_block_fp8_weight_naive
                 weight, orig_M, orig_N = pad_block_fp8_weight_naive(
                     layer.weight.data,

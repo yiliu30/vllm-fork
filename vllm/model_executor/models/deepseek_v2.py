@@ -57,8 +57,7 @@ from .interfaces import SupportsPP
 from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
-from vllm.logger import init_logger
-logger = init_logger(__name__)
+
 is_hpu = current_platform.is_hpu()
 
 
@@ -667,7 +666,6 @@ class DeepseekV2Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        # logger.info("DeepseekV2Model forward, input_ids shape: %s", input_ids.shape)
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
