@@ -88,12 +88,7 @@ class MoeFP8Matmul(torch.nn.Module):
         if self.is_dequantized:
             return layer.weight
         
-        dequant_weight = self.get_dequant_weight(
-            layer.weight.data,
-            layer.scale_inv_fp8.data,
-            layer.block_size,
-            layer.high_precision,
-        )
+        dequant_weight = layer.get_dequant_weight()
         layer.is_dequantized = True
         return dequant_weight
 
