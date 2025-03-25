@@ -96,12 +96,12 @@ python scripts/run_example_tp_2nodes.py --model ${YOUR_PATH}/DeepSeek-R1-static
 ```bash
 export OFFICIAL_FP8_MODEL=deepseek-ai/DeepSeek-R1
 # For quick test
-python run_example_tp.py --prepare --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL}
+VLLM_FORCE_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL}
 # For calibration with pile dataset
-python run_example_tp.py --prepare --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --nprompts 512 --dataset pile --osl 32
+VLLM_FORCE_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --prepare --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --nprompts 512 --dataset pile --osl 32
 ```
 - Quantizatiion
 ```bash
-python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --quant
+VLLM_FORCE_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --fp8_kv_cache
 ```
 

@@ -12,9 +12,8 @@ import argparse
 # get file location
 file_path = os.path.abspath(__file__)
 dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
-
 model_path = "/data/models/DeepSeek-R1-static/"
-model_path = "/data/models/DeepSeek-R1/"
+
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default=model_path, help="The model path.")
@@ -25,6 +24,7 @@ parser.add_argument("--dataset", type=str, default=None, help="The dataset.")
 parser.add_argument("--isl", type=int, default=1024, help="input sequence length.")
 parser.add_argument("--osl", type=int, default=1024, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
+parser.add_argument("--max_num_seqs", type=int, default=None, help="The max number of sequences.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
 parser.add_argument("--prepare", action="store_true", help="INC prepare.")
 parser.add_argument("--quant", action="store_true", help="INC prepare.")
@@ -194,6 +194,8 @@ if __name__ == "__main__":
     param = {}
     if args.fp8_kv_cache:
         param["kv_cache_dtype"] = "fp8_inc"
+    if args.max_num_seqs is not None:
+        param["max_num_seqs"] = args.max_num_seqs
     if args.tp_size == 1:
         llm = LLM(
             model=model, 
@@ -205,52 +207,17 @@ if __name__ == "__main__":
             **param
         )
     else:
-        if args.prepare:
-            os.environ["QUANT_CONFIG"]="inc_measure_with_fp8kv_config.json"
-            os.environ["VLLM_FORCE_INC"] = "1"
-            os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
-            llm = LLM(
-                model=model, 
-                tokenizer=args.tokenizer,
-                tensor_parallel_size=args.tp_size,
-                distributed_executor_backend='mp',
-                trust_remote_code=True,
-                # quantization="inc",
-                max_model_len=16384,
-                max_num_seqs=1,
-                block_size=256,
-                dtype="bfloat16",
-            )
-        elif args.quant:
-            os.environ["QUANT_CONFIG"]="inc_quant_with_fp8kv_config.json"
-            os.environ["VLLM_FORCE_INC"] = "1"
-            os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
-            llm = LLM(
-                model=model, 
-                tokenizer=args.tokenizer,
-                tensor_parallel_size=args.tp_size,
-                distributed_executor_backend='mp',
-                trust_remote_code=True,
-                # quantization="inc",
-                max_num_seqs=1,
-                kv_cache_dtype="fp8_inc",
-                max_model_len=16384,
-                block_size=256,
-                dtype="bfloat16",
-            )
-        else:
-            os.environ["VLLM_ENABLE_RUNTIME_DEQUANT"] = "1"
-            llm = LLM(
-                model=model, 
-                tokenizer=args.tokenizer,
-                tensor_parallel_size=args.tp_size,
-                distributed_executor_backend='mp',
-                trust_remote_code=True,
-                max_model_len=16384,
-                dtype="bfloat16",
-                gpu_memory_utilization=0.8,
-                **param
-            )
+        llm = LLM(
+            model=model, 
+            tokenizer=args.tokenizer,
+            tensor_parallel_size=args.tp_size,
+            distributed_executor_backend='mp',
+            trust_remote_code=True,
+            max_model_len=16384,
+            dtype="bfloat16",
+            gpu_memory_utilization=0.8,
+            **param
+        )
 
 
     # Generate texts from the prompts. The output is a list of RequestOutput objects
