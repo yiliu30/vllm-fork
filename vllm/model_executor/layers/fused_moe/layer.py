@@ -580,7 +580,7 @@ class FusedMoE(torch.nn.Module):
                         layer.quant_config.weight_block_size
                     )
 
-                # FIXME: (Yi) pass `experts_min` and `experts_max` to MoeOp.
+                # FIXME: (Yi) pass `experts_min` and `experts_max` to sub_expert_group.
                 setattr(
                     sub_expert_group, "experts_min", min_expert + ep_shift
                 )

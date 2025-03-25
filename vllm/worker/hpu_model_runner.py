@@ -846,20 +846,13 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     self._inc_preprocess_(self.model, config)
                     if config.measure:
                         self.model = prepare(self.model, config)
-                        # if torch.distributed.get_rank() == 0:
-                        #     import pdb;pdb.set_trace()
                         
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    # if torch.distributed.get_rank() == 0:
-                    #     import pdb;pdb.set_trace()
 
                     torch.distributed.barrier()
                     if torch.distributed.get_rank() == 0:
                         logger.info(f"INC model \n {self.model}")
-                    htcore.hpu_initialize(
-                        self.model, mark_only_scales_as_const=True
-                    )
                                     
                 self.inc_initialized_successfully = True
                 logger.info("Preparing model with INC took %s",
@@ -1830,9 +1823,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         if is_pt_profiler_run and self.is_driver_worker:
             profiler = setup_profiler()
             profiler.start()
-        logger.debug(f"Running warmup scenario: {scenario_name}")
         for index in range(times):
-            logger.debug(f"Running warmup iteration: {index}/{times}")
             inputs = self.prepare_model_input(seqs)
             is_single_step = \
                 self.vllm_config.scheduler_config.num_scheduler_steps == 1

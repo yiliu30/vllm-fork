@@ -650,8 +650,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
     def process_weights_after_loading(self, layer: Module) -> None:
         # TODO (rob): refactor block quant into separate class.
-        # if torch.distributed.get_rank() == 0:
-        #     import pdb; pdb.set_trace()
         if self.block_quant:
             if current_platform.is_hpu():
                 if self.quant_config.enable_runtime_dequant:
