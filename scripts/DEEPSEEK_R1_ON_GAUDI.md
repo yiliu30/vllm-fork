@@ -90,7 +90,7 @@ python scripts/run_example_tp_2nodes.py --model ${YOUR_PATH}/DeepSeek-R1-static
 ```
 
 # Requantize the Official FP8 Model Using INC
-- INC: https://github.com/yiliu30/vllm-fork/tree/r1-woq
+- INC: https://github.com/intel/neural-compressor/tree/r1-woq
 
 - Calibration
 ```bash
