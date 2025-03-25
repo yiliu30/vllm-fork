@@ -91,8 +91,6 @@ if __name__ == "__main__":
         results = simple_evaluate(
             model=llm,
             tasks=["gsm8k"],
-            #   num_fewshot=5,
-            #   batch_size=8,
             limit=args.limit,
         )
         end = time.perf_counter()

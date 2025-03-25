@@ -40,9 +40,6 @@ os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 #os.environ['VLLM_DMOE_DYNAMIC_SCALE']='1' # only works for 1.20 + dmoe patch
 
-
-
-
 def sample_sonnet_requests(
     dataset_path: str,
     num_requests: int,
@@ -217,7 +214,6 @@ if __name__ == "__main__":
             gpu_memory_utilization=0.8,
             **param
         )
-
 
     # Generate texts from the prompts. The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
