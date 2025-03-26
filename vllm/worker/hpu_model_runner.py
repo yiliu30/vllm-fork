@@ -670,6 +670,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.max_model_len = self.scheduler_config.max_model_len
         self.max_num_batched_tokens = \
             self.scheduler_config.max_num_batched_tokens
+        self.max_seq_len_to_capture = self.model_config.max_seq_len_to_capture
         self.block_size = self.cache_config.block_size
 
         self.pin_memory = is_pin_memory_available()
@@ -922,6 +923,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         return self.model
 
     def _use_graphs(self, batch_size, seq_len, is_prompt):
+        if is_prompt and batch_size * seq_len > self.max_seq_len_to_capture:
+            return False
         if self.enforce_eager:
             return False
         if self.skip_warmup:
@@ -1493,6 +1496,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def prepare_input_tensors(
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
+        finished_requests_ids: Optional[List[str]] = None,
     ) -> Tuple[TModelInputForHPU, SamplingMetadata]:
         if len(seq_group_metadata_list) == 0:
             return self._model_input_cls(), None
@@ -1550,9 +1554,15 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         ) = self._prepare_decode(decode_reqs)
 
         if not self.is_pooler:
+            generators = self.get_generators(finished_requests_ids)
             sampling_metadata = SamplingMetadata.prepare(
-                seq_group_metadata_list, seq_lens, query_lens, self.device,
-                self.pin_memory)
+                seq_group_metadata_list,
+                seq_lens,
+                query_lens,
+                self.device,
+                self.pin_memory,
+                generators=generators,
+            )
 
         if not self.scheduler_config.chunked_prefill_enabled:
             assert (len(prefill_reqs) and len(decode_reqs)) == 0
@@ -1825,8 +1835,13 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         if is_pt_profiler_run and self.is_driver_worker:
             profiler = setup_profiler()
             profiler.start()
-        for index in range(times):
+        for time_index in range(times):
             inputs = self.prepare_model_input(seqs)
+            if time_index == 0:
+                if self.is_driver_worker:
+                    broadcast_tensor_dict({"input_tokens": inputs.input_tokens}, src=0)
+                else:
+                    broadcast_tensor_dict(src=0)
             is_single_step = \
                 self.vllm_config.scheduler_config.num_scheduler_steps == 1
             if is_prompt or is_single_step:
@@ -1933,7 +1948,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             # Graph memory usage is proportional to seq dimension in a batch
             batch_seq = batch_size * seq_len if is_prompt else batch_size
             mem_estimate = batch_seq / total_batch_seq * total_mem
-            if mem_estimate >= available_mem:
+            if mem_estimate >= available_mem or batch_seq > self.max_seq_len_to_capture:
                 captured_all = False
                 continue
             graphed_bucket = (batch_size, seq_len, is_prompt)
@@ -2290,7 +2305,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 self.profiler_counter_helper.capture_seq_group_metadata_stats(
                     seq_group_metadata_list=seq_group_metadata_list)
             model_input, sampling_metadata = self.prepare_input_tensors(
-                seq_group_metadata_list)
+                seq_group_metadata_list, finished_requests_ids)
             assert model_input.attn_metadata is not None
             is_prompt = model_input.attn_metadata.is_prompt
 
