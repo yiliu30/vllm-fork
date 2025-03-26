@@ -93,19 +93,23 @@ python scripts/run_example_tp_2nodes.py --model ${YOUR_PATH}/DeepSeek-R1-static
 - INC: https://github.com/intel/neural-compressor/tree/r1-woq
 
 - Calibration
+> [!Note]
+> This step will take a while. You can skip it by downloading the pre-calibration result.
+> `huggingface-cli download Yi30/inc-from-woq-one-node-full-pile-512-1024  --local-dir ./scripts/nc_workspace_measure_kvache`
+
 ```bash
-export OFFICIAL_FP8_MODEL=deepseek-ai/DeepSeek-R1
-# For quick test
-VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --osl 32 --max_num_seqs 1
-# For calibration with pile dataset
+cd ./scripts
 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --osl 32 --max_num_seqs 1 --nprompts 512 --dataset pile
 ```
+
 - Quantization
 ```bash
+cd ./scripts
 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --max_num_seqs 1 --fp8_kv_cache
 ```
 
 - Evaluation
 ```bash
+cd ./scripts
 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_lm_eval.py  --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --fp8_kv_cache -l 64 --batch_size 1 
 ```
