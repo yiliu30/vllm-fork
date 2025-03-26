@@ -95,6 +95,7 @@ python scripts/run_example_tp_2nodes.py --model ${YOUR_PATH}/DeepSeek-R1-static
 - Calibration
 > [!Note]
 > This step will take a while. You can skip it by downloading the pre-calibration result.
+> 
 > `huggingface-cli download Yi30/inc-from-woq-one-node-full-pile-512-1024  --local-dir ./scripts/nc_workspace_measure_kvache`
 
 ```bash
