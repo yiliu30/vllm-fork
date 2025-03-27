@@ -58,7 +58,7 @@ python3 benchmarks/benchmark_throughput.py \
     --trust-remote-code \
     --distributed_executor_backend mp \
     --kv_cache_dtype fp8_inc \
-    --gpu-memory-util 0.95 2>&1 | tee benchmark_logs_upstream/offline-throughput-${model_name}-mtp-nocontpa-bs${bs}-in${in_len}-out${out_len}-tp${tp_parallel}.log
+    --gpu-memory-util 0.95 2>&1 | tee benchmark_logs_upstream/327-bahs offline-throughput-${model_name}-mtp-nocontpa-bs${bs}-in${in_len}-out${out_len}-tp${tp_parallel}.log
 
     #--num_speculative_tokens 3 \
     #    --enable-expert-parallel \
