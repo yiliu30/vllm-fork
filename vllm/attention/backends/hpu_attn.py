@@ -249,25 +249,20 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             #latent_vec_v = latent_vec_v.unflatten(0, (block_indices.size(0), -1))
         # print("latent_vec", latent_vec.shape)
 
-
-        # write the latent and rope to kv cache
-        if kv_cache is not None and len(kv_cache) == 2:
-            # print(f"k cache shape: {kv_cache[0].shape}")
-            # print(f"v cache shape: {kv_cache[1].shape}")
-            # print(f"latent vec k shape: {latent_vec_k.shape}")
-            # print(f"latent vec v shape: {latent_vec_v.shape}")
-            latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
-            latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
-            k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
-                                        block_offsets)
-            v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
-                                        block_offsets)
-            kv_cache = (k_cache, v_cache)
-
         if is_prefill:
+            if kv_cache is not None and len(kv_cache) == 2:
+                self.latent_cache_k(latent_vec_k[..., self.kv_lora_rank:], kv_cache[0], block_indices,
+                                        block_offsets)
+                self.latent_cache_v(latent_vec_k[..., :self.kv_lora_rank], kv_cache[1], block_indices,
+                                        block_offsets)
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata, batch_size)
         else:
-            return self._forward_decode(q_nope, q_pe, kv_cache, attn_metadata, batch_size)
+            if kv_cache is not None and len(kv_cache) == 2:
+                k_cache = self.latent_cache_k(latent_vec_k[..., self.kv_lora_rank:], kv_cache[0], block_indices,
+                                        block_offsets)
+                v_cache = self.latent_cache_v(latent_vec_k[..., :self.kv_lora_rank], kv_cache[1], block_indices,
+                                        block_offsets)
+            return self._forward_decode(q_nope, q_pe, k_cache, v_cache, attn_metadata, batch_size)
     
     def _forward_prefill(
         self,
@@ -315,13 +310,14 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         self,
         q_nope: torch.Tensor,
         q_pe: torch.Tensor,
-        kv_cache: torch.Tensor,
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
         attn_metadata: HPUAttentionMetadata,
         batch_size: int
     ) -> torch.Tensor:
         q = torch.cat([q_nope, q_pe], dim=-1)
-        kv_c_and_k_pe_cache = kv_cache[0].unsqueeze(2)
-        kv_c_cache = kv_cache[1].unsqueeze(2)
+        kv_c_and_k_pe_cache = k_cache.unsqueeze(2)
+        kv_c_cache = v_cache.unsqueeze(2)
 
         output = flat_pa_mla(
             query=q,
