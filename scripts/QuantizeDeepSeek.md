@@ -174,7 +174,7 @@ In this section, we load the BF16 model on DRAM and quantize it to FP8 model usi
 # vllm root
 cd vllm/scripts
 # Download the unified calibration results:
-huggingface-cli download Yi30/inc-2nodes-tc-4096-correct-311-unified --local-dir nc_workspace_measure_one_node
+huggingface-cli download Yi30/inc-2nodes-pile-1024-correct-311-unified --local-dir nc_workspace_measure_one_node
 QUANT_CONFIG=inc_quant_one_node_config.json python inc_example_one_node.py
 ```
 
@@ -183,7 +183,7 @@ QUANT_CONFIG=inc_quant_one_node_config.json python inc_example_one_node.py
 # vllm root
 cd vllm/scripts
 # Download the unified calibration results:
-huggingface-cli download Yi30/inc-2nodes-tc-4096-correct-311-unified --local-dir nc_workspace_measure_kvache_one_node
+huggingface-cli download Yi30/inc-2nodes-pile-1024-correct-311-unified --local-dir nc_workspace_measure_kvache_one_node
 QUANT_CONFIG=inc_quant_with_fp8kv_one_node_config.json python inc_example_one_node.py --fp8_kvcache
 ```
 
