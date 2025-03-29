@@ -101,13 +101,13 @@ python scripts/run_example_tp_2nodes.py --model ${YOUR_PATH}/DeepSeek-R1-static
 ```bash
 export OFFICIAL_FP8_MODEL=deepseek-ai/DeepSeek-R1
 cd ./scripts
-VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --osl 32 --max_num_seqs 1 --nprompts 512 --dataset pile
+VLLM_USE_MATMUL_V1=1 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_measure_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --osl 32 --max_num_seqs 1 --nprompts 512 --dataset pile
 ```
 
 - Quantization
 ```bash
 cd ./scripts
-VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --max_num_seqs 1 --fp8_kv_cache
+VLLM_USE_MATMUL_V1=1 VLLM_REQUANT_FP8_INC=1 QUANT_CONFIG=inc_quant_with_fp8kv_config.json VLLM_ENABLE_RUNTIME_DEQUANT=1 python run_example_tp.py --model ${OFFICIAL_FP8_MODEL} --tokenizer ${OFFICIAL_FP8_MODEL} --max_num_seqs 1 --fp8_kv_cache
 ```
 
 - Evaluation

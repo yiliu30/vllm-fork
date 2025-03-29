@@ -609,7 +609,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
-
+import os
 @support_torch_compile
 class DeepseekV2Model(nn.Module):
 
@@ -634,7 +634,10 @@ class DeepseekV2Model(nn.Module):
                 prefix=f"{prefix}.embed_tokens")
         else:
             self.embed_tokens = PPMissingLayer()
-
+        
+        FORCE_NUM_HIDDEN_LAYERS = int(os.getenv("FORCE_NUM_HIDDEN_LAYERS", config.num_hidden_layers))
+        config.num_hidden_layers = FORCE_NUM_HIDDEN_LAYERS
+        model_config.num_hidden_layers = FORCE_NUM_HIDDEN_LAYERS
         self.start_layer, self.end_layer, self.layers = make_layers(
             config.num_hidden_layers,
             lambda prefix: DeepseekV2DecoderLayer(

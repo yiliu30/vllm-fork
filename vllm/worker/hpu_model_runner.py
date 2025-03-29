@@ -83,6 +83,7 @@ VLLM_DELAYED_SAMPLING = os.environ.get('VLLM_DELAYED_SAMPLING',
                                        'false').lower() == 'true'
 DUMMY_TOKEN_ID = -1
 
+VLLM_PROFILE_EXECUTE_MODEL_DECODE_NUM_STEPS = int(os.getenv("VLLM_PROFILE_EXECUTE_MODEL_DECODE_NUM_STEPS", "1"))
 
 class PhaseType(Enum):
     PREFILL = 'prefill'
@@ -649,6 +650,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     ):
         ModelRunnerBase.__init__(self, vllm_config=vllm_config)
         environment.set_model_config(self.model_config)
+        self._temp_profil_step = 0
+        self._decode_profiler = None
         self.is_driver_worker = is_driver_worker
         self.return_hidden_states = return_hidden_states
 
@@ -863,7 +866,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                           mark_only_scales_as_const=True)
                     torch.distributed.barrier()
                     if torch.distributed.get_rank() == 0:
-                        logger.debug(f"INC model \n {self.model}")
+                        logger.info(f"INC model \n {self.model}")
                                     
                 self.inc_initialized_successfully = True
                 logger.info("Preparing model with INC took %s",
@@ -2567,12 +2570,17 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 }
 
                 profiler = None
+                # self._decode_profiler = None
                 if self.profile_execute_model and \
                     not warmup_mode and self.is_driver_worker and \
                         (self.profile_execute_model_prompt and is_prompt or \
                         self.profile_execute_model_decode and not is_prompt):
-                    profiler = setup_profiler()
-                    profiler.start()
+                        profiler = setup_profiler()
+                        profiler.start()
+                        # if self._decode_profiler is None:
+                        #     self._decode_profiler = setup_profiler()
+                        #     self._decode_profiler.start()
+                        #     self._temp_profil_step = 0
                 with self.profiler.record_event('internal',
                                                 model_event_name,
                                                 args=profiler_args):
@@ -2626,10 +2634,20 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         self.cached_step_outputs.append(output)
                         self.cached_step_inputs.append(model_input)
                 htorch.core.mark_step()
+                if self._decode_profiler is not None:
+                    self._decode_profiler.step()
+                    self._temp_profil_step += 1
+                    if self._temp_profil_step >= VLLM_PROFILE_EXECUTE_MODEL_DECODE_NUM_STEPS:
+                        self._decode_profiler.stop()
+                        time.sleep(5)
+                        raise ValueError(f"Profile completed at {self._temp_profil_step} steps")
                 if profiler:
                     profiler.step()
                     profiler.stop()
-                    raise ValueError("Profile completed")
+                    raise ValueError(f"Profile completed at {self._temp_profil_step} steps")
+                #     if self._temp_profil_step >= 2:
+                #         profiler.stop()
+                #         raise ValueError(f"Profile completed at {self._temp_profil_step} steps")
                 if model_input.async_callback is not None:
                     model_input.async_callback()
                 if i < num_steps - 1:

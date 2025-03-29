@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type
-
+import os
 import torch
 from vllm.attention.backends.mla.utils import MLACommonImpl
 import vllm_hpu_extension.kernels as kernels
@@ -87,6 +87,50 @@ class HPUMLAAttentionBackend(HPUAttentionBackend):
     def get_name() -> str:
         return "HPU_MLA"
 
+def _pipelined_pa(attn, value, block_groups, block_mapping, block_scales,
+                 batch_size, matmul_av_op, batch2block_matmul_op,
+                 block2batch_matmul_op):
+    # When fp32_softmax is enabled attn is left in fp32 after Q@K
+    # We can return to native dtype after we renormalize and calculate
+    # the adjustments
+
+    # Normalize the attention scores and cast attn to native dtype
+    block_max = attn.amax(dim=-1, keepdim=True)
+    adjustment_target_shape = block_max.shape
+    attn = attn.sub(block_max)
+    attn = attn.exp()
+    #attn = attn.to(value.dtype)  <================ value dtype is FP8 if use VLLM_USE_MATMUL_V1
+    block_sums = attn.sum(dim=-1, keepdim=True)
+    attn = matmul_av_op(attn, value)
+        # qother = self.quant_input_1(other)
+    block_max = block_max.squeeze()
+    block_sums = block_sums.squeeze()
+
+    # Calculate maximum of blocks that belong to the same sequences
+    # and cast adjustments to native dtype
+    group_max = ops.grouped_max(block_max, batch_size, block_groups)
+    block_adjustment = (block_max - group_max).exp()
+    #block_adjustment = block_adjustment.to(value.dtype)
+    sum_adjusted = block_sums.mul(block_adjustment)
+
+    # Sum block's sums that belongs to the same sequences
+    group_sum_adjusted = ops.block2batch(sum_adjusted, block_mapping,
+                                         block2batch_matmul_op)
+    group_sum_adjusted = ops.batch2block(group_sum_adjusted, block_mapping,
+                                         batch2block_matmul_op)
+    sum_adjusted = sum_adjusted.view(*adjustment_target_shape)
+    group_sum_adjusted = group_sum_adjusted.view(*adjustment_target_shape)
+    block_adjustment = block_adjustment.view(*adjustment_target_shape)
+
+    # For stability in case some of the sums have been zeroed out during
+    # block aggretation
+    group_sum_adjusted = torch.maximum(group_sum_adjusted, sum_adjusted)
+
+    # Post processing for the attention scores
+    rescale = block_adjustment.div(group_sum_adjusted)
+    attn = attn.mul(rescale)
+    return attn
+
 def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
             block_bias, block_scales, block_groups, scale, matmul_qk_op,
             matmul_av_op, batch2block_matmul_op, block2batch_matmul_op,
@@ -95,11 +139,27 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
     q_heads = query.size(1)
     kv_heads = key_cache.size(2)
 
-    query = ops.batch2block(scale * query, block_mapping, batch2block_matmul_op).unsqueeze(-2)
-    key = keys_fetch_func(key_cache, block_list).transpose(1, 2)
-    value = values_fetch_func(value_cache, block_list).transpose(1, 2)
+    # query = ops.batch2block(scale * query, block_mapping, batch2block_matmul_op).unsqueeze(-2)
+    # key = keys_fetch_func(key_cache, block_list).transpose(1, 2)
+    # value = values_fetch_func(value_cache, block_list).transpose(1, 2)
+    
+    query = ops.batch2block(scale * query, block_mapping,
+                            batch2block_matmul_op).unsqueeze(-2)
+    key = keys_fetch_func(key_cache, block_list)
+    value = values_fetch_func(value_cache, block_list)
     # get concat key
     key = torch.concat((value, key), dim=-1)
+    
+
+
+    # # dequant, expect GC will fix this
+    # key = dequant_output_func(key)
+    # value = dequant_output_func(value)
+
+    key = key.transpose(1, 2)
+    value = value.transpose(1, 2)
+    
+
     block_bias = block_bias.view(key.size(0), 1, 1, -1)
     if kv_heads != q_heads:
         block_bias = block_bias.unsqueeze(1)
@@ -112,7 +172,7 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
 
     attn = matmul_qk_op(query, key)
     attn = attn + block_bias
-    attn = ops.pipelined_pa(attn, value, block_groups, block_mapping, block_scales=block_scales,
+    attn = _pipelined_pa(attn, value, block_groups, block_mapping, block_scales=block_scales,
                         batch_size=batch_size, matmul_av_op=matmul_av_op,
                         batch2block_matmul_op=batch2block_matmul_op, block2batch_matmul_op=block2batch_matmul_op)
     attn = ops.block2batch(attn, block_mapping, block2batch_matmul_op)
@@ -143,7 +203,8 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     cross_block_scales: Optional[torch.Tensor] = None
     cross_block_usage: Optional[torch.Tensor] = None
     cross_attn_bias: Optional[torch.Tensor] = None
-    
+
+VLLM_USE_MATMUL_V1 = os.environ.get("VLLM_USE_MATMUL_V1", "0") in ["1", "true"]
 
 class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
@@ -167,9 +228,9 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                          blocksparse_params, logits_soft_cap, attn_type,
                          **kwargs)
 
-        self.matmul_qk = Matmul()
+        self.matmul_qk = MatmulV1() if VLLM_USE_MATMUL_V1 else Matmul()
         self.softmax = Softmax()
-        self.matmul_av = Matmul()
+        self.matmul_av = MatmulV1() if VLLM_USE_MATMUL_V1 else Matmul()
         self.batch2block_matmul = Matmul()
         self.block2batch_matmul = Matmul()
         self.latent_cache_k = VLLMKVCache()
@@ -344,6 +405,14 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         result = result.view(batch_size, 1, -1)
         return result
 
+
+class MatmulV1(torch.nn.Module):
+
+    def __init__(self):
+        super(MatmulV1, self).__init__()
+
+    def forward(self, x, y):
+        return torch.matmul(x, y)
 
 class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
     """
