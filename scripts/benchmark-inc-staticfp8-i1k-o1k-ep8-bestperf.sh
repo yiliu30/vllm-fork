@@ -16,7 +16,7 @@ gpu_utils=0.92
 bs=448
 num_prompts=448
 request_rate=inf
-log_name="[inc-requant-rebase-woq-326-staticfp8-dmoe-fp8kv-delayedsampling]static-online-gaudi3-${gpu_utils}util-TPparallel${tp_parrallel}-EP${ep_size}-loop${moe_n_slice}moegroups-multistep${multi_step}_nprompt${num_prompts}_rrate${request_rate}_bs${bs}_i${in_len}_o${out_len}_mdllen${total_len}"
+log_name="[inc-331-moe-op-maxabs_hw-scalar-online-gaudi3-${gpu_utils}util-TPparallel${tp_parrallel}-EP${ep_size}-loop${moe_n_slice}moegroups-multistep${multi_step}_nprompt${num_prompts}_rrate${request_rate}_bs${bs}_i${in_len}_o${out_len}_mdllen${total_len}"
 
 VLLM_DECODE_BLOCK_BUCKET_MIN=$((in_len * bs / 128))
 VLLM_DECODE_BLOCK_BUCKET_MAX=$((total_len * bs / 128 + 128))
@@ -27,7 +27,7 @@ tokenizer="/data/models/DeepSeek-R1/"
 model_name="DeepSeek-R1"
 
 
-QUANT_CONFIG="inc_quant_with_fp8kv_config.json" \
+QUANT_CONFIG="inc_quant_bf16_flat_pa_mla_with_fp8kv_config.json" \
 VLLM_REQUANT_FP8_INC=1 \
 VLLM_ENABLE_RUNTIME_DEQUANT=1 \
 VLLM_DELAYED_SAMPLING=true \

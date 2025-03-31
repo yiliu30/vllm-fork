@@ -536,7 +536,7 @@ class FusedMoE(torch.nn.Module):
             assert n_expert_slice * num_expert_group == num_experts_on_rank
             moe_n_slice = int(os.environ.get("VLLM_MOE_N_SLICE", 4))
             assert moe_n_slice == 1, f"moe_n_slice is {moe_n_slice}, expected 1 for INC"
-            moe_lst = []
+            # moe_lst = []
             for i in range(moe_n_slice):
                 sub_expert_group = VllmMixtureOfExpertsOpFP8(
                     num_expert_per_group
@@ -586,11 +586,11 @@ class FusedMoE(torch.nn.Module):
                 setattr(
                     sub_expert_group, "experts_max", max_expert - 1 + ep_shift
                 )
-                # setattr(self, f"sub_expert_group_{i}", sub_expert_group)
-                moe_lst.append(sub_expert_group)
+                setattr(self, "moe_op", sub_expert_group)
+                # moe_lst.append(sub_expert_group)
                 htorch.core.mark_step()
-            self.moe_lst = torch.nn.ModuleList(moe_lst)
-            htorch.core.mark_step()
+            # self.moe_lst = torch.nn.ModuleList(moe_lst)
+            # htorch.core.mark_step()
 
     def _load_per_tensor_weight_scale(self, shard_id: str,
                                       param: torch.nn.Parameter,
