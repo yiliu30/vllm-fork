@@ -863,7 +863,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                           mark_only_scales_as_const=True)
                     torch.distributed.barrier()
                     if torch.distributed.get_rank() == 0:
-                        logger.debug(f"INC model \n {self.model}")
+                        logger.info(f"INC model \n {self.model}")
                                     
                 self.inc_initialized_successfully = True
                 logger.info("Preparing model with INC took %s",
@@ -2566,13 +2566,16 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     'real_batch_size': real_batch_size
                 }
 
-                profiler = None
+                # profiler = None
                 if self.profile_execute_model and \
                     not warmup_mode and self.is_driver_worker and \
                         (self.profile_execute_model_prompt and is_prompt or \
                         self.profile_execute_model_decode and not is_prompt):
-                    profiler = setup_profiler()
-                    profiler.start()
+                    # profiler = setup_profiler()
+                    # profiler.start()
+                    if self._decode_profiler is None:
+                        self._decode_profiler = setup_profiler()
+                        self._decode_profiler.start()
                 with self.profiler.record_event('internal',
                                                 model_event_name,
                                                 args=profiler_args):
@@ -2626,10 +2629,19 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         self.cached_step_outputs.append(output)
                         self.cached_step_inputs.append(model_input)
                 htorch.core.mark_step()
-                if profiler:
-                    profiler.step()
-                    profiler.stop()
-                    raise ValueError("Profile completed")
+                # if profiler:
+                #     profiler.step()
+                #     profiler.stop()
+                #     raise ValueError("Profile completed")
+                if self._decode_profiler:
+                    self._decode_profiler.step()
+                    self._decode_profiler_step_cnts += 1
+                    if self._decode_profiler_step_cnts >= int(os.getenv("VLLM_PROFILE_EXECUTE_MODEL_DECODE_STEPS", "1")):
+                        self._decode_profiler.stop()
+                        time.sleep(5)
+                        raise ValueError("Profile completed at step %d" %
+                                         self._decode_profiler_step_cnts)
+                    
                 if model_input.async_callback is not None:
                     model_input.async_callback()
                 if i < num_steps - 1:
