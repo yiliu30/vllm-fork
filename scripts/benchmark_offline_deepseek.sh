@@ -1,16 +1,18 @@
 #!/bin/bash
-total_prompts=448
-bs=448 # batch_size is dynamic, this setting throttles the max batch size
+total_prompts=224
+bs=224 # batch_size is dynamic, this setting throttles the max batch size
 # 1024 + 1024
 # 1024 + 1024 - 4
 # 1024 + 1019 + 1 + 4
-in_len=4094 # input length is dynamic, this tell warmup the max input len
-out_len=2 # if not set fixed_out_len, the output_len will be dynamic
+# 1024 1024
+# 1024 + 1000
+in_len=2037 # input length is dynamic, this tell warmup the max input len
+out_len=11 # if not set fixed_out_len, the output_len will be dynamic
 total_len=$((in_len + out_len))
 tp_parallel=8
 
 dataset="random"
-log_postfix="inc-329-2"
+log_postfix="inc-331-d5-default-moe-module-maxabs_hw-scalar-scalar"
 out_len_aligned=$((out_len + 127 / 128 * 128))
 in_len_aligned=$(((in_len + 127) / 128 * 128))
 total_len_aligned=$((in_len_aligned + out_len_aligned))
@@ -29,19 +31,20 @@ tokenizer="/data/models/DeepSeek-R1/"
 model_name="DeepSeek-R1"
 
 
+# inc_quant_bf16_flat_pa_mla_with_fp8kv_config.json
 
 #VLLM_TORCH_PROFILER_DIR=/workspace/vllm/vllm/pt_profiling/mtp/vllm_profile \
 #VLLM_PROFILER_ENABLED=true \
 #HABANA_PROFILE=1 HABANA_PROFILE_WRITE_HLTV=1 \
 # VLLM_DELAYED_SAMPLING=true \
+# VLLM_USE_MATMUL_V1=1 \
 # FORCE_NUM_HIDDEN_LAYERS=6 \
+VLLM_PROFILE_EXECUTE_MODEL_DECODE=1 \
+VLLM_PROFILE_EXECUTE_MODEL_DECODE_NUM_STEPS=5 \
 GRAPH_VISUALIZATION=1 \
-VLLM_PROFILE_EXECUTE_MODEL_DECODE_NUM_STEPS=1 \
-VLLM_USE_MATMUL_V1=1 \
-QUANT_CONFIG="inc_quant_with_fp8kv_config.json" \
+QUANT_CONFIG="inc_quant_bf16_flat_pa_mla_with_fp8kv_config.json" \
 VLLM_REQUANT_FP8_INC=1 \
 VLLM_ENABLE_RUNTIME_DEQUANT=1 \
-VLLM_PROFILE_EXECUTE_MODEL_DECODE=1 \
 HABANA_PROF_CONFIG=./profile_api_trace_analyzer.json \
 VLLM_DELAYED_SAMPLING=true \
 VLLM_MOE_N_SLICE=1 \
@@ -69,7 +72,7 @@ python3 ../benchmarks/benchmark_throughput.py \
     --num-prompts ${total_prompts} \
     --tensor-parallel-size  ${tp_parallel} \
     --speculative_draft_tensor_parallel_size ${tp_parallel} \
-    --max_model_len 4224 \
+    --max_model_len 2048 \
     --input-len ${in_len} \
     --output-len ${out_len} \
     --trust-remote-code \

@@ -586,11 +586,12 @@ class FusedMoE(torch.nn.Module):
                 setattr(
                     sub_expert_group, "experts_max", max_expert - 1 + ep_shift
                 )
-                # setattr(self, f"sub_expert_group_{i}", sub_expert_group)
-                moe_lst.append(sub_expert_group)
+                setattr(self, f"sub_expert_group", sub_expert_group)
+
+                # moe_lst.append(sub_expert_group)
                 htorch.core.mark_step()
-            self.moe_lst = torch.nn.ModuleList(moe_lst)
-            htorch.core.mark_step()
+            # self.moe_lst = torch.nn.ModuleList(moe_lst)
+            # htorch.core.mark_step()
 
     def _load_per_tensor_weight_scale(self, shard_id: str,
                                       param: torch.nn.Parameter,

@@ -855,16 +855,22 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         FP8Config, convert, prepare)
                     config = FP8Config.from_json_file(
                         os.getenv("QUANT_CONFIG", ""))
-
+                    self.model.eval()
                     self._inc_preprocess_(self.model, config)
                     if config.measure:
                         self.model = prepare(self.model, config)
                         
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    htcore.hpu_initialize(self.model,
-                                          mark_only_scales_as_const=True)
-                    torch.distributed.barrier()
+                    htcore.hpu_initialize(
+                        self.model,
+                        mark_only_scales_as_const=True,
+                        #   mark_scales=True,
+                        #   mark_non_scales=True
+                    )
+                    # if torch.distributed.get_rank() == 0:
+                    #     import pdb; pdb.set_trace()
+                    # torch.distributed.barrier()
                     if torch.distributed.get_rank() == 0:
                         logger.info(f"INC model \n {self.model}")
                                     
@@ -2569,18 +2575,17 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     'real_batch_size': real_batch_size
                 }
 
-                profiler = None
-                # self._decode_profiler = None
+                # profiler = None
                 if self.profile_execute_model and \
                     not warmup_mode and self.is_driver_worker and \
                         (self.profile_execute_model_prompt and is_prompt or \
                         self.profile_execute_model_decode and not is_prompt):
-                        profiler = setup_profiler()
-                        profiler.start()
-                        # if self._decode_profiler is None:
-                        #     self._decode_profiler = setup_profiler()
-                        #     self._decode_profiler.start()
-                        #     self._temp_profil_step = 0
+                        # profiler = setup_profiler()
+                        # profiler.start()
+                        if self._decode_profiler is None:
+                            self._decode_profiler = setup_profiler()
+                            self._decode_profiler.start()
+                            self._temp_profil_step = 0
                 with self.profiler.record_event('internal',
                                                 model_event_name,
                                                 args=profiler_args):
@@ -2641,13 +2646,10 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         self._decode_profiler.stop()
                         time.sleep(5)
                         raise ValueError(f"Profile completed at {self._temp_profil_step} steps")
-                if profiler:
-                    profiler.step()
-                    profiler.stop()
-                    raise ValueError(f"Profile completed at {self._temp_profil_step} steps")
-                #     if self._temp_profil_step >= 2:
-                #         profiler.stop()
-                #         raise ValueError(f"Profile completed at {self._temp_profil_step} steps")
+                # if profiler:
+                #     profiler.step()
+                #     profiler.stop()
+                #     raise ValueError(f"Profile completed at {self._temp_profil_step} steps")
                 if model_input.async_callback is not None:
                     model_input.async_callback()
                 if i < num_steps - 1:
