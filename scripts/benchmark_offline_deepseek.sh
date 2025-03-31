@@ -8,7 +8,7 @@ tp_parallel=8
  
 dataset="random"
 
-log_prefix="331-default-inc-moe-op"
+log_prefix="331-default-inc-moe-op-matmulv1"
 
 out_len_aligned=$((out_len + 127 / 128 * 128))
 in_len_aligned=$(((in_len + 127) / 128 * 128))
@@ -26,8 +26,10 @@ model_name="DeepSeek-R1"
 #VLLM_TORCH_PROFILER_DIR=/workspace/vllm/vllm/pt_profiling/mtp/vllm_profile \
 #VLLM_PROFILER_ENABLED=true \
 #HABANA_PROFILE=1 HABANA_PROFILE_WRITE_HLTV=1 \
+# QUANT_CONFIG=inc_quant_bf16_flat_pa_mla_with_fp8kv_config.json \
+VLLM_USE_MATMUL_V1=1 \
 VLLM_REQUANT_FP8_INC=1 \
-QUANT_CONFIG=inc_quant_bf16_flat_pa_mla_with_fp8kv_config.json \
+QUANT_CONFIG=inc_quant_with_fp8kv_config.json \
 VLLM_ENABLE_RUNTIME_DEQUANT=1 \
 VLLM_PROFILE_EXECUTE_MODEL_DECODE_STEPS=5 \
 VLLM_PROFILE_EXECUTE_MODEL_DECODE=1 \

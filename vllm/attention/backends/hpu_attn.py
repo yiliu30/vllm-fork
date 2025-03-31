@@ -172,7 +172,8 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
 
     attn = matmul_qk_op(query, key)
     attn = attn + block_bias
-    attn = _pipelined_pa(attn, value, block_groups, block_mapping, block_scales=block_scales,
+    _pipelined_pa_fun = _pipelined_pa if VLLM_USE_MATMUL_V1 else ops.pipelined_pa
+    attn = _pipelined_pa_fun(attn, value, block_groups, block_mapping, block_scales=block_scales,
                         batch_size=batch_size, matmul_av_op=matmul_av_op,
                         batch2block_matmul_op=batch2block_matmul_op, block2batch_matmul_op=block2batch_matmul_op)
     attn = ops.block2batch(attn, block_mapping, block2batch_matmul_op)
