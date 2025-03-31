@@ -37,16 +37,6 @@ os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 #os.environ['VLLM_DMOE_DYNAMIC_SCALE']='1'
 #os.environ['VLLM_ENABLE_RUNTIME_DEQUANT']='1'
 
-if args.task == "gsm8k":
-    #For testing gsm8k quickly
-    os.environ['VLLM_PROMPT_BS_BUCKET_MIN']='1'
-    os.environ['VLLM_PROMPT_BS_BUCKET_MAX']='1'
-    os.environ['VLLM_PROMPT_SEQ_BUCKET_MIN']='2048'
-    os.environ['VLLM_PROMPT_SEQ_BUCKET_STEP']='512'
-    os.environ['VLLM_PROMPT_SEQ_BUCKET_MAX']='2048'
-    os.environ['VLLM_DECODE_BS_BUCKET_MIN']='1'
-    os.environ['VLLM_DECODE_BS_BUCKET_MAX']='1'
-
 if __name__ == "__main__":
 
     from lm_eval.models.vllm_causallms import VLLM

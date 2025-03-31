@@ -37,7 +37,6 @@ os.environ["VLLM_MOE_N_SLICE"] = "1" if args.ep_size > 1 else "4"
 os.environ["VLLM_EP_SIZE"] = f"{args.ep_size}"
 os.environ["VLLM_MLA_DISABLE_REQUANTIZATION"] = "1"
 os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
-os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 #os.environ['VLLM_DMOE_DYNAMIC_SCALE']='1' # only works for 1.20 + dmoe patch
 
 def sample_sonnet_requests(
