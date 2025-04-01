@@ -214,16 +214,8 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             topk_weights = topk_weights.to(x.dtype)
 
         final_hidden_states = torch.zeros_like(x)
-        num_experts = layer.num_experts
-        if hasattr(layer, "w13_weight") and layer.w13_weight is not None:
-            assert (
-                layer.w13_weight.shape[0] == num_experts
-            ), f"Expected {layer.w13_weight.shape[0]} experts, got {num_experts}"
-        # For mixtral, the `num_expert_group` is 8.
-        if num_expert_group is None:
-            num_expert_group = 8
-        num_expert_group = num_expert_group
-        n_expert_slice = num_experts // num_expert_group
+        num_experts = layer.w13_weight.shape[0]
+        n_expert_slice = layer.w13_weight.shape[0] // 8
         assert n_expert_slice * 8 == num_experts
 
         # w13_list = layer.hpu_fused_moe.MoeOp.w13_list

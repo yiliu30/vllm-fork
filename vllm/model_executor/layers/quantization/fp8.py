@@ -1079,9 +1079,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             n_expert_slice = actual_num_experts // moe_n_slice
             if self.quant_config.enable_runtime_dequant and VLLM_REQUANT_FP8_INC:
                 assert not use_partial_experts, "Partial experts not supported with VLLM_REQUANT_FP8_INC"
-                # FIXME: (Yi) handle the case where moe_n_slice > 1
-                # final_hidden_states: torch.Tensor = torch.zeros_like(x)
-                # for moe in layer.moe_lst:
                 final_hidden_states = layer.moe_op(
                     x,
                     topk_ids,
