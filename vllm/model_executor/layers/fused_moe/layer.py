@@ -5,7 +5,9 @@ from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
 import torch
+import os
 
+import torch.distributed
 from vllm.distributed import (get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_reduce)
@@ -30,123 +32,9 @@ else:
     fused_moe_pallas = None  # type: ignore
 logger = init_logger(__name__)
 
-import os
+
 VLLM_REQUANT_FP8_INC = os.getenv("VLLM_REQUANT_FP8_INC", "0") in ["1", "true"]
 
-# ==-------------------------------------------------------------------------==
-# VLLM-HPU-EXT PATCH Start
-# ==-------------------------------------------------------------------------==
-
-import torch.nn.functional as F
-import habana_frameworks.torch.core as htcore
-import habana_frameworks.torch as htorch
-
-
-class MoeFP8Matmul(torch.nn.Module):
-    def __init__(
-        self,
-        block_size: Tuple[int, int] = (128, 128),
-        high_precision=torch.bfloat16,
-    ):
-        super().__init__()
-        self.block_size = block_size
-        self.high_precision = high_precision
-        self.is_dequantized = False
-
-    def set_weight(self, w: torch.Tensor):
-        self.weight = w
-
-    def set_scale_inv_fp8(self, scale_inv_fp8: torch.Tensor):
-        self.scale_inv_fp8 = scale_inv_fp8
-
-    def set_high_precision(self, high_precision=torch.bfloat16):
-        self.high_precision = high_precision
-
-    def set_weight_block_size(self, block_size: Tuple[int, int] = (128, 128)):
-        self.block_size = block_size
-
-    def get_dequant_weight(self):
-        from vllm.model_executor.layers.quantization.utils.fp8_utils import (
-            dequant_block_fp8_weight_naive,
-        )
-
-        return dequant_block_fp8_weight_naive(
-            self.weight,
-            self.scale_inv_fp8,
-            block_size=self.block_size,
-            dtype=self.high_precision,
-        )
-
-    def forward(self, state, expert_id, w):
-        raise NotImplementedError()
-
-    def dequant_block_fp8_weight(self, layer: "MoeFP8Matmul") -> torch.Tensor:
-        # The function will be called by INC either in the measurement or the quantization phase.
-        # At quantization phase, INC requantizes the BF16 weight to FP8 and updates the weight.
-        # At measurement phase, INC only measures the BF16 weight and does NOT update the weight.
-        # We not track the BF16 weight which will cause OoM.
-        if hasattr(layer, "_updated_weight") and hasattr(layer, "_updated_weight"):
-            return layer.weight
-        
-        dequant_weight = layer.get_dequant_weight()
-        layer.is_dequantized = True
-        return dequant_weight
-
-    def get_dequant_weights_func(
-        self,
-    ) -> Optional[Callable[[torch.nn.Module], torch.Tensor]]:
-        return self.dequant_block_fp8_weight
-
-
-class VllmMixtureOfExpertsOpFP8(torch.nn.Module):
-    def __init__(self, num_total_experts: int):
-        super().__init__()
-        self.w13_list = torch.nn.ModuleList(
-            [MoeFP8Matmul() for _ in range(num_total_experts)]
-        )
-        self.w2_list = torch.nn.ModuleList(
-            [MoeFP8Matmul() for _ in range(num_total_experts)]
-        )
-        self.num_experts = num_total_experts
-        # FIXME (Yi) add experts_min and experts_max as init parameters
-        self.experts_min = None
-        self.experts_max = None
-
-    def forward(
-        self,
-        x,
-        topk_ids,
-        topk_weights,
-        moe_n_slice,
-        n_expert_slice,
-        ep_shift,
-    ):
-        min_expert = self.experts_min
-        max_expert = self.experts_max
-        w13_list_slice = []
-        w2_list_slice = []
-        for j in range(self.num_experts):
-            w13_list_slice.append(self.w13_list[j].get_dequant_weight())
-            w2_list_slice.append(self.w2_list[j].get_dequant_weight())
-
-        final_hidden_states = torch.ops.hpu.mixture_of_experts(
-            hidden_states=x,
-            expert_routing_table=topk_ids.to(torch.int64),
-            router_weights=topk_weights.to(x.dtype),
-            w12=w13_list_slice,
-            w3=w2_list_slice,
-            permuted_weights=True,
-            activation="silu",
-            experts_min=min_expert,
-            experts_max=max_expert,
-        )
-        htorch.core.mark_step()
-        return final_hidden_states
-
-
-# ==-------------------------------------------------------------------------==
-# VLLM-HPU-EXT PATCH End
-# ==-------------------------------------------------------------------------==
 
 class FusedMoeWeightScaleSupported(Enum):
     TENSOR = "tensor"
@@ -491,10 +379,9 @@ class FusedMoE(torch.nn.Module):
         self.num_expert_group = num_expert_group
         self.topk_group = topk_group
         self.custom_routing_function = custom_routing_function
-        if is_hpu:
-            if not VLLM_REQUANT_FP8_INC:
-                from vllm_hpu_extension.ops import DynamicFusedMOE
-                self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
+        if is_hpu and not VLLM_REQUANT_FP8_INC:
+            from vllm_hpu_extension.ops import DynamicFusedMOE
+            self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
 
         self.scoring_func = scoring_func
         self.e_score_correction_bias = e_score_correction_bias
@@ -523,74 +410,45 @@ class FusedMoE(torch.nn.Module):
             moe_quant_params["intermediate_size_full"] = intermediate_size
 
         self.quant_method.create_weights(layer=self, **moe_quant_params)
-
-        # FIXME: (Yi) we need to wrap the `torch.ops.hpu.mixture_of_experts` as a module,
-        # so that INC can patch it for measurement and quantization.
-        layer = self
-        ep_shift = self.ep_rank * self.num_experts
-        if VLLM_REQUANT_FP8_INC:
+        if is_hpu and VLLM_REQUANT_FP8_INC:
+            layer = self
+            ep_shift = self.ep_rank * self.num_experts
+            from vllm.model_executor.layers.vllm_ext_patch import VllmMixtureOfExpertsOpFP8
             num_experts_on_rank = self.num_experts
-            num_expert_group = 1
+            moe_n_slice = int(os.environ.get("VLLM_MOE_N_SLICE", 4))
+            assert moe_n_slice == 1, (
+                f"moe_n_slice is {moe_n_slice}, expected 1 when using VLLM_REQUANT_FP8_INC"
+            )
+            num_expert_group = moe_n_slice
             num_expert_per_group = num_experts_on_rank // num_expert_group
             n_expert_slice = num_experts_on_rank // num_expert_group
             assert n_expert_slice * num_expert_group == num_experts_on_rank
-            moe_n_slice = int(os.environ.get("VLLM_MOE_N_SLICE", 4))
-            assert moe_n_slice == 1, f"moe_n_slice is {moe_n_slice}, expected 1 for INC"
-            # moe_lst = []
-            for i in range(moe_n_slice):
-                sub_expert_group = VllmMixtureOfExpertsOpFP8(
-                    num_expert_per_group
+            experts_min, experts_max = 0, n_expert_slice
+            moe_op = VllmMixtureOfExpertsOpFP8(
+                num_expert_per_group,
+                experts_min + ep_shift,
+                experts_max - 1 + ep_shift,
+            )
+            for index in range(n_expert_slice):
+                moe_op.w13_list[index].set_weight(layer.w13_weight[index])
+                moe_op.w13_list[index].set_scale_inv_fp8(
+                    layer.w13_weight_scale_inv[index]
                 )
-                min_expert = i * n_expert_slice
-                max_expert = (i + 1) * n_expert_slice
-
-                w13_list_slice = [
-                    layer.w13_weight[j] for j in range(min_expert, max_expert)
-                ]
-                w13_weight_scale_inv_fp8_list = [
-                    layer.w13_weight_scale_inv[j]
-                    for j in range(min_expert, max_expert)
-                ]
-                w2_list_slice = [
-                    layer.w2_weight[j] for j in range(min_expert, max_expert)
-                ]
-                w2_weight_scale_inv_fp8_list = [
-                    layer.w2_weight_scale_inv[j]
-                    for j in range(min_expert, max_expert)
-                ]
-                for index in range(len(w2_list_slice)):
-                    sub_expert_group.w13_list[index].set_weight(
-                        w13_list_slice[index]
-                    )
-                    sub_expert_group.w13_list[index].set_scale_inv_fp8(
-                        w13_weight_scale_inv_fp8_list[index]
-                    )
-                    sub_expert_group.w13_list[index].set_weight_block_size(
-                        layer.quant_config.weight_block_size
-                    )
-
-                    sub_expert_group.w2_list[index].set_weight(
-                        w2_list_slice[index]
-                    )
-                    sub_expert_group.w2_list[index].set_scale_inv_fp8(
-                        w2_weight_scale_inv_fp8_list[index]
-                    )
-                    sub_expert_group.w2_list[index].set_weight_block_size(
-                        layer.quant_config.weight_block_size
-                    )
-
-                # FIXME: (Yi) pass `experts_min` and `experts_max` to sub_expert_group.
-                setattr(
-                    sub_expert_group, "experts_min", min_expert + ep_shift
+                moe_op.w13_list[index].set_weight_block_size(
+                    layer.quant_config.weight_block_size
                 )
-                setattr(
-                    sub_expert_group, "experts_max", max_expert - 1 + ep_shift
+
+                moe_op.w2_list[index].set_weight(layer.w2_weight[index])
+                moe_op.w2_list[index].set_scale_inv_fp8(
+                    layer.w2_weight_scale_inv[index]
                 )
-                setattr(self, "moe_op", sub_expert_group)
-                # moe_lst.append(sub_expert_group)
-                htorch.core.mark_step()
-            # self.moe_lst = torch.nn.ModuleList(moe_lst)
-            # htorch.core.mark_step()
+                moe_op.w2_list[index].set_weight_block_size(
+                    layer.quant_config.weight_block_size
+                )
+            self.moe_op = moe_op
+            import habana_frameworks.torch as htorch
+
+            htorch.core.mark_step()
 
     def _load_per_tensor_weight_scale(self, shard_id: str,
                                       param: torch.nn.Parameter,
