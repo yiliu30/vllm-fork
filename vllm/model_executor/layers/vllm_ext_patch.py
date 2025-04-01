@@ -66,16 +66,16 @@ class MoeFP8Matmul(torch.nn.Module):
 
 class VllmMixtureOfExpertsOpFP8(torch.nn.Module):
     def __init__(
-        self, num_total_experts: int, experts_min: int = 0, experts_max: int = 8
+        self, num_experts: int, experts_min: int = 0, experts_max: int = 8
     ):
         super().__init__()
         self.w13_list = torch.nn.ModuleList(
-            [MoeFP8Matmul() for _ in range(num_total_experts)]
+            [MoeFP8Matmul() for _ in range(num_experts)]
         )
         self.w2_list = torch.nn.ModuleList(
-            [MoeFP8Matmul() for _ in range(num_total_experts)]
+            [MoeFP8Matmul() for _ in range(num_experts)]
         )
-        self.num_experts = num_total_experts
+        self.num_experts = num_experts
         self.experts_min = experts_min
         self.experts_max = experts_max
 

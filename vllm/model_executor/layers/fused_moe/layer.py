@@ -371,9 +371,29 @@ class FusedMoE(torch.nn.Module):
         self.num_expert_group = num_expert_group
         self.topk_group = topk_group
         self.custom_routing_function = custom_routing_function
-        if is_hpu and not VLLM_REQUANT_FP8_INC:
-            from vllm_hpu_extension.ops import DynamicFusedMOE
-            self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
+        if is_hpu:
+            if VLLM_REQUANT_FP8_INC:
+                ep_shift = self.ep_rank * self.num_experts
+                from vllm.model_executor.layers.vllm_ext_patch import (
+                    VllmMixtureOfExpertsOpFP8,
+                )
+                moe_n_slice = int(os.environ.get("VLLM_MOE_N_SLICE", 4))
+                assert moe_n_slice == 1, (
+                    f"moe_n_slice is {moe_n_slice}, expected 1 when using VLLM_REQUANT_FP8_INC"
+                )
+                num_expert_per_group = self.num_experts // moe_n_slice
+                experts_min, experts_max = 0, self.num_experts
+                moe_op = VllmMixtureOfExpertsOpFP8(
+                    num_expert_per_group,
+                    experts_min + ep_shift,
+                    experts_max - 1 + ep_shift,
+                )
+                self.moe_op = moe_op
+            else:
+                from vllm_hpu_extension.ops import DynamicFusedMOE
+
+                self.hpu_fused_moe = DynamicFusedMOE(self.num_experts)
+            
 
         self.scoring_func = scoring_func
         self.e_score_correction_bias = e_score_correction_bias
@@ -402,45 +422,6 @@ class FusedMoE(torch.nn.Module):
             moe_quant_params["intermediate_size_full"] = intermediate_size
 
         self.quant_method.create_weights(layer=self, **moe_quant_params)
-        if is_hpu and VLLM_REQUANT_FP8_INC:
-            layer = self
-            ep_shift = self.ep_rank * self.num_experts
-            from vllm.model_executor.layers.vllm_ext_patch import VllmMixtureOfExpertsOpFP8
-            num_experts_on_rank = self.num_experts
-            moe_n_slice = int(os.environ.get("VLLM_MOE_N_SLICE", 4))
-            assert moe_n_slice == 1, (
-                f"moe_n_slice is {moe_n_slice}, expected 1 when using VLLM_REQUANT_FP8_INC"
-            )
-            num_expert_group = moe_n_slice
-            num_expert_per_group = num_experts_on_rank // num_expert_group
-            n_expert_slice = num_experts_on_rank // num_expert_group
-            assert n_expert_slice * num_expert_group == num_experts_on_rank
-            experts_min, experts_max = 0, n_expert_slice
-            moe_op = VllmMixtureOfExpertsOpFP8(
-                num_expert_per_group,
-                experts_min + ep_shift,
-                experts_max - 1 + ep_shift,
-            )
-            for index in range(n_expert_slice):
-                moe_op.w13_list[index].set_weight(layer.w13_weight[index])
-                moe_op.w13_list[index].set_scale_inv_fp8(
-                    layer.w13_weight_scale_inv[index]
-                )
-                moe_op.w13_list[index].set_weight_block_size(
-                    layer.quant_config.weight_block_size
-                )
-
-                moe_op.w2_list[index].set_weight(layer.w2_weight[index])
-                moe_op.w2_list[index].set_scale_inv_fp8(
-                    layer.w2_weight_scale_inv[index]
-                )
-                moe_op.w2_list[index].set_weight_block_size(
-                    layer.quant_config.weight_block_size
-                )
-            self.moe_op = moe_op
-            import habana_frameworks.torch as htorch
-
-            htorch.core.mark_step()
 
     def _load_per_tensor_weight_scale(self, shard_id: str,
                                       param: torch.nn.Parameter,

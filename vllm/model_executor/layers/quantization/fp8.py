@@ -604,6 +604,27 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             layer.register_parameter("w13_weight_scale_inv", w13_weight_scale)
             layer.register_parameter("w2_weight_scale_inv", w2_weight_scale)
             assert self.quant_config.activation_scheme == "dynamic"
+            
+            if current_platform.is_hpu() and VLLM_REQUANT_FP8_INC:
+                moe_op = layer.moe_op
+                for index in range(moe_op.num_experts):
+                    moe_op.w13_list[index].set_weight(layer.w13_weight[index])
+                    moe_op.w13_list[index].set_scale_inv_fp8(
+                        layer.w13_weight_scale_inv[index]
+                    )
+                    moe_op.w13_list[index].set_weight_block_size(
+                        layer.quant_config.weight_block_size
+                    )
+
+                    moe_op.w2_list[index].set_weight(layer.w2_weight[index])
+                    moe_op.w2_list[index].set_scale_inv_fp8(
+                        layer.w2_weight_scale_inv[index]
+                    )
+                    moe_op.w2_list[index].set_weight_block_size(
+                        layer.quant_config.weight_block_size
+                    )
+                import habana_frameworks.torch as htorch
+                htorch.core.mark_step()
 
         # Add the quantization method used (per tensor/grouped/channel)
         # to ensure the weight scales are loaded in properly
