@@ -85,7 +85,7 @@ class MoeFP8Matmul(torch.nn.Module):
         # At quantization phase, INC requantizes the BF16 weight to FP8 and updates the weight.
         # At measurement phase, INC only measures the BF16 weight and does NOT update the weight.
         # We not track the BF16 weight which will cause OoM.
-        if self.is_dequantized:
+        if hasattr(layer, "_updated_weight") and hasattr(layer, "_updated_weight"):
             return layer.weight
         
         dequant_weight = layer.get_dequant_weight()
