@@ -16,6 +16,7 @@ parser.add_argument("--task", type=str, default="gsm8k", help="The model path.")
 parser.add_argument("--tokenizer", type=str, default=None, help="The model path.")
 parser.add_argument("--tp_size", type=int, default=8, help="Tensor Parallelism size.")
 parser.add_argument("--ep_size", type=int, default=8, help="Expert Parallelism size.")
+parser.add_argument("--max_model_len", type=int, default=16384, help="Maximum model length.")
 parser.add_argument("-l", "--limit", type=int, default=None, help="test request counts.")
 parser.add_argument("--batch_size", type=int, default=1, help="The batch size.")
 parser.add_argument("--fp8_kv_cache", action="store_true", help="Use fp8 for kv cache.")
@@ -65,7 +66,7 @@ if __name__ == "__main__":
             tensor_parallel_size=args.tp_size,
             distributed_executor_backend='mp',
             trust_remote_code=True,
-            max_model_len=16384,
+            max_model_len=args.max_model_len,
             dtype="bfloat16",
             gpu_memory_utilization=0.8,
             batch_size=args.batch_size,
