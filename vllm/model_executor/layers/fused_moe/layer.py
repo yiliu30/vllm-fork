@@ -105,20 +105,19 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             else:
                 raise NotImplementedError("CPU MOE only supports x86 arch.")
 
-    def apply(
-        self,
-        layer: torch.nn.Module,
-        x: torch.Tensor,
-        router_logits: torch.Tensor,
-        top_k: int,
-        renormalize: bool,
-        use_grouped_topk: bool = False,
-        topk_group: Optional[int] = None,
-        num_expert_group: Optional[int] = None,
-        custom_routing_function: Optional[Callable] = None,
-        scoring_func: str = "softmax",
-        e_score_correction_bias: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def apply(self,
+              layer: torch.nn.Module,
+              x: torch.Tensor,
+              router_logits: torch.Tensor,
+              top_k: int,
+              renormalize: bool,
+              use_grouped_topk: bool = False,
+              topk_group: Optional[int] = None,
+              num_expert_group: Optional[int] = None,
+              custom_routing_function: Optional[Callable] = None,
+              scoring_func: str = "softmax",
+              e_score_correction_bias: Optional[torch.Tensor] = None,
+              ep_rank: Optional[int] = None) -> torch.Tensor:
         return self.forward(x=x,
                             layer=layer,
                             router_logits=router_logits,
@@ -129,7 +128,8 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                             num_expert_group=num_expert_group,
                             custom_routing_function=custom_routing_function,
                             scoring_func=scoring_func,
-                            e_score_correction_bias=e_score_correction_bias)
+                            e_score_correction_bias=e_score_correction_bias,
+                            ep_rank=ep_rank)
 
     def forward_cuda(
         self,
