@@ -770,8 +770,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self._remove_duplicate_submodules_(model, inc_config)
 
     def _is_quant_with_inc(self):
-        return (self.model_config.quantization == "inc"
-                or os.getenv("VLLM_REQUANT_FP8_INC", "0") in ["1", "true"])
+        quant_config = os.getenv("QUANT_CONFIG", None) is not None
+        return (self.model_config.quantization == "inc" or quant_config)
 
     def load_model(self) -> None:
         import habana_frameworks.torch.core as htcore
@@ -781,6 +781,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         with HabanaMemoryProfiler() as m:
             with HabanaMemoryProfiler() as m_getmodel:
                 self.model = get_model(vllm_config=self.vllm_config)
+            with open('deepseek_model.arch', 'w') as f:
+                f.write(str(self.model))
             msg = ("Pre-loading model weights on "
                    f"{next(self.model.parameters()).device} "
                    f"took {m_getmodel.get_summary_string()}")

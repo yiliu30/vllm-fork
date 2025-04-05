@@ -141,6 +141,7 @@ class DeepseekV2MoE(nn.Module):
             num_expert_group=config.n_group,
             topk_group=config.topk_group,
             prefix=f"{prefix}.experts",
+            tp_size=self.tp_size,
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias)
 
@@ -813,7 +814,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                 if is_pp_missing_parameter(name, self):
                     continue
-
+                
                 param = params_dict[name]
                 weight_loader = param.weight_loader
                 weight_loader(param, loaded_weight, shard_id)
@@ -827,7 +828,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                     if is_pp_missing_parameter(name, self):
                         continue
-
+                    
                     param = params_dict[name]
                     weight_loader = param.weight_loader
                     weight_loader(param,
@@ -848,7 +849,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                     if is_pp_missing_parameter(name, self):
                         continue
-
+                    
                     param = params_dict[name]
                     weight_loader = getattr(param, "weight_loader",
                                             default_weight_loader)

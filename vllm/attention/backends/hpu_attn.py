@@ -170,6 +170,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         self.block2batch_matmul = Matmul()
         self.latent_cache_k = VLLMKVCache()
         self.latent_cache_v = VLLMKVCache()
+        self.fused_scaled_dot_product_attention = kernels.fsdpa()
 
         self.prefill_use_fusedsdpa = "fsdpa" in enabled_flags()
         if "fsdpa" in enabled_flags():
@@ -251,15 +252,10 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                                                   (block_indices.size(0), -1))
 
         # write the latent and rope to kv cache
-        if kv_cache is not None and len(kv_cache) == 2:
-            if not self.VLLM_USE_FP8_MATMUL:
-                self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
-                                    block_offsets)
-                k_cache = kv_cache[0]
-            else:
-                k_cache = self.latent_cache_k_nodeq(latent_vec_k, kv_cache[0],
-                                                    block_indices,
-                                                    block_offsets)
+        if kv_cache is not None and len(kv_cache) == 2: 
+            self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
+                                block_offsets)
+            k_cache = kv_cache[0]
             v_cache = None
 
         if is_prefill:
@@ -299,7 +295,9 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             scale=self.scale,
             matmul_qk_op=self.matmul_qk,
             softmax_op=self.softmax,
-            matmul_av_op=self.matmul_av)
+            matmul_av_op=self.matmul_av,
+            fsdpa_op=self.fused_scaled_dot_product_attention.apply \
+            if self.fused_scaled_dot_product_attention is not None else None)
         attn_output = out.view(batch_size, -1, self.num_heads, q.shape[-1])
         attn_output = attn_output[..., :v.shape[-1]]\
                 .reshape(batch_size, -1, self.num_heads * v.shape[-1])
