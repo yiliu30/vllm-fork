@@ -195,9 +195,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         else:
             import torch.nn.functional as F
             topk_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
-            topk_weights, topk_ids = torch.topk(topk_weights,
-                                                        top_k,
-                                                        dim=-1)
+            topk_weights, topk_ids = torch.topk(topk_weights, top_k, dim=-1)
             topk_weights /= topk_weights.sum(dim=-1, keepdim=True)
             topk_weights = topk_weights.to(x.dtype)
 
@@ -340,19 +338,16 @@ class FusedMoE(torch.nn.Module):
             ep_shift = self.ep_rank * self.num_experts
             from vllm_hpu_extension.ops import (VllmMixtureOfExpertsOp,
                                                 VllmMixtureOfExpertsOpFP8)
-            moe_n_slice = 1 if self.num_experts <= 64 \
-                else self.num_experts // 64
-            num_expert_per_group = self.num_experts // moe_n_slice
             experts_min, experts_max = ep_shift, self.num_experts + ep_shift - 1
             if quant_config is not None:
                 moe_op = VllmMixtureOfExpertsOpFP8(
-                    num_expert_per_group,
+                    self.num_experts,
                     experts_min,
                     experts_max,
                 )
             else:
                 moe_op = VllmMixtureOfExpertsOp(
-                    num_expert_per_group,
+                    self.num_experts,
                     experts_min,
                     experts_max,
                 )
@@ -475,8 +470,7 @@ class FusedMoE(torch.nn.Module):
         expert_data.copy_(loaded_weight)
 
         if is_hpu and isinstance(self.quant_method, UnquantizedFusedMoEMethod):
-            self.moe_op.w13_list[expert_id].set_weight(
-                orig_exp_data)
+            self.moe_op.w13_list[expert_id].set_weight(orig_exp_data)
 
     def _load_w2(self,
                  expert_data: torch.Tensor,
