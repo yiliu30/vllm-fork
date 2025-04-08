@@ -1,8 +1,8 @@
 {
     "mode": "QUANTIZE",
     "observer": "maxabs",
-    "scale_method": "maxabs_hw",
-    "scale_format": "scalar",
+    "scale_method": "ACT_MAXABS_HW_WEIGHTS_PCS_MAXABS_POW2",
+    "scale_format": "const",
     "allowlist": {
         "types": [],
         "names": []
@@ -14,6 +14,7 @@
             "mlp\\.gate\\b",
             "latent_cache_k_nodeq",
             "latent_cache_v_nodeq",
+            "latent_cache_v",
             "matmul_qk",
             "matmul_av",
             "block2batch_matmul"
