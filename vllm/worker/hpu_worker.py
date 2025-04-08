@@ -581,9 +581,9 @@ class HPUCacheEngine(CacheEngine):
         """Allocates KV cache on the specified device."""
         kv_cache_shape = self.attn_backend.get_kv_cache_shape(
             num_blocks, self.block_size, self.num_kv_heads, self.head_size)
-        if len(kv_cache_shape) == 2:
-            k_cache_shape = kv_cache_shape[0]
-            v_cache_shape = kv_cache_shape[1]
+        if self.model_config.use_mla:
+            k_cache_shape = kv_cache_shape
+            v_cache_shape = None
         else:
             k_cache_shape = kv_cache_shape
             v_cache_shape = kv_cache_shape

@@ -50,7 +50,7 @@ class HPUAttentionBackend(AttentionBackend):
         block_size: int,
         num_kv_heads: int,
         head_size: int,
-    ) -> List[Tuple[int, ...]]:
+    ) -> Tuple[int, ...]:
         return HPUPagedAttention.get_kv_cache_shape(num_blocks, block_size,
                                                     num_kv_heads, head_size)
 
@@ -94,8 +94,8 @@ class HPUMLAAttentionBackend(AttentionBackend):
         block_size: int,
         num_kv_heads: int,
         head_size: int,
-    ) -> List[Tuple[int, ...]]:
-        return [(num_blocks, block_size, head_size), None]
+    ) -> Tuple[int, ...]:
+        return (num_blocks, block_size, head_size)
 
     @staticmethod
     def swap_blocks(
@@ -265,10 +265,10 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             return self._forward_decode(q_nope, q_pe, (k_cache, v_cache),
                                         attn_metadata, batch_size)
 
-    def _forward_prefill(self, q: torch.Tensor, k_c_normed: torch.Tensor,
-                         k_pe: torch.Tensor,
-                         attn_metadata: HPUAttentionMetadata,
-                         batch_size: int) -> torch.Tensor:
+    def _forward_prefill(  # type: ignore
+            self, q: torch.Tensor, k_c_normed: torch.Tensor,
+            k_pe: torch.Tensor, attn_metadata: HPUAttentionMetadata,
+            batch_size: int) -> torch.Tensor:
         kv_nope = self.kv_b_proj(k_c_normed)[0]\
             .view(-1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
         k_nope, v = kv_nope\
@@ -304,10 +304,10 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
         return self.o_proj(attn_output)[0]
 
-    def _forward_decode(self, q_nope: torch.Tensor, q_pe: torch.Tensor,
-                        kv_cache: torch.Tensor,
-                        attn_metadata: HPUAttentionMetadata,
-                        batch_size: int) -> torch.Tensor:
+    def _forward_decode(  # type: ignore
+            self, q_nope: torch.Tensor, q_pe: torch.Tensor,
+            kv_cache: torch.Tensor, attn_metadata: HPUAttentionMetadata,
+            batch_size: int) -> torch.Tensor:
         query = torch.cat([q_nope, q_pe], dim=-1)
 
         key_cache = kv_cache[0].unsqueeze(2)
