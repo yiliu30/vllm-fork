@@ -191,6 +191,7 @@ class LinearBase(torch.nn.Module):
             quant_method = self.quant_method
             if hasattr(quant_method, "dequant_block_fp8_weight"):
                 return quant_method.dequant_block_fp8_weight
+        return None
 
 
 class ReplicatedLinear(LinearBase):
