@@ -95,6 +95,27 @@ if __name__ == "__main__":
             for sample in results['samples']['gsm8k']:
                 json.dump(sample, f)
                 f.write("\n")
+    elif args.task == "humaneval":
+        from lm_eval.utils import make_table
+        os.environ['HF_ALLOW_CODE_EVAL']='1'
+        
+        results = simple_evaluate(
+            model=llm,
+            tasks=["humaneval"],
+            limit=args.limit,
+            confirm_run_unsafe_code=True,
+        )
+        end = time.perf_counter()
+        e2e = end - start
+        print(make_table(results))
+        # save as json
+        with open(f"humaneval_ep{args.ep_size}_result_samples_limit{str(args.limit)}.jsonl", "w") as f:
+            json.dump(results['results'], f)
+            json.dump({"e2e time(secs)": e2e}, f)
+            f.write("\n")
+            for sample in results['samples']['humaneval']:
+                json.dump(sample, f)
+                f.write("\n")
     elif args.task == "hallaswag":
         results = simple_evaluate(model=llm, tasks=["hellaswag"], num_fewshot=0, batch_size=8, limit=args.limit)
         end = time.perf_counter()
