@@ -157,7 +157,7 @@ class DeepseekV2MoE(nn.Module):
             )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if hidden_states.dim() == 3:
+        if is_hpu:
             batch_size, seq_len, hidden_dim = hidden_states.shape
             num_tokens = batch_size * seq_len
         else:
@@ -168,8 +168,6 @@ class DeepseekV2MoE(nn.Module):
             shared_output = self.shared_experts(hidden_states)
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
-        if batch_size is not None and seq_len is not None:
-            hidden_states = hidden_states.view(batch_size, seq_len, hidden_dim)
         final_hidden_states = self.experts(
             hidden_states=hidden_states,
             router_logits=router_logits) * self.routed_scaling_factor
@@ -179,7 +177,7 @@ class DeepseekV2MoE(nn.Module):
             final_hidden_states = tensor_model_parallel_all_reduce(
                 final_hidden_states)
 
-        if batch_size is not None:
+        if is_hpu:
             return final_hidden_states.view(batch_size, seq_len, hidden_dim)
         return final_hidden_states.view(num_tokens, hidden_dim)
 
@@ -575,6 +573,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                                        eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size,
                                                 eps=config.rms_norm_eps)
+        self.prefix = prefix
 
     def forward(
         self,
@@ -584,8 +583,6 @@ class DeepseekV2DecoderLayer(nn.Module):
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        if is_hpu:
-            _batch_size = positions.shape[0]
         # Self Attention
         if residual is None:
             residual = hidden_states
@@ -603,16 +600,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
-        if is_hpu:
-            # need reshape from tensor(x0, y0) to tensor(x1) for hpu
-            hidden_states = hidden_states.reshape(
-                hidden_states.shape[0] * hidden_states.shape[1],
-                hidden_states.shape[2])
         hidden_states = self.mlp(hidden_states)
-        if is_hpu:
-            hidden_states = hidden_states.reshape(
-                _batch_size, hidden_states.shape[0] // _batch_size,
-                hidden_states.shape[1])
         return hidden_states, residual
 
 

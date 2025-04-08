@@ -697,7 +697,7 @@ class FusedMoE(torch.nn.Module):
             scoring_func=self.scoring_func,
             e_score_correction_bias=self.e_score_correction_bias)
 
-        if self.reduce_results and self.tp_size > 1 or self.ep_size > 1:
+        if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             final_hidden_states = tensor_model_parallel_all_reduce(
                 final_hidden_states)
 
