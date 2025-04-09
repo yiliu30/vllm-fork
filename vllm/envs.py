@@ -529,7 +529,14 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     # matrices to match the activation type. This can lead to higher memory and
     # compute usage but better preserves the accuracy of the original model.
     "VLLM_MLA_DISABLE_REQUANTIZATION":
-    lambda: bool(int(os.getenv("VLLM_MLA_DISABLE_REQUANTIZATION", "1")))
+    lambda: bool(int(os.getenv("VLLM_MLA_DISABLE_REQUANTIZATION", "1"))),
+
+    # Note: 
+    "VLLM_USE_SINGLE_TENSOR_CACHE":
+    lambda:
+    (os.environ.get("VLLM_USE_SINGLE_TENSOR_CACHE", "0").strip().lower() in
+     ("1", "true"))
+    
 }
 
 # end-env-vars-definition

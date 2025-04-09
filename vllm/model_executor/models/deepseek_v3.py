@@ -56,7 +56,7 @@ from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     maybe_prefix)
 
 import habana_frameworks.torch as htorch
-
+from vllm.logger import rank_logger, pp_logger
 from vllm.platforms import current_platform
 is_hpu = current_platform.is_hpu()
 
@@ -518,6 +518,7 @@ class DeepseekV3DecoderLayer(nn.Module):
                                           8192)
         # DecoderLayers are created with `make_layers` which passes the prefix
         # with the layer's index.
+        self.prefix = prefix
         layer_idx = int(prefix.split(sep='.')[-1])
         if model_config.use_mla:
             attn_cls = DeepseekV3MLAAttention
@@ -569,6 +570,7 @@ class DeepseekV3DecoderLayer(nn.Module):
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
+        # pp_logger(f"{self.prefix} start handle hidden_states: {hidden_states.shape}")
         # Self Attention
         if residual is None:
             residual = hidden_states
@@ -603,7 +605,8 @@ class DeepseekV3Model(nn.Module):
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
-
+        if os.environ.get("TMP_DEBUG","").lower() in ["1", "true"]:
+            config.num_hidden_layers = 16
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
