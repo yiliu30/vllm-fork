@@ -19,6 +19,7 @@ from typing import (TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple,
 import habana_frameworks.torch as htorch
 import habana_frameworks.torch.internal.bridge_config as bc
 import torch
+import torch.distributed
 import torch.nn as nn
 import vllm_hpu_extension.environment as environment
 from vllm_hpu_extension.bucketing import HPUBucketingContext
@@ -55,6 +56,7 @@ from vllm.sequence import (CompletionSequenceGroupOutput, IntermediateTensors,
                            SequenceOutput)
 from vllm.utils import (bind_kv_cache, is_fake_hpu, is_pin_memory_available,
                         make_tensor_with_pad)
+from vllm.logger import pp_logger
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase,
     _add_attn_metadata_broadcastable_dict,
@@ -110,12 +112,13 @@ def align_workers(value, op):
 
 
 def setup_profiler():
-    schedule = torch.profiler.schedule(wait=0, warmup=2, active=1, repeat=1)
+    schedule = torch.profiler.schedule(wait=0, warmup=2, active=5, repeat=1)
     activities = [
         torch.profiler.ProfilerActivity.CPU,
         torch.profiler.ProfilerActivity.HPU
     ]
     profiler = torch.profiler.profile(
+        # Got mutiple steps, and recipe name back
         schedule=schedule,
         activities=activities,
         on_trace_ready=torch.profiler.tensorboard_trace_handler('.',
@@ -687,6 +690,18 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
 
         # PP intermediate tensors
         self.intermediate_tensors: IntermediateTensors = None
+
+        self._decode_profiler = None
+        self._decode_profiler_step_cnts = 0
+        self.profile_execute_model_prompt = os.environ.get(
+            'VLLM_PROFILE_EXECUTE_MODEL_PROMPT',
+            'false').lower() in ['true', '1']
+        self.profile_execute_model_decode = os.environ.get(
+            'VLLM_PROFILE_EXECUTE_MODEL_DECODE',
+            'false').lower() in ['true', '1']
+        self.profile_execute_model = \
+            self.profile_execute_model_prompt or \
+                self.profile_execute_model_decode
 
     def get_intermediate_tensors(self) -> IntermediateTensors:
         return self.intermediate_tensors
@@ -2397,6 +2412,9 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                                 data.output_token_ids[:orig_output_tokens_len]
 
             for i in range(num_steps):
+                # import pdb; pdb.set_trace()
+                # torch.distributed.barrier()
+                pp_logger(f"step_index: {i}/ {num_steps}, is_driver_worker: {self.is_driver_worker}, get_pp_group().is_last_rank: {get_pp_group().is_last_rank}")
                 if i != 0 and not self.is_driver_worker:
                     broadcast_data = broadcast_tensor_dict(src=0)
                     if 'early_exit' in broadcast_data and broadcast_data[
@@ -2411,6 +2429,21 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         self.trim_attn_metadata(
                             broadcast_data["attn_metadata"])
                     })
+                if (
+                    self.profile_execute_model
+                    and not warmup_mode
+                    and self.is_driver_worker
+                    and (
+                        (self.profile_execute_model_prompt and is_prompt)
+                        or (self.profile_execute_model_decode and not is_prompt)
+                    )
+                ):
+                    # profiler = setup_profiler()
+                    # profiler.start()
+                    if self._decode_profiler is None:
+                        self._decode_profiler = setup_profiler()
+                        self._decode_profiler.start()
+                        logger.warning(f"Create decode profiler and start")
                 with self.profiler.record_event('internal', model_event_name):
                     hidden_states = self.model.forward(
                         **execute_model_kwargs,
@@ -2467,6 +2500,18 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         self.cached_step_outputs.append(output)
                         self.cached_step_inputs.append(model_input)
                 htorch.core.mark_step()
+                
+                if self._decode_profiler is not None:
+                    self._decode_profiler.step()
+                    self._decode_profiler_step_cnts += 1
+                    pp_logger(f"step decode profiler {self._decode_profiler_step_cnts}")
+                    if self._decode_profiler_step_cnts >= int(os.getenv("VLLM_PROFILE_EXECUTE_MODEL_DECODE_STEPS", "1")):
+                        self._decode_profiler.stop()
+                        time.sleep(5)
+                        raise ValueError("Profile completed at step %d" %
+                                         self._decode_profiler_step_cnts)
+                
+                
                 if model_input.async_callback is not None:
                     model_input.async_callback()
                 if i < num_steps - 1:

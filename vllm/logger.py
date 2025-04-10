@@ -219,10 +219,16 @@ def rank_logger(msg, logger=None):
     logger.info(f"[rank: {rank}] {msg}")
     
 def pp_logger(msg, logger=None):
-    from vllm.distributed import get_pp_group
+    from vllm.distributed import get_pp_group, get_tp_group
     if logger is None:
         logger = init_logger(__name__)
     rank_in_group = get_pp_group().rank_in_group
     world_size = get_pp_group().world_size
-    logger.info(f"[rank_in_group: {rank_in_group}/{world_size}] {msg}")
-    
+    ranks = get_pp_group().ranks
+    device_group = get_pp_group().device_group
+    device_group_rank = device_group.rank()
+    device_group_size = device_group.size()
+    tp_group = get_tp_group()
+    logger.info(
+        f"[pp rank_in_group: {rank_in_group}/{world_size}| ranks: {ranks} |device_group_rank: {device_group_rank}/ {device_group_size} | tp rank: {tp_group.rank} / {tp_group.ranks}] {msg}"
+    )
