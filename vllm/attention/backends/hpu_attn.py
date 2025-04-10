@@ -57,53 +57,69 @@ def initialize_fp8_kv_cache(mod, load_device="hpu"):
     return FP8VLLMKVCache(mod)
 
 
-def initialize_fp8_matmul(mod, load_device="hpu"):
-
+def initialize_fp8_matmul(mod, load_device="hpu", quant_other=False):
     class FP8Matmul(torch.nn.Module):
-
-        def __init__(self, mod):
+        def __init__(self, mod, quant_other=False):
             super().__init__()
             self.orig_mod = mod
-            self.scale_input = torch.tensor(1.0,
-                                            dtype=torch.bfloat16,
-                                            device=load_device)
-            self.scale_other = torch.tensor(1.0,
-                                            dtype=torch.bfloat16,
-                                            device=load_device)
+            self.scale_input = torch.tensor(
+                1.0, dtype=torch.bfloat16, device=load_device
+            )
+            self.scale_other = torch.tensor(
+                1.0, dtype=torch.bfloat16, device=load_device
+            )
+            if quant_other:
+                self.quant_input1 = self.quant_other
+            else:
+                self.quant_input1 = self.not_quant_other
+
+        def not_quant_other(self, x):
+            return x
+
+        def quant_other(self, x):
+            return torch.ops.hpu.cast_to_fp8_v2(
+                x, 1.0, False, False, torch.float8_e4m3fn
+            )[0]
 
         def quant_input(self, x):
-            return torch.ops.hpu.cast_to_fp8_v2(x, 1.0, False, False,
-                                                torch.float8_e4m3fn)[0]
+            return torch.ops.hpu.cast_to_fp8_v2(
+                x, 1.0, False, False, torch.float8_e4m3fn
+            )[0]
 
-        def matmul_fp8(self,
-                       x,
-                       other,
-                       out_dtype,
-                       scale_input_inv=None,
-                       scale_other_inv=None):
-            return torch.ops.hpu.fp8_gemm_v2(A=x,
-                                             trans_A=False,
-                                             B=other,
-                                             trans_B=False,
-                                             D=None,
-                                             out_dtype=out_dtype,
-                                             A_scale_inv=scale_input_inv,
-                                             B_scale_inv=scale_other_inv,
-                                             bias=None,
-                                             accumulate=False)
+        def matmul_fp8(
+            self,
+            x,
+            other,
+            out_dtype,
+            scale_input_inv=None,
+            scale_other_inv=None,
+        ):
+            return torch.ops.hpu.fp8_gemm_v2(
+                A=x,
+                trans_A=False,
+                B=other,
+                trans_B=False,
+                D=None,
+                out_dtype=out_dtype,
+                A_scale_inv=scale_input_inv,
+                B_scale_inv=scale_other_inv,
+                bias=None,
+                accumulate=False,
+            )
 
         def forward(self, input, other):
             qinput = self.quant_input(input)
-            qother = other
-            #qother = self.quant_input_1(other)
-            output = self.matmul_fp8(qinput,
-                                     qother,
-                                     out_dtype=torch.bfloat16,
-                                     scale_input_inv=self.scale_input,
-                                     scale_other_inv=self.scale_other)
+            qother = self.quant_input1(other)
+            output = self.matmul_fp8(
+                qinput,
+                qother,
+                out_dtype=torch.bfloat16,
+                scale_input_inv=self.scale_input,
+                scale_other_inv=self.scale_other,
+            )
             return output
 
-    return FP8Matmul(mod)
+    return FP8Matmul(mod, quant_other=quant_other)
 
 
 class HPUAttentionBackend(AttentionBackend):
@@ -350,6 +366,12 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                 self.latent_cache_v_nodeq)
             self.matmul_qk_decode = initialize_fp8_matmul(self.matmul_qk)
             self.matmul_av_decode = initialize_fp8_matmul(self.matmul_av)
+            self.block2batch_matmul_decode = initialize_fp8_matmul(
+                self.batch2block_matmul, quant_other=True
+            )
+            self.batch2block_matmul_decode = initialize_fp8_matmul(
+                self.block2batch_matmul, quant_other=True
+            )
         else:
             self.latent_cache_k = VLLMKVCache()
             self.latent_cache_v = VLLMKVCache()
@@ -523,20 +545,26 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             block_groups=attn_metadata.block_groups,
             scale=self.scale,
             matmul_qk_op=self.matmul_qk
-            if not self.VLLM_USE_FP8_MATMUL else self.matmul_qk_decode,
+            if not self.VLLM_USE_FP8_MATMUL
+            else self.matmul_qk_decode,
             matmul_av_op=self.matmul_av
-            if not self.VLLM_USE_FP8_MATMUL else self.matmul_av_decode,
-            batch2block_matmul_op=self.batch2block_matmul,
-            block2batch_matmul_op=self.block2batch_matmul,
+            if not self.VLLM_USE_FP8_MATMUL
+            else self.matmul_av_decode,
+            batch2block_matmul_op=self.batch2block_matmul
+            if not self.VLLM_USE_FP8_MATMUL
+            else self.batch2block_matmul_decode,
+            block2batch_matmul_op=self.block2batch_matmul
+            if not self.VLLM_USE_FP8_MATMUL
+            else self.block2batch_matmul_decode,
             keys_fetch_func=self.latent_cache_k.fetch_from_cache
-            if not self.VLLM_USE_FP8_MATMUL else
-            self.latent_cache_k_nodeq.fetch_from_cache,
+            if not self.VLLM_USE_FP8_MATMUL
+            else self.latent_cache_k_nodeq.fetch_from_cache,
             values_fetch_func=self.latent_cache_v.fetch_from_cache
-            if not self.VLLM_USE_FP8_MATMUL else
-            self.latent_cache_v_nodeq.fetch_from_cache,
+            if not self.VLLM_USE_FP8_MATMUL
+            else self.latent_cache_v_nodeq.fetch_from_cache,
             kv_lora_rank=self.kv_lora_rank,
             kv_in_fp8=self.VLLM_USE_FP8_MATMUL,
-            )
+        )
         output = output.view(batch_size, 1, -1)
         result = self._v_up_proj_and_o_proj(output)
         result = result.view(batch_size, 1, -1)
