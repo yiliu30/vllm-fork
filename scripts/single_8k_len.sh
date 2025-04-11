@@ -92,10 +92,10 @@ export VLLM_DECODE_BLOCK_BUCKET_MAX=${VLLM_DECODE_BLOCK_BUCKET_MAX:-$decode_bloc
 # # export HABANA_LOGS=.habana_logs_402
 # # export LOG_LEVEL_ALL=1
 # # export VLLM_MLA_DISABLE_REQUANTIZATION=1
-# export QUANT_CONFIG="inc_quant_with_fp8kv_config.json"
-# export VLLM_REQUANT_FP8_INC=1
-# export VLLM_ENABLE_RUNTIME_DEQUANT=1
-# export VLLM_MOE_N_SLICE=1
+export QUANT_CONFIG="inc_quant_with_fp8kv_config.json"
+export VLLM_REQUANT_FP8_INC=1
+export VLLM_ENABLE_RUNTIME_DEQUANT=1
+export VLLM_MOE_N_SLICE=1
 
 
 # export VLLM_SKIP_WARMUP=true
