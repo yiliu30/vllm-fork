@@ -1,20 +1,23 @@
 #! /bin/bash
 
+set -e
+
 pip install compress_pickle torch safetensors numpy --extra-index-url https://download.pytorch.org/whl/cpu
 
 original_model_path=${ORIGINAL_MODEL_PATH:-/models/DeepSeek-R1}
 output_model_root=${OUTPUT_MODEL_ROOT:-/models}
 input_scales_path=DeepSeek-R1-BF16-w8afp8-static-no-ste_input_scale_inv.pkl.gz
+input_scales_path=DeepSeek-R1-bf16-layer-config-mtp-ww.pkl.gz
 
 device=$(hl-smi -Q name -f csv | tail -n 1)
 
-# checke if "HL-225" is in the device name
-if [[ $device == *"HL-225"* ]]; then
+# checke if "HL-2" is in the device name
+if [[ $device == *"HL-2"* ]]; then
     echo "Converting weights for Gaudi2"
     target="G2"
     full_range=240.0    # torch.finfo(torch.float8_e4m3fnuz).max for Gaudi2
-# check if "HL-328" is in the device name
-elif [[ $device == *"HL-328"* ]]; then
+# check if "HL-3" is in the device name
+elif [[ $device == *"HL-3"* ]]; then
     echo "Converting weights for Gaudi3"
     target="G3"
     full_range=448.0    # torch.finfo(torch.float8_e4m3fn).max for Gaudi3
