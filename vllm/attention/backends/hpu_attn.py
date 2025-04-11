@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
+import torch.distributed
 import vllm_hpu_extension.kernels as kernels
 import vllm_hpu_extension.ops as ops
 from vllm_hpu_extension.flags import enabled_flags
