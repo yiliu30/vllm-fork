@@ -49,8 +49,8 @@ unset VLLM_PROMPT_SEQ_BUCKET_MIN VLLM_PROMPT_SEQ_BUCKET_STEP VLLM_PROMPT_SEQ_BUC
 unset VLLM_DECODE_BS_BUCKET_MIN VLLM_DECODE_BS_BUCKET_STEP VLLM_DECODE_BS_BUCKET_MAX
 unset VLLM_DECODE_BLOCK_BUCKET_MIN VLLM_DECODE_BLOCK_BUCKET_STEP VLLM_DECODE_BLOCK_BUCKET_MAX
 
-
-export PT_HPU_RECIPE_CACHE_CONFIG=/data/8k_cache,false,8192
+# ! False means NOT CLEARING the cache when initializing.........
+# export PT_HPU_RECIPE_CACHE_CONFIG=/data/8k_cache,false,8192
 
 #set_bucketing
 
@@ -109,6 +109,7 @@ echo "model path is $model_path"
 
 export OFFICIAL_FP8_MODEL="/mnt/disk2/hf_models/DeepSeek-R1-G2/"
 
+# TODO (Yi) can we add it back?
 export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
 # GRAPH_VISUALIZATION=1 \
 # VLLM_REQUANT_FP8_INC=1 \
