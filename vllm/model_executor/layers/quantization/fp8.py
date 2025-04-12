@@ -43,7 +43,7 @@ if current_platform.is_hpu():
 # by default, static quant uses dynamic moe and dynamic quant uses static moe.
 # user can change the behavior via setting VLLM_FORCE_DYNAMIC_MOE or VLLM_FORCE_STATIC_MOE
 force_dynamic_moe = os.environ.get("VLLM_FORCE_DYNAMIC_MOE",
-                                   "False").lower() == "true"
+                                   "True").lower() == "true"
 force_static_moe = os.environ.get("VLLM_FORCE_STATIC_MOE",
                                   "False").lower() == "true"
 
@@ -275,8 +275,6 @@ class Fp8LinearMethod(LinearMethodBase):
                 layer.register_parameter("input_scale", scale)
             else:
                 layer.register_parameter("input_scale", None)
-
-        #print("fp8.py !!!!!!!!!!!!!!!!!!!!!!!! weight shape: " + str(layer.weight.shape) + "  weight_scale_inv shape: " + str(layer.weight_scale_inv.shape))
 
     def process_weights_after_loading(self, layer: Module) -> None:
         # Block quant doesn't need to process weights after loading
@@ -539,7 +537,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 w2_weight_scale = torch.nn.Parameter(data=torch.ones(
                     num_experts, hidden_size, dtype=torch.float32),
                                                      requires_grad=False)
-                #                print("fp8.py ??????????????????  MoE weight scale init here!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! " + "  w13_weight_scale shape: " + str(w13_weight_scale.shape) + "  w2_weight_scale shape: " + str(w2_weight_scale.shape) + "  extra_weight_attrs: " + str(extra_weight_attrs))
                 layer.register_parameter("w13_weight_scale_inv",
                                          w13_weight_scale)
                 layer.register_parameter("w2_weight_scale_inv",
@@ -624,9 +621,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         else:
             layer.w13_input_scale = None
             layer.w2_input_scale = None
-
-
-#        print("fp8.py ??????????????????  MoE weight scale init here!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! " + "  w13_weight_scale_inv shape: " + str(layer.w13_weight_scale_inv.shape) + "  w2_weight_scale_inv shape: " + str(layer.w2_weight_scale_inv.shape))
 
     def process_weights_after_loading(self, layer: Module) -> None:
         # Block quant doesn't need to process weights after loading
@@ -966,25 +960,39 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                                                      False,
                                                      torch.float8_e4m3fn)[0]
                 scale_intermediate = self.w2_input_scale_list
-            else:
-                x_fp8, x_scale = dynamic_quant_per_tensor(x)
-                scale_intermediate = None
 
-            final_hidden_states = torch.ops.hpu.mixture_of_experts(
-                hidden_states=x_fp8,
-                expert_routing_table=(topk_ids - ep_shift),
-                router_weights=topk_weights,
-                w12=self.w13_weight_list,
-                w3=self.w2_weight_list,
-                d_scale_hidden_states=x_scale,
-                d_scale_intermediate_hidden_states=scale_intermediate,
-                d_scale_w12=self.w13_weight_scale_list,
-                d_scale_w3=self.w2_weight_scale_list,
-                permuted_weights=True,
-                activation="silu",
-                experts_min=0,
-                experts_max=(num_experts - 1),
-            )
+                final_hidden_states = torch.ops.hpu.mixture_of_experts(
+                    hidden_states=x_fp8,
+                    expert_routing_table=(topk_ids - ep_shift),
+                    router_weights=topk_weights,
+                    w12=self.w13_weight_list,
+                    w3=self.w2_weight_list,
+                    d_scale_hidden_states=x_scale,
+                    d_scale_intermediate_hidden_states=scale_intermediate,
+                    d_scale_w12=self.w13_weight_scale_list,
+                    d_scale_w3=self.w2_weight_scale_list,
+                    permuted_weights=True,
+                    activation="silu",
+                    experts_min=0,
+                    experts_max=(num_experts - 1),
+                )
+            else:
+                x_fp8, x_scale = dynamic_quant(x)
+
+                final_hidden_states = torch.ops.hpu.mixture_of_experts(
+                    hidden_states=x_fp8,
+                    expert_routing_table=(topk_ids - ep_shift),
+                    router_weights=topk_weights,
+                    w12=self.w13_weight_list,
+                    w3=self.w2_weight_list,
+                    d_scale_hidden_states=x_scale.squeeze(-1),
+                    d_scale_w12=self.w13_weight_scale_list,
+                    d_scale_w3=self.w2_weight_scale_list,
+                    permuted_weights=True,
+                    activation="silu",
+                    experts_min=0,
+                    experts_max=(num_experts - 1),
+                )
 
             return final_hidden_states.view(-1, x.shape[1])
 
