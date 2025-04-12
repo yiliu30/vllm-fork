@@ -183,7 +183,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         ]
         if any(unsupported_features):
             raise NotImplementedError(
-                "TritonMLAImpl does not support one of the following: "
+                "HPUMLAImpl does not support one of the following: "
                 "alibi_slopes, sliding_window, blocksparse_params, "
                 "logits_soft_cap")
 
@@ -213,8 +213,6 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
         k_pe = k_pe.view(-1, 1, self.qk_rope_head_dim)
 
-        # Restore head dim (for rotary embedding)
-        # k_pe = k_pe.unsqueeze(1)
         assert hasattr(attn_metadata,
                        "input_positions"), f"attn meta: {attn_metadata}"
 
@@ -235,7 +233,6 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             q_pe = q[..., self.qk_nope_head_dim:]
 
             input_positions = attn_metadata.input_positions.view(-1)
-            # TODO(lucas): there must be a nicer way to write this line
             q[..., self.qk_nope_head_dim:], k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
 

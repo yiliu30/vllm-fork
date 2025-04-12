@@ -157,12 +157,8 @@ class DeepseekV2MoE(nn.Module):
             )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if is_hpu:
-            batch_size, seq_len, hidden_dim = hidden_states.shape
-            num_tokens = batch_size * seq_len
-        else:
-            batch_size, seq_len = None, None
-            num_tokens, hidden_dim = hidden_states.shape
+        input_shape = hidden_states.shape
+        hidden_dim = input_shape[-1]
         hidden_states = hidden_states.view(-1, hidden_dim)
         if self.n_shared_experts is not None:
             shared_output = self.shared_experts(hidden_states)
@@ -177,9 +173,7 @@ class DeepseekV2MoE(nn.Module):
             final_hidden_states = tensor_model_parallel_all_reduce(
                 final_hidden_states)
 
-        if is_hpu:
-            return final_hidden_states.view(batch_size, seq_len, hidden_dim)
-        return final_hidden_states.view(num_tokens, hidden_dim)
+        return final_hidden_states.view(*input_shape)
 
 
 def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
