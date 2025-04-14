@@ -29,6 +29,7 @@ parser.add_argument("--max_num_seqs", type=int, default=None, help="The max numb
 parser.add_argument("--max_model_len", type=int, default=16384, help="The max model length.")
 parser.add_argument("--random", action="store_true", help="Randomly sample prompts.")
 parser.add_argument("--fp8_kv_cache", action="store_true", help="Use fp8 for kv cache.")
+parser.add_argument("--enforce_eager", action="store_true", help="Enforce eager")
 args = parser.parse_args()
 
 os.environ["VLLM_SKIP_WARMUP"] = "true"
@@ -246,6 +247,8 @@ if __name__ == "__main__":
         param["kv_cache_dtype"] = "fp8_inc"
     if args.max_num_seqs is not None:
         param["max_num_seqs"] = args.max_num_seqs
+    if args.enforce_eager:
+        param["enforce_eager"] = True
     if args.tp_size == 1:
         llm = LLM(
             model=model, 
