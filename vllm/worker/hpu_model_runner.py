@@ -772,7 +772,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 delattr(self_attn, "o_proj")
 
     def _inc_preprocess_(self, model: torch.nn.Module, inc_config):
-        self._remove_duplicate_submodules_(model, inc_config)
+        if "DeepseekV3ForCausalLM" in self.model.config.architectures:
+            self._remove_duplicate_submodules_(model, inc_config)
 
     def _is_quant_with_inc(self):
         quant_config = os.getenv("QUANT_CONFIG", None) is not None
