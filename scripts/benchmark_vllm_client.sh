@@ -7,7 +7,7 @@ model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 ip_addr=127.0.0.1
 port=8688
 
-log_dir="single_16k"
+log_dir="single_8k_bf16kv"
 # Create folder if needed
 
 
@@ -28,6 +28,10 @@ test_benchmark_serving_range() {
 }
 
 
+test_benchmark_serving_range 1024 1024 1 3 1
+test_benchmark_serving_range 1024 1024 32 96 1
+test_benchmark_serving_range 1024 1024 1 3 1
+test_benchmark_serving_range 1024 1024 32 96 1
 test_benchmark_serving_range 1024 1024 1 3 1
 test_benchmark_serving_range 1024 1024 32 96 1
 # test_benchmark_serving_range 1024 1024 1 3 1
