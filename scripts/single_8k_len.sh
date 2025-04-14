@@ -21,7 +21,7 @@ export VLLM_MOE_N_SLICE=8
 # The VLLM_MOE_N_SLICE of vllm static dmoe on G2 is 8
 # 
 export VLLM_EP_SIZE=8
-export VLLM_MLA_DISABLE_REQUANTIZATION=0
+# export VLLM_MLA_DISABLE_REQUANTIZATION=0
 export VLLM_DELAYED_SAMPLING="true"
 
 block_size=128
@@ -88,17 +88,20 @@ export VLLM_DECODE_BLOCK_BUCKET_MAX=${VLLM_DECODE_BLOCK_BUCKET_MAX:-$decode_bloc
 
 
 # ####### For INC WOQ  #######
-# # export USER_NUM_HIDDEN_LAYERS=4
-# # export HABANA_LOGS=.habana_logs_402
-# # export LOG_LEVEL_ALL=1
-# # export VLLM_MLA_DISABLE_REQUANTIZATION=1
-export QUANT_CONFIG="inc_quant_with_fp8kv_config.json"
+# inc_quant_with_fp8kv_config.json: FP8KV
+# inc_quant_fp8kv_pts_scalar_fp8_mla.json: FP8KV + FP8 MLA
+# inc_quant_per_channel_bf16kv.json : BF16KV
+
+export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
 export VLLM_REQUANT_FP8_INC=1
 export VLLM_ENABLE_RUNTIME_DEQUANT=1
 export VLLM_MOE_N_SLICE=1
 
 
-# export VLLM_SKIP_WARMUP=true
+export VLLM_SKIP_WARMUP=true
+
+# default false, algin with example
+export VLLM_MLA_DISABLE_REQUANTIZATION=1
 
 
 echo " environments are reseted "
@@ -109,19 +112,8 @@ echo "model path is $model_path"
 
 export OFFICIAL_FP8_MODEL="/mnt/disk2/hf_models/DeepSeek-R1-G2/"
 
-# TODO (Yi) can we add it back?
-export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
-# GRAPH_VISUALIZATION=1 \
-# VLLM_REQUANT_FP8_INC=1 \
-# VLLM_ENABLE_RUNTIME_DEQUANT=1 \
-# QUANT_CONFIG=inc_quant_with_fp8kv_config.json \
-# python run_example_tp.py \
-#     --model ${OFFICIAL_FP8_MODEL} \
-#     --tokenizer ${OFFICIAL_FP8_MODEL} \
-#     --osl 16 \
-#     --max_num_seqs 1 \
-#     --fp8_kv_cache
 
+GRAPH_VISUALIZATION=1 \
 python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
     --block-size 128 \
     --model $model_path \
@@ -138,16 +130,5 @@ python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
     --distributed_executor_backend mp \
     --gpu_memory_utilization 0.9 \
     --enable-reasoning \
-    --reasoning-parser deepseek_r1 \
-    --kv_cache_dtype "fp8_inc"
-
-
-curl -X POST http://127.0.0.1:8688/v1/completions \
-     -H "Content-Type: application/json" \
-     -d '{
-           "model": "/mnt/disk2/hf_models/DeepSeek-R1-G2/",
-           "prompt": "Hi, the result of 9 + 9.11",
-           "max_tokens": 16,
-           "temperature": 0.7,
-           "top_p": 1.0
-         }'
+    --reasoning-parser deepseek_r1  \
+    --kv_cache_dtype "fp8_inc" 2>&1 | tee ./g2_perf_logs/server.1.20.1.fp8kv.fp8mla.txt
