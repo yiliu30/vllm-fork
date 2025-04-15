@@ -22,6 +22,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
+import os
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import torch
@@ -685,6 +686,13 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
+
+        assert os.environ.get("PT_HPU_LAZY_MODE", "0") == "1", \
+            (
+            "Deepseek currently supports only lazy mode on HPU, "
+            "please set PT_HPU_LAZY_MODE=1"
+            )
+
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
         self.config = config
