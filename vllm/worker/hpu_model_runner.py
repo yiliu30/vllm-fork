@@ -852,7 +852,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         htcore.hpu_initialize(
                             self.model, mark_only_scales_as_const=True
                         )
-                    torch.distributed.barrier()
+                    if torch.distributed.is_initialized():
+                        torch.distributed.barrier()
                 self.inc_initialized_successfully = True
                 logger.info("Preparing model with INC took %s",
                             m_inc.get_summary_string())
