@@ -838,7 +838,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     from neural_compressor.torch.quantization import (
                         FP8Config, convert, prepare)
 
-                    disable_mark_scales_scales_as_const = os.getenv(
+                    disable_mark_scales_as_const = os.getenv(
                         "VLLM_DISABLE_MARK_SCALES_AS_CONST", "false"
                     ) in ("1", "true")
                     config = FP8Config.from_json_file(
@@ -848,7 +848,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    if not disable_mark_scales_scales_as_const:
+                    if not disable_mark_scales_as_const:
                         htcore.hpu_initialize(
                             self.model, mark_only_scales_as_const=True
                         )
