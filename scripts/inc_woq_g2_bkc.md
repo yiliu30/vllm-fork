@@ -23,6 +23,7 @@ huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-for-fp8-mla-g2 
 - quant config
 inc_quant_fp8kv_pts_scalar_fp8_mla.json
 
+
 # Benchmark
 ```
 cd ./scripts
@@ -44,18 +45,18 @@ curl -X POST http://127.0.0.1:8688/v1/completions \
          
 lm_eval --model local-completions \
     --tasks gsm8k \
-    --model_args model=/mnt/disk2/hf_models/DeepSeek-R1-G2/,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=8 \
-    --batch_size 8  \
+    --model_args model=/mnt/disk2/hf_models/DeepSeek-R1-G2/,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=16 \
+    --batch_size 16 \
     --log_samples \
-    --output_path ./lm_eval_output_gsm8k_new
+    --output_path ./lm_eval_output_gsm8k_new_disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION_bs16
     
  HF_ALLOW_CODE_EVAL=1 lm_eval \
     --model local-completions \
     --tasks humaneval \
-    --model_args model=/mnt/disk2/hf_models/DeepSeek-R1-G2/,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=8 \
-    --batch_size 8 --confirm_run_unsafe_code \
+    --model_args model=/mnt/disk2/hf_models/DeepSeek-R1-G2/,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=4 \
+    --batch_size 4 --confirm_run_unsafe_code \
     --log_samples \
-    --output_path ./lm_eval_output_humaneval_full
+    --output_path ./lm_eval_output_humaneval_full_disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION_bs4
 
 
  HF_ALLOW_CODE_EVAL=1 lm_eval \
