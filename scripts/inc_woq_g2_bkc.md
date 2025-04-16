@@ -9,11 +9,22 @@ VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation;
 
 # Install INC
 pip install git+https://github.com/intel/neural-compressor.git@r1-woq
+```
 
-# Get calibration file
-huggingface-cli download Yi30/inc-woq-default-pile-one-cache-408  --local-dir ./scripts/nc_workspace_measure_kvache
+### BF16 KV + PER-CHANNEL
+- calibration file
+huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
+- quant config
+inc_quant_per_channel_bf16kv.json
+
+### FP8 KV + PER-Tensor + FP8 MLA (Best Perf)
+- calibration file
+huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-for-fp8-mla-g2 --local-dir ./scripts/nc_workspace_measure_fp8_mla
+- quant config
+inc_quant_fp8kv_pts_scalar_fp8_mla.json
 
 # Benchmark
+```
 cd ./scripts
 # Update model_path to "/mnt/disk2/hf_models/DeepSeek-R1-G2/"
 bash single_8k_len.sh
