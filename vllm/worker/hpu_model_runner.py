@@ -633,6 +633,37 @@ class ModelInputForHPUWithSamplingMetadata(ModelInputForHPU):
         return cls(**tensor_dict)
 
 
+def _setup_profiler(warmup: int = 0, steps: int = 1, repeat: int = 1):
+    # enable_profile = os.getenv("VLLM_ENGINE_PROFILER_ENABLED",
+    #                             "false").lower() in ["true", "1"]
+    # if not enable_profile:
+    #     return None
+    # warmup = int(os.getenv("VLLM_ENGINE_PROFILER_WARMUP_STEPS", "0"))
+    # steps = int(os.getenv("VLLM_ENGINE_PROFILER_STEPS", "1"))
+    # repeat = int(os.getenv("VLLM_ENGINE_PROFILER_REPEAT", "1"))
+    schedule = torch.profiler.schedule(wait=0,
+                                        warmup=warmup,
+                                        active=steps,
+                                        repeat=repeat)
+    activities = [ torch.profiler.ProfilerActivity.CPU ]
+    # if current_platform.is_cuda():
+    #     activities.append(torch.profiler.ProfilerActivity.CUDA)
+    # elif current_platform.is_hpu():
+    activities.append(torch.profiler.ProfilerActivity.HPU)
+        # from habana_frameworks.torch.activity_profiler import DebugActivity
+        # debug_activities=[DebugActivity.BRIDGE_FUNCTION_CALLS]
+    profiler = torch.profiler.profile(
+        schedule=schedule,
+        activities=activities,
+        # debug_activities=debug_activities,
+        on_trace_ready=torch.profiler.tensorboard_trace_handler(
+            './warmup_prof', use_gzip=True),
+        record_shapes=False,
+        with_modules=False,
+        profile_memory=False,
+        with_stack=True)
+    return profiler
+
 class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     """
     Helper class for shared methods between GPU model runners.
@@ -851,11 +882,10 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    htcore.hpu_initialize(self.model,
-                                          mark_only_scales_as_const=True)
+                    # htcore.hpu_initialize(self.model, mark_only_scales_as_const=True)
                     torch.distributed.barrier()
                     if torch.distributed.get_rank() == 0:
-                        logger.debug(f"INC model \n {self.model}")
+                        logger.info(f"INC model \n {self.model}")
                                     
                 self.inc_initialized_successfully = True
                 logger.info("Preparing model with INC took %s",
@@ -1914,11 +1944,43 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                f"free_mem:{free_mem}")
         logger.info(msg)
 
+
+
+
     def warmup_all_buckets(self, buckets, is_prompt, kv_caches):
+        start_time = time.monotonic()
+        profiler = None
+        if self.is_driver_worker:
+            if os.getenv("VLLM_ENABLE_WARMUP_PROFILER", "false") in ["true", "1"]:
+                profiler = _setup_profiler(warmup=0, steps=3, repeat=1)
+            if profiler:
+                profiler.start()
         for i, (batch_size, seq_len) in enumerate(reversed(buckets)):
+            cur_time = time.monotonic()
             self.log_warmup('Prompt' if is_prompt else 'Decode', i,
                             len(buckets), batch_size, seq_len)
             self.warmup_scenario(batch_size, seq_len, is_prompt, kv_caches)
+            end_time = time.monotonic()
+            elapsed_time = end_time - cur_time
+            total_time = end_time - start_time
+            logger.warning(
+                (
+                    f"[Warmup] {i}/{len(buckets)} "
+                    f"Elapsed time: {elapsed_time:.2f}s "
+                    f"Total time: {total_time:.2f}s"
+                    f"Avg time: {total_time/(i+1):.2f}s "
+                    f"Estimated total time: {total_time/(i+1)*(len(buckets)):.2f}s"
+                )
+            )
+            if self.is_driver_worker:
+                if profiler:
+                    profiler.step()
+            if profiler:
+                if i >= 5:
+                    if self.is_driver_worker:
+                        profiler.stop()
+                        time.sleep(5)
+                        raise RuntimeError("Stop profiling.........")
 
     def warmup_graphs(self,
                       strategy,

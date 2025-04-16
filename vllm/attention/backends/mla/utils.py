@@ -440,14 +440,20 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
                 self.W_UV_O = W_UV_O.T.contiguous()
                 self.W_UV_O_scales = W_UV_O_scales.T.contiguous()
             else:
-                self.W_UV_O = W_UV_O.to(act_dtype)
-
+                self.W_UV_O = W_UV_O.to(act_dtype))
             self.tp_size = get_tensor_model_parallel_world_size()
         else:
             # Convert from (L, N, V) to (N, L, V)
             self.W_UV = W_UV.transpose(0, 1)
             # Convert from (L, N, P) to (N, P, L)
             self.W_UK_T = W_UK.permute(1, 2, 0)
+        print(f"W_UV shape: {self.W_UV.shape}, dtype {self.W_UV.dtype},  ")
+        print(f"W_UK_T shape: {self.W_UK_T.shape}, dtype {self.W_UK_T.dtype},  ")
+        if hasattr(self, "W_Q_UK"):
+            print(f"W_Q_UK shape: {self.W_Q_UK.shape}, dtype {self.W_Q_UK.dtype},  ")
+        # if torch.distributed.get_rank() == 0:
+        #     import pdb; pdb.set_trace()
+        # torch.distributed.barrier()
 
     @abstractmethod
     def _forward_prefill(

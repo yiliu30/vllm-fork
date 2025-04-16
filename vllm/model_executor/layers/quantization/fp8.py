@@ -1096,9 +1096,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                     x,
                     topk_ids,
                     topk_weights,
-                    moe_n_slice,
-                    n_expert_slice,
-                    ep_shift,
                 )
                 return final_hidden_states.view(-1, x.shape[1])
             w13_weight_fp8 = layer.w13_weight.data
