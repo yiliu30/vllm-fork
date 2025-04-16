@@ -839,8 +839,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         FP8Config, convert, prepare)
 
                     disable_mark_scales_as_const = os.getenv(
-                        "VLLM_DISABLE_MARK_SCALES_AS_CONST", "false"
-                    ) in ("1", "true")
+                        "VLLM_DISABLE_MARK_SCALES_AS_CONST",
+                        "false") in ("1", "true")
                     config = FP8Config.from_json_file(
                         os.getenv("QUANT_CONFIG", ""))
                     self._inc_preprocess_(self.model, config)
@@ -849,9 +849,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     elif config.quantize:
                         self.model = convert(self.model, config)
                     if not disable_mark_scales_as_const:
-                        htcore.hpu_initialize(
-                            self.model, mark_only_scales_as_const=True
-                        )
+                        htcore.hpu_initialize(self.model,
+                                              mark_only_scales_as_const=True)
                     if torch.distributed.is_initialized():
                         torch.distributed.barrier()
                 self.inc_initialized_successfully = True
