@@ -13,6 +13,7 @@ model_path=/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2
 model_path=/mnt/disk5/yiliu4/DeepSeek-R1-G2-dynamic
 model_path=/mnt/disk5/yiliu4/DeepSeek-R1-G2-static
 model_path=/dev/shm/DeepSeek-R1-G2-static/
+model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2-static/
 
 #model_path=/dev/shm/Llama-3.1-70B
 max_model_len=8192
@@ -40,10 +41,8 @@ export VLLM_RAY_DISABLE_LOG_TO_DRIVER="1"
 export RAY_IGNORE_UNHANDLED_ERRORS="1"
 export PT_HPU_WEIGHT_SHARING=0
 export HABANA_VISIBLE_MODULES="0,1,2,3,4,5,6,7"
-export VLLM_MLA_DISABLE_REQUANTIZATION=1
+export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 
-export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
-export VLLM_DELAYED_SAMPLING="false"
 
 # PP Support
 export VLLM_EP_SIZE=$tp_size
@@ -52,20 +51,21 @@ if [ "$pp_size" -gt 1 ]; then
     export VLLM_PP_LAYER_PARTITION="32,29"
 fi
 
+export VLLM_MLA_DISABLE_REQUANTIZATION=1
+export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
+export VLLM_DELAYED_SAMPLING="false"
+
 ### For 1.21 ###
-export VLLM_FORCE_STATIC_MOE=false
+export VLLM_FORCE_STATIC_MOE=true
 export PT_HPU_LAZY_MODE=1
 
-### FP8 MLA ###
+### FP8 KV & FP8 MLA ###
 export VLLM_USE_FP8_MATMUL="true"
 export VLLM_USE_SINGLE_TENSOR_CACHE="1"
-
-### FP8 KV ###
 VLLM_KV_CACHE_DTYPE="auto"
 VLLM_KV_CACHE_DTYPE="fp8_inc"
 
 ### DEBUG ###
-
 export GRAPH_VISUALIZATION=1
 # export ENABLE_EXPERIMENTAL_FLAGS=1
 # export ENABLE_GVD=1 
@@ -163,5 +163,18 @@ python3 -m vllm.entrypoints.openai.api_server --host 127.0.0.1 --port 8688 \
     --distributed_executor_backend ray \
     --gpu_memory_utilization $VLLM_GPU_MEMORY_UTILIZATION \
     --enable-reasoning \
-    --reasoning-parser deepseek_r1 \
-    --kv_cache_dtype $VLLM_KV_CACHE_DTYPE  
+    --reasoning-parser deepseek_r1 
+    # \
+    # --kv_cache_dtype $VLLM_KV_CACHE_DTYPE  
+    
+    
+    
+curl -X POST http://127.0.0.1:8688/v1/completions \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "/mnt/disk2/hf_models/DeepSeek-R1-G2-static/",
+           "prompt": "Solve the following math problem step by step: What is 25 + 37?",
+           "max_tokens": 100,
+           "temperature": 0.7,
+           "top_p": 1.0
+         }'
