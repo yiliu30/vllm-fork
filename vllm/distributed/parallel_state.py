@@ -843,10 +843,12 @@ class GroupCoordinator:
                                        group=metadata_group)
             elif self.force_cpu:
                 # use metadata_group for CPU tensors
+                orig_device = tensor.device
                 tensor = tensor.to('cpu')
                 torch.distributed.send(tensor,
                                     dst=self.ranks[dst],
                                     group=metadata_group)
+                tensor = tensor.to(orig_device)
             else:
                 # use group for GPU tensors
                 torch.distributed.send(tensor,
@@ -898,7 +900,7 @@ class GroupCoordinator:
                 torch.distributed.recv(tensor,
                                     src=self.ranks[src],
                                     group=metadata_group)
-                tensor = tensor.to(device=tensor.device)
+                tensor = tensor.to(orig_device)
             else:
                 # use group for GPU tensors
                 torch.distributed.recv(tensor,
@@ -1008,7 +1010,8 @@ def init_model_parallel_group(
         use_xpu_communicator=True,
         use_message_queue_broadcaster=use_message_queue_broadcaster,
         group_name=group_name,
-        force_cpu=False, #True if group_name.lower() == "pp" else False,
+        force_cpu=envs.VLLM_PP_USE_CPU_COMS \
+            if group_name.lower() == "pp" else False,
     )
 
 

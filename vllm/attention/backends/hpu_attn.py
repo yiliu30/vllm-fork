@@ -244,14 +244,18 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
     block_bias = block_bias.view(key.size(0), 1, 1, -1)
     if kv_heads != q_heads:
         block_bias = block_bias.unsqueeze(1)
-        query = query.unflatten(1, (kv_heads, -1))
+        q_nope = q_nope.unflatten(1, (kv_heads, -1))
+        q_pe = q_pe.unflatten(1, (kv_heads, -1))
         key = key.unflatten(1, (kv_heads, 1))
         value = value.unflatten(1, (kv_heads, 1))
         key = key.transpose(3, 4)
     else:
         key = key.transpose(2, 3)
 
-    attn = matmul_qk_op(query, key)
+    qk_nope = matmul_qk_op(q_nope, value.transpose(3, 4))
+    qk_pe = matmul_qk_op(q_pe, key)
+    attn = qk_nope + qk_pe
+
     if 'fp32_softmax' in enabled_flags():
         attn = attn.float()
         import habana_frameworks.torch.core as htcore

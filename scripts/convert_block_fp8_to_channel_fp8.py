@@ -117,10 +117,7 @@ def main(model_path: str, qmodel_path: str, input_scales_path: str) -> None:
         with safe_open(file_path, framework="pt", device="cpu") as f:
             for name in f.keys():
                 print(f"[{i+1}/{len(all_weight_filename)}] Processing {name}")
-                if "model.layers.61" in name:
-                    print(f"Ignoring {name}")
-                    continue
-                elif "proj" in name and "scale_inv" in name:
+                if "proj" in name and "scale_inv" in name:
                     weight_scale_name = name
                     weight_name = name[: -len("_scale_inv")]
                     print(f"Begin quantizing weight: {weight_name} with scale: {weight_scale_name}")
