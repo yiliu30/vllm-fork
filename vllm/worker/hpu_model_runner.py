@@ -851,9 +851,11 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    htcore.hpu_initialize(self.model,
-                                          mark_only_scales_as_const=True)
-                    torch.distributed.barrier()
+                    # htcore.hpu_initialize(self.model,
+                    #                       mark_only_scales_as_const=True)
+                    # if torch.distributed.get_rank() == 0:
+                    #     import pdb; pdb.set_trace()
+                    # torch.distributed.barrier()
                     if torch.distributed.get_rank() == 0:
                         logger.debug(f"INC model \n {self.model}")
                                     

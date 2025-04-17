@@ -318,6 +318,7 @@ class HPUWorker(LocalOrDistributedWorkerBase):
             num_fake_hpu_blocks = fake_hpu_cache_alloc // cache_block_size
             self.model_runner.bucketing_ctx.num_hpu_blocks = num_fake_hpu_blocks
             return num_fake_hpu_blocks, 0
+        logger.info("start profile_run")
         with HabanaMemoryProfiler() as m:
             self.model_runner.profile_run()
             torch.hpu.synchronize()

@@ -36,20 +36,20 @@ model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2-static
 model_path=/mnt/disk6/yiliu4/DeepSeek-R1-G2-static
 
 # params
-max_model_len=8192
-max_num_batched_tokens=8192
-max_num_seqs=32
-input_min=1
-input_max=8192
-output_max=8192
+# max_model_len=8192
+# max_num_batched_tokens=8192
+# max_num_seqs=32
+# input_min=1
+# input_max=8192
+# output_max=8192
 
 # 16k
-# max_model_len=16384
-# max_num_batched_tokens=16384
-# max_num_seqs=256
-# input_min=1
-# input_max=16384
-# output_max=16384
+max_model_len=16384
+max_num_batched_tokens=16384
+max_num_seqs=256
+input_min=1
+input_max=16384
+output_max=16384
 
 unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX
 unset VLLM_PROMPT_SEQ_BUCKET_MIN VLLM_PROMPT_SEQ_BUCKET_STEP VLLM_PROMPT_SEQ_BUCKET_MAX
@@ -101,6 +101,7 @@ export VLLM_DECODE_BLOCK_BUCKET_MAX=${VLLM_DECODE_BLOCK_BUCKET_MAX:-$decode_bloc
 model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
 export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
+# export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
 export VLLM_REQUANT_FP8_INC=1
 export VLLM_ENABLE_RUNTIME_DEQUANT=1
 export VLLM_MOE_N_SLICE=1
@@ -151,5 +152,6 @@ python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
     --gpu_memory_utilization 0.9 \
     --disable-log-requests \
     --enable-reasoning \
-    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_416/server.1.20.1.BF16KV.inc.NOT_VLLM_MLA_PERFORM_MATRIX_ABSORPTION.static.txt
-    # --kv_cache_dtype "fp8_inc" 
+    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_416/server.1.20.1.BF16KV.sweep.inc.NOT_VLLM_MLA_PERFORM_MATRIX_ABSORPTION.BF16KV_B.fp8_inc.txt
+
+    # --kv_cache_dtype "fp8_inc"  \
