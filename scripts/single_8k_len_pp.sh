@@ -80,7 +80,7 @@ else
     ENFORCE_EAGER_FLAG=""
 fi
 
-# export TMP_DEBUG="1"
+export TMP_DEBUG="1"
 if [ "$TMP_DEBUG" = "1" ]; then
     export VLLM_PP_LAYER_PARTITION="8,8"
 fi
@@ -163,9 +163,8 @@ python3 -m vllm.entrypoints.openai.api_server --host 127.0.0.1 --port 8688 \
     --distributed_executor_backend ray \
     --gpu_memory_utilization $VLLM_GPU_MEMORY_UTILIZATION \
     --enable-reasoning \
-    --reasoning-parser deepseek_r1 
-    # \
-    # --kv_cache_dtype $VLLM_KV_CACHE_DTYPE  
+    --reasoning-parser deepseek_r1 \
+    --kv_cache_dtype $VLLM_KV_CACHE_DTYPE  
     
     
     

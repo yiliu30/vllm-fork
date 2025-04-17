@@ -456,6 +456,9 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                                         block_indices, block_offsets)
                     k_cache = kv_cache[0]
                 else:
+                    # if torch.distributed.get_rank() == 0:
+                    #     import pdb; pdb.set_trace()
+                    # torch.distributed.barrier()
                     k_cache = self.latent_cache_k_nodeq(latent_vec_k, kv_cache[0],
                                                         block_indices,
                                                         block_offsets)
