@@ -16,17 +16,20 @@ model_path=/dev/shm/DeepSeek-R1-G2-static/
 model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2-static/
 
 #model_path=/dev/shm/Llama-3.1-70B
-max_model_len=8192
-max_num_batched_tokens=8192
-max_num_seqs=6
+max_model_len=16384
+max_num_batched_tokens=16384
+max_num_seqs=256
 input_min=1
-input_max=1024
-output_max=1024
+input_max=16384
+output_max=16384
 block_size=128
 tp_size=4
 pp_size=2
 
-
+log_name=pp_server_max_8k_len_${max_model_len}_max_num_seqs_${max_num_seqs}_max_num_batched_tokens_${max_num_batched_tokens}_$(date +%F-%H-%M-%S).txt
+log_dir="pp_fp8_mla"
+mkdir -p $log_dir
+log_file="${log_dir}/${log_name}"
 
 # export VLLM_PROFILER_ENABLED=true
 # export VLLM_DEVICE_PROFILER_ENABLED=true
@@ -69,7 +72,9 @@ VLLM_KV_CACHE_DTYPE="fp8_inc"
 export GRAPH_VISUALIZATION=1
 # export ENABLE_EXPERIMENTAL_FLAGS=1
 # export ENABLE_GVD=1 
-# export VLLM_SKIP_WARMUP=true
+export VLLM_SKIP_WARMUP=true
+export VLLM_HPU_LOG_STEP_GRAPH_COMPILATION=1
+export PT_HPU_METRICS_GC_DETAILS=1
 
 
 export RAY_DEDUP_LOGS="1"
@@ -80,7 +85,7 @@ else
     ENFORCE_EAGER_FLAG=""
 fi
 
-export TMP_DEBUG="1"
+# export TMP_DEBUG="1"
 if [ "$TMP_DEBUG" = "1" ]; then
     export VLLM_PP_LAYER_PARTITION="8,8"
 fi
@@ -164,9 +169,8 @@ python3 -m vllm.entrypoints.openai.api_server --host 127.0.0.1 --port 8688 \
     --gpu_memory_utilization $VLLM_GPU_MEMORY_UTILIZATION \
     --enable-reasoning \
     --reasoning-parser deepseek_r1 \
-    --kv_cache_dtype $VLLM_KV_CACHE_DTYPE  
-    
-    
+    --kv_cache_dtype $VLLM_KV_CACHE_DTYPE  2>&1 | tee  $log_file 
+
     
 curl -X POST http://127.0.0.1:8688/v1/completions \
      -H "Content-Type: application/json" \
