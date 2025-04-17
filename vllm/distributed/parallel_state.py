@@ -310,7 +310,7 @@ class GroupCoordinator:
         with torch.cuda.stream(stream), maybe_ca_context:
             yield graph_capture_context
 
-    def all_reduce(self, input_: torch.Tensor, op=None) -> torch.Tensor:
+    def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
         """
         User-facing all-reduce function before we actually call the
         all-reduce operation.
@@ -329,12 +329,6 @@ class GroupCoordinator:
         if self.world_size == 1:
             return input_
 
-        if self.force_cpu:
-            # use metadata_group for CPU tensors
-            input_ = input_.to('cpu')
-            torch.distributed.all_reduce(input_, op=op, group=self.cpu_group)
-            return input_
-
         if input_.is_cpu:
             import intel_extension_for_pytorch as ipex
             ipex.distributed.all_reduce(input_, group=self.device_group)
@@ -347,10 +341,7 @@ class GroupCoordinator:
 
         if self.hpu_communicator is not None and \
             not self.hpu_communicator.disabled:
-            if op is None:
-                return self.hpu_communicator.all_reduce(input_)
-            else:
-                return self.hpu_communicator.all_reduce(input_, op=op)
+            return self.hpu_communicator.all_reduce(input_)
 
         if self.xpu_communicator is not None and \
                 not self.xpu_communicator.disabled:
