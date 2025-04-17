@@ -48,7 +48,7 @@ lm_eval --model local-completions \
     --model_args model=/mnt/disk2/hf_models/DeepSeek-R1-G2/,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=16 \
     --batch_size 16 \
     --log_samples \
-    --output_path ./lm_eval_output_gsm8k_new_disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION_bs16
+    --output_path ./lm_eval_output_gsm8k_new_disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION_bs16_BF16_kv_b_proj
     
  HF_ALLOW_CODE_EVAL=1 lm_eval \
     --model local-completions \
@@ -57,6 +57,14 @@ lm_eval --model local-completions \
     --batch_size 4 --confirm_run_unsafe_code \
     --log_samples \
     --output_path ./lm_eval_output_humaneval_full_disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION_bs4
+
+ HF_ALLOW_CODE_EVAL=1 lm_eval \
+    --model local-completions \
+    --tasks humaneval \
+    --model_args model=/mnt/disk2/hf_models/DeepSeek-R1-G2/,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=4 \
+    --batch_size 4 --confirm_run_unsafe_code \
+    --log_samples \
+    --output_path ./lm_eval_output_humaneval_full_disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION_bs4_BF16_kv_b_proj
 
 
  HF_ALLOW_CODE_EVAL=1 lm_eval \
