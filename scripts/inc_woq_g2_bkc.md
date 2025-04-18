@@ -60,7 +60,7 @@ export VLLM_REQUANT_FP8_INC=1
 export VLLM_ENABLE_RUNTIME_DEQUANT=1
 
 
-# 2. Use the offline conveted model
+# 2. Specify the offline-converted model path
 model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 
 # 3. Select config file
@@ -68,7 +68,7 @@ model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 # export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
 export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
 
-# 4. Update `kv_cache_dtype` to `fp8_inc` for fp8 KV Cache config
+# 4. Only add --kv_cache_dtype=fp8_inc for FP8 KV cache configs
 python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
     --block-size 128 \
     --model $model_path \
