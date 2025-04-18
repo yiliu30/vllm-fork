@@ -29,12 +29,12 @@ huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir
 #### Optional 2. FP8 KV + Per-Channel Quantization
 
 - Get calibration file
-
-huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
-
 ```bash
-- quant config: inc_quant_with_fp8kv_config.json
+huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
 ```
+
+- quant config: inc_quant_with_fp8kv_config.json
+
 
 #### Optional 3. FP8 KV + PER-Tensor + FP8 MLA (Slow warmup, Best Perf, WIP)
 
