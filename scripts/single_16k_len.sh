@@ -94,25 +94,21 @@ export VLLM_DECODE_BLOCK_BUCKET_STEP=${VLLM_DECODE_BLOCK_BUCKET_STEP:-$decode_bl
 export VLLM_DECODE_BLOCK_BUCKET_MAX=${VLLM_DECODE_BLOCK_BUCKET_MAX:-$decode_block_max}
 
 
-# ####### For INC WOQ  #######
-# inc_quant_with_fp8kv_config.json: FP8KV
-# inc_quant_fp8kv_pts_scalar_fp8_mla.json: FP8KV + FP8 MLA
-# inc_quant_per_channel_bf16kv.json : BF16KV
-model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
-export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
-export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
-# export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
+####### For INC WOQ ReQuant #######
+export VLLM_MOE_N_SLICE=1
+export VLLM_MLA_DISABLE_REQUANTIZATION=1
+export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
 export VLLM_REQUANT_FP8_INC=1
 export VLLM_ENABLE_RUNTIME_DEQUANT=1
-export VLLM_MOE_N_SLICE=1
-# default false, algin with example
-export VLLM_MLA_DISABLE_REQUANTIZATION=1
-####### For INC WOQ  #######
 
 
-####### MATRIX_ABSORPTION #######
-export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
-# export VLLM_MLA_DISABLE_REQUANTIZATION=1
+# Used offline conveted model
+model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
+
+# Select config file
+# export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
+# export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
+export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
 
 
 
@@ -152,6 +148,6 @@ python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
     --gpu_memory_utilization 0.9 \
     --disable-log-requests \
     --enable-reasoning \
-    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_416/server.1.20.1.BF16KV.sweep.inc.NOT_VLLM_MLA_PERFORM_MATRIX_ABSORPTION.BF16KV_B.fp8_inc.txt
+    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_416/server.1.20.1.BF16KV.sweep.INC.Disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION.BF16KV_B.txt
 
     # --kv_cache_dtype "fp8_inc"  \
