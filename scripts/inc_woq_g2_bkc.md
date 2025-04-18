@@ -12,34 +12,36 @@ VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation
 pip install git+https://github.com/intel/neural-compressor.git@r1-woq
 ```
 
-
 ## Benchmark
 
 ### Benchmark Configurations
-- Optional 1. BF16 KV + Per-Channel Quantization
+
+#### Optional 1. BF16 KV + Per-Channel Quantization
+
 - Get calibration file
+
 ```
 huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
 ```
-- quant config
-inc_quant_per_channel_bf16kv.json
 
-- Optional 2. BF16 KV + Per-Channel Quantization
+- quant config: inc_quant_per_channel_bf16kv.json
+
+#### Optional 2. BF16 KV + Per-Channel Quantization
+
 - Get calibration file
 huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
-- quant config
-inc_quant_with_fp8kv_config.json
+- quant config: inc_quant_with_fp8kv_config.json
 
+#### Optional 3. FP8 KV + PER-Tensor + FP8 MLA (Slow warmup, Best Perf, WIP)
 
-- Optional 3. FP8 KV + PER-Tensor + FP8 MLA (Slow warmup, Best Perf, WIP)
 - Get calibration file
 huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-for-fp8-mla-g2 --local-dir ./scripts/nc_workspace_measure_fp8_mla
-- quant config
-inc_quant_fp8kv_pts_scalar_fp8_mla.json
+- quant config: inc_quant_fp8kv_pts_scalar_fp8_mla.json
 
 ## Running the Benchmark
 
 Edit the following section in  `single_16k_len.sh`
+
 ```bash
 ####### For INC WOQ ReQuant #######
 export VLLM_MOE_N_SLICE=1
