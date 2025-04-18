@@ -7,8 +7,9 @@ model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 
 ip_addr=127.0.0.1
 port=8688
+port=8988
 
-log_dir="single_16k_bf16kv_skip_mark_disable_matix_sweep_retest417_len_ratio_1"
+log_dir="single_16k_bf16kv_skip_mark_disable_matix_sweep_retest417_len_ratio_08_418"
 # Create folder if needed
 
 
@@ -32,8 +33,12 @@ test_benchmark_serving_range() {
 test_benchmark_serving_range 1024 1024 1 3 0.8
 test_benchmark_serving_range 1024 1024 16 96 0.8
 test_benchmark_serving_range 1024 1024 32 96 0.8
-test_benchmark_serving_range 1024 1024 64 192 0.8
-test_benchmark_serving_range 1024 1024 128 512 0.8
+
+test_benchmark_serving_range 1024 1024 1 3 0.8
+test_benchmark_serving_range 1024 1024 16 96 0.8
+test_benchmark_serving_range 1024 1024 32 96 0.8
+# test_benchmark_serving_range 1024 1024 64 192 0.8
+# test_benchmark_serving_range 1024 1024 128 512 0.8
 
 # test_benchmark_serving_range 2048 2048 32 96 0.8
 # test_benchmark_serving_range 2048 2048 64 192 0.8

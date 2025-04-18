@@ -107,18 +107,17 @@ model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 
 # Select config file
 # export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
-# export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
-export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
-
+# export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
+export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
 
 
 export VLLM_SKIP_WARMUP=true
 
 ##################### for profile  ####################
 # export VLLM_HPU_LOG_STEP_GRAPH_COMPILATION_ALL=true
-export VLLM_HPU_LOG_STEP_GRAPH_COMPILATION=true
-export PT_HPU_METRICS_GC_DETAILS=1
-export GRAPH_VISUALIZATION=1
+# export VLLM_HPU_LOG_STEP_GRAPH_COMPILATION=true
+# export PT_HPU_METRICS_GC_DETAILS=1
+# export GRAPH_VISUALIZATION=1
 # export HABANA_PROFILE_WRITE_HLTV=1
 # export HABANA_PROFILE=1
 # hl-prof-config --use-template profile_api_with_nics --fuser on --trace-analyzer on --trace-analyzer-xlsx on
@@ -132,7 +131,7 @@ env | grep VLLM
 
 echo "model path is $model_path"
 
-python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
+python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8988 \
     --block-size 128 \
     --model $model_path \
     --device hpu \
@@ -148,6 +147,6 @@ python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
     --gpu_memory_utilization 0.9 \
     --disable-log-requests \
     --enable-reasoning \
-    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_416/server.1.20.1.BF16KV.sweep.INC.Disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION.BF16KV_B.txt
+    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_418/server.1.20.1.BF16KV.sweep.INC.Disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION.BF16KV_B.txt
 
     # --kv_cache_dtype "fp8_inc"  \
