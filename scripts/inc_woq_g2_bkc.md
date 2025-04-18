@@ -62,6 +62,13 @@ model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 # export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
 # export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
 export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
+
+# Update `kv_cache_dtype` to `fp8_inc` for fp8 KV Cache config
+python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
+    --block-size 128 \
+    --model $model_path \
+    ...
+    --kv_cache_dtype "fp8_inc"  
 ```
 
 ```bash
