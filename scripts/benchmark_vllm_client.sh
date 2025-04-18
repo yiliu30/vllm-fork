@@ -35,12 +35,6 @@ test_benchmark_serving_range 1024 1024 32 96 0.8
 test_benchmark_serving_range 1024 1024 64 192 0.8
 test_benchmark_serving_range 1024 1024 128 512 0.8
 
-test_benchmark_serving_range 2048 2048 1 3 0.8
-test_benchmark_serving_range 2048 2048 16 96 0.8
-
-test_benchmark_serving_range 8192 1024 32 96 0.8
-
-
 # test_benchmark_serving_range 2048 2048 32 96 0.8
 # test_benchmark_serving_range 2048 2048 64 192 0.8
 
