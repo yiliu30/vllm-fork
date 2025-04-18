@@ -107,6 +107,8 @@ model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 
 # Select config file
 # export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
+# Fox per-channel or scalar_format=const, skip mark scales as const for quick warmup
+export VLLM_DISABLE_MARK_SCALES_AS_CONST=1
 # export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
 export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
 
