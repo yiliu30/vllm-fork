@@ -103,7 +103,10 @@ export VLLM_ENABLE_RUNTIME_DEQUANT=1
 
 
 # Used offline conveted model
-model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
+# model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
+# export VLLM_REQUANT_FP8_INC_WITH_NORMALIZED_WEIGHT=1
+
+model_path=/mnt/disk2/hf_models/DeepSeek-R1/
 
 # Select config file
 # export QUANT_CONFIG="inc_quant_fp8kv_pts_scalar_fp8_mla.json"
@@ -112,8 +115,11 @@ export VLLM_DISABLE_MARK_SCALES_AS_CONST=1
 # export QUANT_CONFIG="inc_quant_per_channel_with_fp8kv_config.json"
 export QUANT_CONFIG="inc_quant_per_channel_bf16kv.json"
 
+# define log name with time stamp
+log_name="$(date +%Y-%m-%d_%H-%M-%S)"
 
-export VLLM_SKIP_WARMUP=true
+
+# export VLLM_SKIP_WARMUP=true
 
 ##################### for profile  ####################
 # export VLLM_HPU_LOG_STEP_GRAPH_COMPILATION_ALL=true
@@ -145,10 +151,12 @@ python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8988 \
     --max-num-batched-tokens $max_num_batched_tokens \
     --use-padding-aware-scheduling \
     --use-v2-block-manager \
-    --distributed_executor_backend ray \
+    --distributed_executor_backend mp \
     --gpu_memory_utilization 0.9 \
     --disable-log-requests \
     --enable-reasoning \
-    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_418/server.1.20.1.BF16KV.sweep.INC.Disable_VLLM_MLA_PERFORM_MATRIX_ABSORPTION.BF16KV_B.txt
+    --weights_load_device cpu \
+    --reasoning-parser deepseek_r1  2>&1 | tee ./g2_perf_logs_418/$log_name.log
+
 
     # --kv_cache_dtype "fp8_inc"  \

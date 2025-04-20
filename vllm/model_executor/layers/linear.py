@@ -221,7 +221,7 @@ class ReplicatedLinear(LinearBase):
                          params_dtype,
                          quant_config,
                          prefix=prefix)
-
+        self.prefix = prefix
         # All the linear layer supports quant method.
         assert self.quant_method is not None
         self.quant_method.create_weights(self,

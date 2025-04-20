@@ -22,6 +22,7 @@ parser.add_argument("--tokenizer", type=str, default=model_path, help="The model
 parser.add_argument("--tp_size", type=int, default=8, help="The number of threads.")
 parser.add_argument("--ep_size", type=int, default=8, help="The number of threads.")
 parser.add_argument("--dataset", type=str, default=None, help="The dataset.")
+parser.add_argument("--weights_load_device", type=str, default=None, help="The device to load weights.")
 parser.add_argument("--isl", type=int, default=1024, help="input sequence length.")
 parser.add_argument("--osl", type=int, default=1024, help="output sequence length.")
 parser.add_argument("--nprompts", type=int, default=4, help="The number of prompts.")
@@ -249,6 +250,8 @@ if __name__ == "__main__":
         param["max_num_seqs"] = args.max_num_seqs
     if args.enforce_eager:
         param["enforce_eager"] = True
+    if args.weights_load_device is not None:
+        param["weights_load_device"] = args.weights_load_device
     if args.tp_size == 1:
         llm = LLM(
             model=model, 

@@ -44,6 +44,7 @@ if current_platform.is_hpu():
     import habana_frameworks.torch as htorch
     from vllm_hpu_extension.ops import scaled_fp8_quant
     ops.scaled_fp8_quant = scaled_fp8_quant
+    from .hpu_ext_patch import normalize_weight_for_gaudi2_
 
 ACTIVATION_SCHEMES = ["static", "dynamic"]
 
@@ -296,6 +297,7 @@ class Fp8LinearMethod(LinearMethodBase):
         if self.block_quant:
             if current_platform.is_hpu():
                 from vllm.model_executor.layers.quantization.utils.fp8_utils import pad_block_fp8_weight_naive
+                normalize_weight_for_gaudi2_(layer, "weight")
                 weight, orig_M, orig_N = pad_block_fp8_weight_naive(
                     layer.weight.data,
                     layer.weight_scale_inv.data,
@@ -676,6 +678,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         if self.block_quant:
             if current_platform.is_hpu():
                 if self.quant_config.enable_runtime_dequant:
+                    normalize_weight_for_gaudi2_(layer, "w13_weight")
+                    normalize_weight_for_gaudi2_(layer, "w2_weight")
                     return
                 w13_weight, w13_weight_scale_inv = dynamic_quant(dequant_block_fp8_weight_naive(
                     layer.w13_weight.data,

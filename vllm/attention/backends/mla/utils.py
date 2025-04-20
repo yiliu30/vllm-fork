@@ -448,6 +448,8 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
             self.W_UV = W_UV.transpose(0, 1)
             # Convert from (L, N, P) to (N, P, L)
             self.W_UK_T = W_UK.permute(1, 2, 0)
+            self.W_UV = torch.nn.Parameter(self.W_UV, requires_grad=False)
+            self.W_UK_T = torch.nn.Parameter(self.W_UK_T, requires_grad=False)
 
     @abstractmethod
     def _forward_prefill(
