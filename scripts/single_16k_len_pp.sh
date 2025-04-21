@@ -23,11 +23,19 @@ input_min=1
 input_max=16384
 output_max=16384
 block_size=128
+
+max_model_len=8192
+max_num_batched_tokens=8192
+max_num_seqs=256
+input_min=1
+input_max=8192
+output_max=8192
+
 tp_size=4
 pp_size=2
 
 log_name=pp_server_max_8k_len_${max_model_len}_max_num_seqs_${max_num_seqs}_max_num_batched_tokens_${max_num_batched_tokens}_$(date +%F-%H-%M-%S).txt
-log_dir="pp_fp8_mla"
+log_dir="pp_fp8_mla_420"
 mkdir -p $log_dir
 log_file="${log_dir}/${log_name}"
 
