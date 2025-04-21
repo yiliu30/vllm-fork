@@ -1,3 +1,71 @@
+## 0. Prerequisites
+
+Please use the Firmware and Software Stack mentioned here.
+
+## 1. Installation
+
+- vLLM
+
+```bash
+git clone https://github.com/yiliu30/vllm-fork.git
+git checkout inc-r1-g2
+cd vllm-fork
+pip install -r requirements-hpu.txt
+VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation
+```
+
+- INC
+
+```bash
+pip install git+https://github.com/intel/neural-compressor.git@r1-woq
+```
+
+## 2. Convert the model files
+
+```bash
+python convert_for_g2.py -i /path/to/official/model -o   /path/to/converted/model/
+```
+
+This script converts official model weights from `torch.float8_e4m3fn` format to `torch.float8_e4m3fnuz` format.
+
+## 3. Benchmark
+
+> Note
+> For 
+
+### 3.1 BF16 KV + Per-Channel Quantization
+
+- Get calibration files
+
+```bash
+huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
+```
+
+- Running the Benchmark
+
+```bash
+cd vllm-fork
+bash ./scripts/single_16k_len_inc.sh
+```
+
+
+### 3.2 FP8 KV + Per-Channel Quantization
+
+- Get calibration files
+
+```bash
+huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
+```
+
+- Running the Benchmark
+
+```bash
+cd vllm-fork
+bash scripts/single_16k_len.sh --fp8_kv
+```
+
+
+
 ## Installation
 
 ```bash
