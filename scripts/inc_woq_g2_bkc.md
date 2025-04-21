@@ -23,7 +23,8 @@ pip install git+https://github.com/intel/neural-compressor.git@r1-woq
 ## 2. Convert the model files
 
 ```bash
-python convert_for_g2.py -i /path/to/official/model -o /path/to/converted/model/
+cd vllm-fork
+python ./scripts/convert_for_g2.py -i /path/to/official/model -o /path/to/converted/model/
 ```
 
 This script 1) converts official model weights from `torch.float8_e4m3fn` format to `torch.float8_e4m3fnuz` format, and 2) copies other JSON and Python files into the target path.
