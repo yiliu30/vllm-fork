@@ -38,12 +38,15 @@ This script converts official model weights from `torch.float8_e4m3fn` format to
 > 
 >For more details, refer to the `INC WOQ ReQuant` section in the `single_16k_len_inc.sh` script.
 
+> [!CAUTION]
+> Before running the benchmark, make sure to update the `model_path` in the `single_16k_len_inc.sh` script.
 
 ### 3.1 BF16 KV + Per-Channel Quantization
 
 - Get calibration files
 
 ```bash
+cd vllm-fork
 huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
 ```
 
@@ -60,6 +63,7 @@ bash ./scripts/single_16k_len_inc.sh
 - Get calibration files
 
 ```bash
+cd vllm-fork
 huggingface-cli download Yi30/inc-woq-default-pile-one-cache-412-g2  --local-dir ./scripts/nc_workspace_measure_kvache
 ```
 
