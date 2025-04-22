@@ -27,7 +27,8 @@ cleanup() {
     docker stop node
     docker rm node
 }
-trap cleanup EXIT
+# Uncomment if you want the node to terminate on exit
+#trap cleanup EXIT
 
 # Command setup for head or worker node
 RAY_START_CMD="ray start --block"
