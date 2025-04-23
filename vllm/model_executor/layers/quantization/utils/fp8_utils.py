@@ -131,6 +131,7 @@ def pad_weight(weight, block_size):
     """Pads a matrix to make its dimensions multiples of block_size."""
     M, N = weight.shape[-2:]
     block_size_m, block_size_n = block_size
+    
     pad_M = (block_size_m - M % block_size_m) % block_size_m
     pad_N = (block_size_n - N % block_size_n) % block_size_n
 

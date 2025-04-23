@@ -609,7 +609,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
-
+import os
 @support_torch_compile
 class DeepseekV2Model(nn.Module):
 
@@ -622,7 +622,8 @@ class DeepseekV2Model(nn.Module):
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
-        # config.num_hidden_layers = 4
+        config.num_hidden_layers = int(os.environ.get("VLLM_NUM_LAYERS",
+            config.num_hidden_layers))
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
         if get_pp_group().is_first_rank:

@@ -140,6 +140,24 @@ def sample_gsm8k_requests(
 
     return sampled_requests, sampled_response
 
+
+def dump_logprob(logprobs, file_name):
+    import json
+    converted_logprobs = []
+    for token_dict in logprobs:
+        converted_dict = {}
+        for token_id, lp in token_dict.items():
+            converted_dict[token_id] = {
+                'logprob': lp.logprob,
+                'rank': lp.rank,
+                'decoded_token': lp.decoded_token
+            }
+        converted_logprobs.append(converted_dict)
+
+    # Write to JSON file
+    with open(file_name, 'w') as f:
+        json.dump(converted_logprobs, f, indent=2)
+    print(f"save logprobs to {file_name}.")
 if __name__ == "__main__":
 
     # Sample prompts.
@@ -230,9 +248,9 @@ if __name__ == "__main__":
     else:
         prompts = [
             "Hello, my name is",
-            "0.999 compares to 0.9 is ",
-            "The capital of France is",
-            "The future of AI is",
+            # "0.999 compares to 0.9 is ",
+            # "The capital of France is",
+            # "The future of AI is",
         ]
         if args.nprompts > 4:
             prompts += random.choices(prompts, k=args.nprompts - 4)
@@ -240,7 +258,12 @@ if __name__ == "__main__":
             prompts = prompts[: args.nprompts]
         gt = None
     # Create a sampling params object.
-    sampling_params = SamplingParams(temperature=0, max_tokens=args.osl, ignore_eos=True)
+    sampling_params = SamplingParams(
+        temperature=0,
+        max_tokens=args.osl,
+        ignore_eos=True,
+        # logprobs=10,
+    )
     model = args.model
     param = {}
     if args.fp8_kv_cache:
@@ -290,12 +313,22 @@ if __name__ == "__main__":
         prompt = output.prompt
         generated_text = output.outputs[0].text
         gen_token_id = output.outputs[0].token_ids
+        prompt_logprobs = output.outputs[0].logprobs
+        num_hidden_layers = int(os.environ.get("VLLM_NUM_LAYERS", "61"))
+        OFFICIAL_FP8_MODEL = os.environ.get("OFFICIAL_FP8_MODEL", "0")
+        # replace "/" with "_"
+        _model_path = OFFICIAL_FP8_MODEL.replace("/", "_")
+        time_str = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+        file_name = f"prompt_logprobs.layer{num_hidden_layers}_{_model_path}_{time_str}.json"
+        # dump_logprob(prompt_logprobs, file_name)
         print("====================================")
         print(f"Prompt: {prompt!r}")
         print(f"Generated text: {generated_text!r}")
         print(f"Generated token: {gen_token_id!r}")
         print(f"Ground truth: {gt_i!r}")
+        # print(f"Prompt logprobs: {prompt_logprobs!r}")
         print("====================================")
+        # breakpoint()
     if os.getenv("VLLM_REQUANT_FP8_INC", None) is not None:
         llm.llm_engine.model_executor.shutdown()
     del llm
