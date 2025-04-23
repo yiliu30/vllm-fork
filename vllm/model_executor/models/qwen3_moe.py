@@ -51,7 +51,6 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead, VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
 
 from .interfaces import SupportsPP
@@ -60,7 +59,6 @@ from .utils import (extract_layer_index, is_pp_missing_parameter,
                     maybe_prefix)
 
 logger = init_logger(__name__)
-is_hpu = current_platform.is_hpu()
 
 
 class Qwen3MoeMLP(nn.Module):
