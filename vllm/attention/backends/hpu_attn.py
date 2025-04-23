@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
-import torch.distributed
 import vllm_hpu_extension.kernels as kernels
 import vllm_hpu_extension.ops as ops
 from vllm_hpu_extension.flags import enabled_flags
@@ -355,7 +354,7 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     cross_block_scales: Optional[torch.Tensor] = None
     cross_block_usage: Optional[torch.Tensor] = None
     cross_attn_bias: Optional[torch.Tensor] = None
-
+    
 
 class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
@@ -445,8 +444,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
         # Restore head dim (for rotary embedding)
         # k_pe = k_pe.unsqueeze(1)
-        assert hasattr(attn_metadata,
-                       "input_positions"), f"attn meta: {attn_metadata}"
+        assert hasattr(attn_metadata, "input_positions"), f"attn meta: {attn_metadata}"
 
         if not is_prefill:
             if envs.VLLM_MLA_PERFORM_MATRIX_ABSORPTION:
@@ -460,23 +458,22 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         else:
             q = self.q_proj(hidden_states_or_q_c)[0]\
                 .view(-1, self.num_heads, self.qk_head_dim)
-
+            
             q_pe = q[..., self.qk_nope_head_dim:]
 
             input_positions = attn_metadata.input_positions.view(-1)
             # TODO(lucas): there must be a nicer way to write this line
             q[..., self.qk_nope_head_dim:], k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
+            
 
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
 
         latent_vec_k = torch.concat(
-            (k_c_normed, k_pe.view(batch_size, -1, self.qk_rope_head_dim)),
-            dim=-1)
+                (k_c_normed, k_pe.view(batch_size, -1, self.qk_rope_head_dim)), dim=-1)
         # assert layer._k_scale == 0, f"got _k_scale={layer._k_scale}"
-        latent_vec_k = latent_vec_k.view(
-            -1, self.qk_rope_head_dim + self.kv_lora_rank)
+        latent_vec_k = latent_vec_k.view(-1, self.qk_rope_head_dim + self.kv_lora_rank)
         #latent_vec_v = k_c_normed.view(-1, self.kv_lora_rank)
         if is_prefill:
             latent_vec_k = latent_vec_k.unflatten(0,
@@ -535,24 +532,22 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                                            value=0)
         q = q.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         k = k.view(batch_size, -1, self.num_heads, self.qk_head_dim)
-        v_padded = v_padded.view(batch_size, -1, self.num_heads,
-                                 self.qk_head_dim)
+        v_padded = v_padded.view(batch_size, -1, self.num_heads, self.qk_head_dim)
         out = ops.prompt_attention(
-            q,
-            k,
-            v_padded,
-            attn_bias=attn_metadata.attn_bias,
-            p=0.0,
-            scale=self.scale,
-            matmul_qk_op=self.matmul_qk,
-            softmax_op=self.softmax,
-            matmul_av_op=self.matmul_av,
-            valid_seq_lengths=attn_metadata.seq_lens_tensor,
-            fsdpa_op=self.fused_scaled_dot_product_attention
-            if self.prefill_use_fusedsdpa else None,
-        )
-        attn_output = out.view(batch_size, -1, self.num_heads, q.shape[-1])
-        attn_output = attn_output[..., :v.shape[-1]]\
+                    q,
+                    k,
+                    v_padded,
+                    attn_bias=None,
+                    p=0.0,
+                    scale=self.scale,
+                    matmul_qk_op=self.matmul_qk,
+                    softmax_op=self.softmax,
+                    matmul_av_op=self.matmul_av,
+                    valid_seq_lengths=attn_metadata.seq_lens_tensor,
+                    fsdpa_op=self.fused_scaled_dot_product_attention,
+                )
+        attn_output = out\
+            .view(batch_size, -1, self.num_heads, q.shape[-1])[..., :v.shape[-1]]\
                 .reshape(batch_size, -1, self.num_heads * v.shape[-1])
 
         return self.o_proj(attn_output)[0]
