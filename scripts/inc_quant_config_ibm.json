@@ -1,0 +1,15 @@
+{
+    "mode": "QUANTIZE",
+    "observer": "maxabs",
+    "scale_method": "maxabs_hw",
+    "scale_format": "const",
+    "allowlist": {
+        "types": ["VLLMKVCache"],
+        "names": []
+    },
+    "blocklist": {
+        "types": [],
+        "names": []
+    },
+    "dump_stats_path": "./scripts/nc_workspace_measure_ibm/inc_measure_output"
+}
