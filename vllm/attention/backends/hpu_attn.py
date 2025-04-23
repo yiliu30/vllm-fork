@@ -91,7 +91,6 @@ class HPUMLAAttentionBackend(HPUAttentionBackend):
     def get_name() -> str:
         return "HPU_MLA"
 
-
 def flat_pa_mla(q_nope, q_pe, key_cache, value_cache, block_list, block_mapping,
             block_bias, block_scales, block_groups, scale, matmul_qk_op,
             matmul_av_op, batch2block_matmul_op, block2batch_matmul_op,
@@ -257,8 +256,6 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         self.matmul_av = Matmul()
         self.batch2block_matmul = Matmul()
         self.block2batch_matmul = Matmul()
-        self.latent_cache_k = VLLMKVCache()
-        self.latent_cache_v = VLLMKVCache()
         self.VLLM_USE_FP8_MATMUL = os.environ.get("VLLM_USE_FP8_MATMUL",
                                              "0").lower() in ["true", "1"]
 
@@ -340,7 +337,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             # TODO(lucas): there must be a nicer way to write this line
             q[..., self.qk_nope_head_dim:], k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
-            
+        
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
 
@@ -355,12 +352,16 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         if not envs.VLLM_USE_SINGLE_TENSOR_CACHE:
             # write the latent and rope to kv cache
             if kv_cache is not None and len(kv_cache) == 2:
+                # print(f"k cache shape: {kv_cache[0].shape}")
+                # print(f"v cache shape: {kv_cache[1].shape}")
+                # print(f"latent vec k shape: {latent_vec_k.shape}")
+                # print(f"latent vec v shape: {latent_vec_v.shape}")
                 latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
                 latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
-                k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0],
-                                              block_indices, block_offsets)
-                v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1],
-                                              block_indices, block_offsets)
+                k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
+                                            block_offsets)
+                v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
+                                            block_offsets)
                 kv_cache = (k_cache, v_cache)
         else:
             # write the latent and rope to kv cache
