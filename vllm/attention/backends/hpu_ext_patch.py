@@ -1,3 +1,7 @@
+# ==------------------------------------------------------------------== #
+# vLLM-HPU-EXTENSION PATCH 
+# FIXME: (Yi) move it to vllm-hpu-extension before merging to the habana_main.
+# ==------------------------------------------------------------------== #
 import torch
 import vllm_hpu_extension.ops as ops
 
