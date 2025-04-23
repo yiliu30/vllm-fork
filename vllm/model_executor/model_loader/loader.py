@@ -20,7 +20,6 @@ import numpy as np
 import torch
 from huggingface_hub import HfApi
 from torch import nn
-import torch.distributed
 from transformers import AutoModelForCausalLM
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME
 
@@ -391,10 +390,14 @@ class DefaultModelLoader(BaseModelLoader):
                               allow_patterns_overrides=None)
 
     def _need_apply_fp8_inc(self, vllm_config):
-        # return vllm_config.cache_config.cache_dtype == "fp8_inc"
         if vllm_config.cache_config.cache_dtype == "fp8_inc":
-            if os.environ.get("VLLM_USE_FP8_MATMUL", "0").lower() in ["true", "1"]:
-                logger.warning(f"The VLLM_USE_FP8_MATMUL was enable, skip fp8_inc")
+            if os.environ.get("VLLM_USE_FP8_MATMUL", "0").lower() in [
+                "true",
+                "1",
+            ]:
+                logger.warning(
+                    "The VLLM_USE_FP8_MATMUL was enable, skip fp8_inc"
+                )
                 return False
             else:
                 return True

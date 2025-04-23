@@ -531,7 +531,7 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_MLA_DISABLE_REQUANTIZATION":
     lambda: bool(int(os.getenv("VLLM_MLA_DISABLE_REQUANTIZATION", "1"))),
 
-    # Note: 
+    # Note: Storage the key-value cache as a single tensor
     "VLLM_USE_SINGLE_TENSOR_CACHE":
     lambda:
     (os.environ.get("VLLM_USE_SINGLE_TENSOR_CACHE", "0").strip().lower() in

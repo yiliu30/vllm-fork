@@ -207,22 +207,3 @@ def enable_trace_function_call(log_file_path: str,
         # by default, this is the vllm root directory
         root_dir = os.path.dirname(os.path.dirname(__file__))
     sys.settrace(partial(_trace_calls, log_file_path, root_dir))
-
-
-import torch
-import torch.distributed as dist
-def rank_logger(msg, logger=None):
-    if logger is None:
-        logger = init_logger(__name__)
-    rank = dist.get_rank() if dist.is_initialized() else -1
-
-    logger.info(f"[rank: {rank}] {msg}")
-    
-def pp_logger(msg, logger=None):
-    from vllm.distributed import get_pp_group
-    if logger is None:
-        logger = init_logger(__name__)
-    rank_in_group = get_pp_group().rank_in_group
-    world_size = get_pp_group().world_size
-    logger.info(f"[rank_in_group: {rank_in_group}/{world_size}] {msg}")
-    

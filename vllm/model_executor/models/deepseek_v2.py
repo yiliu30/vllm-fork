@@ -24,7 +24,6 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import torch
 from torch import nn
-import torch.distributed
 from transformers import PretrainedConfig
 
 from vllm.attention import Attention, AttentionMetadata
