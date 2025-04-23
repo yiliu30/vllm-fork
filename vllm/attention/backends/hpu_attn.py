@@ -150,7 +150,6 @@ class HPUAttentionBackend(AttentionBackend):
 
 
 class HPUMLAAttentionBackend(HPUAttentionBackend):
-
     @staticmethod
     def get_kv_cache_shape(
         num_blocks: int,
@@ -466,7 +465,6 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             q[..., self.qk_nope_head_dim:], k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
             
-
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
 
@@ -496,9 +494,6 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                                         block_indices, block_offsets)
                     k_cache = kv_cache[0]
                 else:
-                    # if torch.distributed.get_rank() == 0:
-                    #     import pdb; pdb.set_trace()
-                    # torch.distributed.barrier()
                     k_cache = self.latent_cache_k_nodeq(latent_vec_k, kv_cache[0],
                                                         block_indices,
                                                         block_offsets)
@@ -506,8 +501,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                 kv_cache = (k_cache, v_cache)
             
         if is_prefill:
-            return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata,
-                                         batch_size)
+            return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata, batch_size)
         else:
             if self.VLLM_USE_FP8_MATMUL:
                 return self._forward_decode_fp8_matmul(q_nope, q_pe, kv_cache, attn_metadata,
@@ -551,7 +545,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
                 .reshape(batch_size, -1, self.num_heads * v.shape[-1])
 
         return self.o_proj(attn_output)[0]
-
+    
     def _forward_decode(
         self,
         q_nope: torch.Tensor,
