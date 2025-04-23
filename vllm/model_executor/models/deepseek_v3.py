@@ -56,6 +56,7 @@ from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     maybe_prefix)
 
 import habana_frameworks.torch as htorch
+
 from vllm.platforms import current_platform
 is_hpu = current_platform.is_hpu()
 
@@ -684,6 +685,7 @@ class DeepseekV3ForCausalLM(nn.Module, SupportsPP):
         super().__init__()
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
+
         self.config = config
         self.quant_config = quant_config
         self.model = DeepseekV3Model(vllm_config=vllm_config,

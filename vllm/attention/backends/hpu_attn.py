@@ -159,7 +159,6 @@ class HPUMLAAttentionBackend(HPUAttentionBackend):
         num_kv_heads: int,
         head_size: int,
     ) -> Tuple[int, ...]:
-        # return (num_blocks, block_size, head_size//9*1), (num_blocks, block_size, head_size//9*8)
         if envs.VLLM_USE_SINGLE_TENSOR_CACHE:
             return (num_blocks, block_size, head_size), None
         else:
@@ -219,18 +218,75 @@ def _pipelined_pa(attn, value, block_groups, block_mapping, block_scales,
     return attn
 
 
-def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
-                block_bias, block_scales, block_groups, scale, matmul_qk_op,
-                matmul_av_op, batch2block_matmul_op, block2batch_matmul_op,
-                keys_fetch_func, values_fetch_func, kv_lora_rank, kv_in_fp8):
+def flat_pa_mla(q_nope, q_pe, key_cache, value_cache, block_list, block_mapping,
+            block_bias, block_scales, block_groups, scale, matmul_qk_op,
+            matmul_av_op, batch2block_matmul_op, block2batch_matmul_op,
+            keys_fetch_func, values_fetch_func):
+    batch_size = q_nope.size(0)
+    q_heads = q_nope.size(1)
+    kv_heads = key_cache.size(2)
+
+    q_nope = ops.batch2block(scale * q_nope, block_mapping, batch2block_matmul_op).unsqueeze(-2)
+    q_pe = ops.batch2block(scale * q_pe, block_mapping, batch2block_matmul_op).unsqueeze(-2)
+    key = keys_fetch_func(key_cache, block_list).transpose(1, 2)
+    value = values_fetch_func(value_cache, block_list).transpose(1, 2)
+    block_bias = block_bias.view(key.size(0), 1, 1, -1)
+    if kv_heads != q_heads:
+        block_bias = block_bias.unsqueeze(1)
+        q_nope = q_nope.unflatten(1, (kv_heads, -1))
+        q_pe = q_pe.unflatten(1, (kv_heads, -1))
+        key = key.unflatten(1, (kv_heads, 1))
+        value = value.unflatten(1, (kv_heads, 1))
+        key = key.transpose(3, 4)
+    else:
+        key = key.transpose(2, 3)
+
+    qk_nope = matmul_qk_op(q_nope, value.transpose(3, 4))
+    qk_pe = matmul_qk_op(q_pe, key)
+    attn = qk_nope + qk_pe
+
+    if 'fp32_softmax' in enabled_flags():
+        attn = attn.float()
+        import habana_frameworks.torch.core as htcore
+        htcore.mark_step()
+    attn = attn + block_bias
+    attn = ops.pipelined_pa(attn, value, block_groups, block_mapping, block_scales=block_scales,
+                        batch_size=batch_size, matmul_av_op=matmul_av_op,
+                        batch2block_matmul_op=batch2block_matmul_op, block2batch_matmul_op=block2batch_matmul_op)
+    attn = ops.block2batch(attn, block_mapping, block2batch_matmul_op)
+    attn = attn.squeeze(-2)
+    if kv_heads != q_heads:
+        attn = attn.flatten(1, 2)
+    return attn
+
+
+def flat_pa_mla_kv_one_tensor(
+    query,
+    key_cache,
+    value_cache,
+    block_list,
+    block_mapping,
+    block_bias,
+    block_scales,
+    block_groups,
+    scale,
+    matmul_qk_op,
+    matmul_av_op,
+    batch2block_matmul_op,
+    block2batch_matmul_op,
+    keys_fetch_func,
+    values_fetch_func,
+    kv_lora_rank,
+):
     key_cache = key_cache.unsqueeze(2)
 
     batch_size = query.size(0)
     q_heads = query.size(1)
     kv_heads = key_cache.size(2)
 
-    query = ops.batch2block(scale * query, block_mapping,
-                            batch2block_matmul_op).unsqueeze(-2)
+    query = ops.batch2block(
+        scale * query, block_mapping, batch2block_matmul_op
+    ).unsqueeze(-2)
     key = keys_fetch_func(key_cache, block_list)
     if value_cache is not None:
         value_cache = value_cache.unsqueeze(2)
@@ -252,35 +308,24 @@ def flat_pa_mla(query, key_cache, value_cache, block_list, block_mapping,
         key = key.transpose(2, 3)
 
     attn = matmul_qk_op(query, key)
-    
-    # FIXME: (Yi) do we need to keep it?
-    if 'fp32_softmax' in enabled_flags():
+
+    if "fp32_softmax" in enabled_flags():
         attn = attn.float()
         import habana_frameworks.torch.core as htcore
+
         htcore.mark_step()
     attn = attn + block_bias
-    if kv_in_fp8:
-        # Chendi: This is a workaround for manually
-        # remove dequant/quant for performance
-        attn = _pipelined_pa(attn,
-                             value,
-                             block_groups,
-                             block_mapping,
-                             block_scales=block_scales,
-                             batch_size=batch_size,
-                             matmul_av_op=matmul_av_op,
-                             batch2block_matmul_op=batch2block_matmul_op,
-                             block2batch_matmul_op=block2batch_matmul_op)
-    else:
-        attn = ops.pipelined_pa(attn,
-                                value,
-                                block_groups,
-                                block_mapping,
-                                block_scales=block_scales,
-                                batch_size=batch_size,
-                                matmul_av_op=matmul_av_op,
-                                batch2block_matmul_op=batch2block_matmul_op,
-                                block2batch_matmul_op=block2batch_matmul_op)
+    attn = _pipelined_pa(
+        attn,
+        value,
+        block_groups,
+        block_mapping,
+        block_scales=block_scales,
+        batch_size=batch_size,
+        matmul_av_op=matmul_av_op,
+        batch2block_matmul_op=batch2block_matmul_op,
+        block2batch_matmul_op=block2batch_matmul_op,
+    )
     attn = ops.block2batch(attn, block_mapping, block2batch_matmul_op)
     attn = attn.squeeze(-2)
     if kv_heads != q_heads:
@@ -467,6 +512,9 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata,
                                          batch_size)
         else:
+            if self.VLLM_USE_FP8_MATMUL:
+                return self._forward_decode_fp8_matmul(q_nope, q_pe, kv_cache, attn_metadata,
+                                        batch_size)
             return self._forward_decode(q_nope, q_pe, kv_cache, attn_metadata,
                                         batch_size)
 
@@ -509,15 +557,46 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
 
         return self.o_proj(attn_output)[0]
 
-    def _forward_decode(self, q_nope: torch.Tensor, q_pe: torch.Tensor,
+    def _forward_decode(
+        self,
+        q_nope: torch.Tensor,
+        q_pe: torch.Tensor,
+        kv_cache: torch.Tensor,
+        attn_metadata: HPUAttentionMetadata,
+        batch_size: int
+    ) -> torch.Tensor:
+        kv_c_and_k_pe_cache = kv_cache[0].unsqueeze(2)
+        kv_c_cache = kv_cache[1].unsqueeze(2)
+
+        output = flat_pa_mla(
+            q_nope=q_nope,
+            q_pe=q_pe,
+            key_cache=kv_c_and_k_pe_cache,
+            value_cache=kv_c_cache,
+            block_list=attn_metadata.block_list,
+            block_mapping=attn_metadata.block_mapping,
+            block_bias=attn_metadata.attn_bias,
+            block_scales=attn_metadata.block_scales,
+            block_groups=attn_metadata.block_groups,
+            scale=self.scale,
+            matmul_qk_op=self.matmul_qk,
+            matmul_av_op=self.matmul_av,
+            batch2block_matmul_op=self.batch2block_matmul,
+            block2batch_matmul_op=self.block2batch_matmul,
+            keys_fetch_func=self.latent_cache_k.fetch_from_cache,
+            values_fetch_func=self.latent_cache_v.fetch_from_cache)
+        output = output.view(batch_size, 1, -1)
+        result = self._v_up_proj_and_o_proj(output)
+        result = result.view(batch_size, 1, -1)
+        return result
+
+    def _forward_decode_fp8_matmul(self, q_nope: torch.Tensor, q_pe: torch.Tensor,
                         kv_cache: torch.Tensor,
                         attn_metadata: HPUAttentionMetadata,
                         batch_size: int) -> torch.Tensor:
         q = torch.cat([q_nope, q_pe], dim=-1)
-        # kv_c_and_k_pe_cache = kv_cache[0].unsqueeze(2)
-        # kv_c_cache = kv_cache[1].unsqueeze(2)
 
-        output = flat_pa_mla(
+        output = flat_pa_mla_kv_one_tensor(
             query=q,
             key_cache=kv_cache[0],
             value_cache=kv_cache[1],
@@ -527,20 +606,13 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             block_scales=attn_metadata.block_scales,
             block_groups=attn_metadata.block_groups,
             scale=self.scale,
-            matmul_qk_op=self.matmul_qk
-            if not self.VLLM_USE_FP8_MATMUL else self.matmul_qk_decode,
-            matmul_av_op=self.matmul_av
-            if not self.VLLM_USE_FP8_MATMUL else self.matmul_av_decode,
+            matmul_qk_op=self.matmul_qk_decode,
+            matmul_av_op=self.matmul_av_decode,
             batch2block_matmul_op=self.batch2block_matmul,
             block2batch_matmul_op=self.block2batch_matmul,
-            keys_fetch_func=self.latent_cache_k.fetch_from_cache
-            if not self.VLLM_USE_FP8_MATMUL else
-            self.latent_cache_k_nodeq.fetch_from_cache,
-            values_fetch_func=self.latent_cache_v.fetch_from_cache
-            if not self.VLLM_USE_FP8_MATMUL else
-            self.latent_cache_v_nodeq.fetch_from_cache,
+            keys_fetch_func=self.latent_cache_k_nodeq.fetch_from_cache,
+            values_fetch_func=self.latent_cache_v_nodeq.fetch_from_cache,
             kv_lora_rank=self.kv_lora_rank,
-            kv_in_fp8=self.VLLM_USE_FP8_MATMUL,
             )
         output = output.view(batch_size, 1, -1)
         result = self._v_up_proj_and_o_proj(output)
