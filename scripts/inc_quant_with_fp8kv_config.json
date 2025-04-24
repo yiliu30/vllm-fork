@@ -17,8 +17,7 @@
             "latent_cache_v",
             "matmul_qk",
             "matmul_av",
-            "block2batch_matmul",
-            "batch2block_matmul"
+            "block2batch_matmul"
         ]
     },
     "dump_stats_path": "./scripts/nc_workspace_measure_kvache/inc_measure_output"
