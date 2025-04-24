@@ -8,14 +8,6 @@ import os
 import argparse
 
 
-weight_factor = (
-    torch.finfo(torch.float8_e4m3fnuz).max
-    / torch.finfo(torch.float8_e4m3fn).max
-)
-scale_factor = 1.0 / weight_factor
-scale_inv_factor = weight_factor
-
-
 def copy_other_files(input_path, output_path):
     import shutil
 
@@ -29,7 +21,10 @@ def copy_other_files(input_path, output_path):
 
 
 def convert_files(input_path, output_path):
-    for safetensors_path in glob(f"{input_path}/*.safetensors"):
+    all_safetensors = glob(f"{input_path}/*.safetensors")
+    # sort by file name
+    all_safetensors.sort()
+    for safetensors_path in all_safetensors:
         tensors = {}
         print(f"processing {safetensors_path}")
         with safe_open(
@@ -40,23 +35,18 @@ def convert_files(input_path, output_path):
                 # tensor = tensor.squeeze(-1)
                 if "proj" in k:
                     if k.endswith("weight"):
-                        tensor = (tensor.float() * weight_factor).to(
+                        tensor = (tensor.float() * 240.0 / 448.0).to(
                             torch.float8_e4m3fn
                         )
-                    elif k.endswith("weight_scale") or k.endswith(
-                        "input_scale"
-                    ):
-                        tensor = tensor.float() * scale_factor
                     elif k.endswith("weight_scale_inv") or k.endswith(
                         "input_scale_inv"
                     ):
                         # "scale_inv" in deepseek-r1 is actually "scale"
-                        tensor = tensor.float() * scale_factor
+                        tensor = tensor.float() * 448.0 / 240.0
                     else:
                         raise NotImplementedError(f"Cannot covert {k}")
                 else:
                     print(f"skip {k}.")
-                k = k.replace("input_scale_inv", "input_scale")
                 tensors[k] = tensor
         new_tensor_path = safetensors_path.replace(input_path, output_path)
         print(f"saving to {new_tensor_path}")
