@@ -622,9 +622,10 @@ class DeepseekV2Model(nn.Module):
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
-        # config.num_hidden_layers = 4
+        
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
+        
         if get_pp_group().is_first_rank:
             self.embed_tokens = VocabParallelEmbedding(
                 config.vocab_size,
