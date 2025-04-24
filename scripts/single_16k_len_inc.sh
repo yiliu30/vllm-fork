@@ -60,8 +60,7 @@ export PT_HPU_RECIPE_CACHE_CONFIG=/data/16k_cache,false,16384
 #set_bucketing
 
 ####### INC WOQ ReQuant Start #######
-# model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2/
-model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC
+model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 unset PT_HPU_RECIPE_CACHE_CONFIG
 export VLLM_MOE_N_SLICE=1
 export VLLM_MLA_DISABLE_REQUANTIZATION=1

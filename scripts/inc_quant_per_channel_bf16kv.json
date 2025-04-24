@@ -16,6 +16,7 @@
             "latent_cache_v_nodeq",
             "latent_cache_v",
             "latent_cache_k",
+            "kv_b_proj",
             "matmul_qk",
             "matmul_av",
             "block2batch_matmul",
