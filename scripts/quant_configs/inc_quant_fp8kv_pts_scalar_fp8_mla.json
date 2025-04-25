@@ -17,5 +17,5 @@
             "latent_cache_v"
         ]
     },
-    "dump_stats_path": "./nc_workspace_measure_fp8_mla/inc_measure_output"
+    "dump_stats_path": "./scripts/nc_workspace_measure_fp8_mla/inc_measure_output"
 }
