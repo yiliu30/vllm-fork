@@ -72,11 +72,11 @@ export VLLM_DISABLE_MARK_SCALES_AS_CONST=1
 # Check if FP8 KVCache is enabled
 if $USE_FP8_KV; then
     echo "Using FP8 KVCache"
-    export QUANT_CONFIG="./scripts/inc_quant_per_channel_with_fp8kv_config.json"
+    export QUANT_CONFIG="./scripts/quant_configs/inc_quant_per_channel_with_fp8kv_config.json"
     KV_CACHE_DTYPE="fp8_inc"
 else
     echo "Using BF16 KV"
-    export QUANT_CONFIG="./scripts/inc_quant_per_channel_bf16kv.json"
+    export QUANT_CONFIG="./scripts/quant_configs/inc_quant_per_channel_bf16kv.json"
     KV_CACHE_DTYPE="auto"
 fi
 ####### INC WOQ ReQuant End   #######
