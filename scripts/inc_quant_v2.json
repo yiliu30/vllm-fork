@@ -1,0 +1,20 @@
+{
+    "mode": "QUANTIZE",
+    "observer": "maxabs",
+    "scale_method": "maxabs_hw",
+    "scale_format": "const",
+    "allowlist": {
+        "types": [],
+        "names": []
+    },
+    "blocklist": {
+        "types": [],
+        "names": [
+            "lm_head",
+            "mlp\\.gate\\b",
+            "latent_cache_v",
+            "block2batch_matmul"
+        ]
+    },
+    "dump_stats_path": "./scripts/nc_workspace_measure_kvache_v2/inc_measure_output"
+}
