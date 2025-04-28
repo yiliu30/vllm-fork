@@ -1,4 +1,3 @@
-ray stop --force
 pkill -9 python
 
 export PT_HPU_LAZY_MODE=1 
@@ -15,13 +14,15 @@ export VLLM_DISABLE_MARK_SCALES_AS_CONST=1
 # remove it ?
 export VLLM_DYNAMIC_MOE_MIN_TOKENS=0
 
+# BF16
 # python ./scripts/run_example_tp_qwen.py \
 #     --model ${OFFICIAL_MODEL} \
 #     --tokenizer ${OFFICIAL_MODEL} \
 #     --osl 32 \
 #     --max_model_len 2048 \
 #     --max_num_seqs 1 
-      
+
+# # Calibration
 # QUANT_CONFIG=./scripts/inc_measure_v2.json \
 # python ./scripts/run_example_tp_qwen.py \
 #     --model ${OFFICIAL_MODEL} \
@@ -30,36 +31,31 @@ export VLLM_DYNAMIC_MOE_MIN_TOKENS=0
 #     --max_model_len 2048 \
 #     --max_num_seqs 1  \
 #     --max_model_len 2048 \
-#     --inc \
-#     --dataset pile \
-#     --nprompts 128
+#     --inc 
 
-# QUANT_CONFIG=./scripts/inc_quant_v2.json \
-# python ./scripts/run_example_tp_qwen.py \
-#     --model ${OFFICIAL_MODEL} \
-#     --tokenizer ${OFFICIAL_MODEL} \
-#     --osl 32 \
-#     --max_model_len 2048 \
-#     --max_num_seqs 1  \
-#     --inc \
-#     --fp8_kv_cache
-
+# Quantization
 QUANT_CONFIG=./scripts/inc_quant_v2.json \
-python ./scripts/run_lm_eval_local.py \
+python ./scripts/run_example_tp_qwen.py \
     --model ${OFFICIAL_MODEL} \
     --tokenizer ${OFFICIAL_MODEL} \
-    --task gsm8k \
-    --batch_size 16 \
-    --limit 128 \
+    --osl 32 \
+    --max_model_len 2048 \
+    --max_num_seqs 1  \
     --inc \
     --fp8_kv_cache
 
+
+# # Evaluation
+# QUANT_CONFIG=./scripts/inc_quant_v2.json \
 # python ./scripts/run_lm_eval_local.py \
 #     --model ${OFFICIAL_MODEL} \
 #     --tokenizer ${OFFICIAL_MODEL} \
 #     --task gsm8k \
 #     --batch_size 16 \
-#     --limit 128
+#     --limit 128 \
+#     --inc \
+#     --fp8_kv_cache
+
 
 # DEBUG 04-28 07:23:31 [llm_engine.py:1509] Stopping remote worker execution loop.
 # Running generate_until requests: 100%|████████████| 128/128 [00:57<00:00,  2.23it/s]
