@@ -37,7 +37,8 @@ export OFFICIAL_MODEL=/path/to/qwen/model
 bash ./scripts/run_qwen.sh calib ${OFFICIAL_MODEL}
 ```
 
-> [!NOTE] It will take a while to calibrate. You can download the calibration files directly from Hugging Face.
+> [!NOTE] 
+> It will take a while to calibrate. You can download the calibration files directly from Hugging Face.
 
 - Get calibration files
 
