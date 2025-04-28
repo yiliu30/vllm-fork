@@ -37,10 +37,8 @@ export OFFICIAL_MODEL=/path/to/qwen/model
 bash ./scripts/run_qwen.sh calib ${OFFICIAL_MODEL}
 ```
 
-> [!NOTE] 
+> [!TIP] 
 > It will take a while to calibrate. You can download the calibration files directly from Hugging Face.
-
-- Get calibration files
 
 ```bash
 huggingface-cli download Yi30/q3-g2-pile512 --local-dir  ./scripts/nc_workspace_measure_kvache_v2
