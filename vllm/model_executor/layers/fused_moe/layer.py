@@ -470,8 +470,16 @@ class FusedMoE(torch.nn.Module):
             raise ValueError("Only softmax scoring function is supported for "
                              "non-grouped topk.")
         if is_hpu:
+            num_experts = self.local_num_experts
+            ep_shift = self.ep_rank * num_experts
+            experts_min, experts_max = ep_shift, num_experts + ep_shift - 1
             from vllm_hpu_extension.ops import DynamicFusedMOE
-            self.hpu_fused_moe = DynamicFusedMOE(self.global_num_experts)
+            logger.debug("Create DynamicFusedMOE with %d experts", num_experts)
+            self.hpu_fused_moe = DynamicFusedMOE(
+                num_experts,
+                experts_min=experts_min,
+                experts_max=experts_max,
+            )
 
         # Note: get_quant_method will look at the layer's local_num_experts
         # for heuristic purposes, so it must be initialized first.
