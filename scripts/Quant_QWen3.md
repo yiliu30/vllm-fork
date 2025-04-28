@@ -10,7 +10,7 @@
 - VLLM
 ```bash
 git clone https://github.com/yiliu30/vllm-fork.git
-git checkout inc-r1-g2
+git checkout qwen-fp8
 cd vllm-fork
 pip install -r requirements-hpu.txt
 VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation
@@ -18,7 +18,7 @@ VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation
 
 - VLLM-HPU-EXT
 ```bash
-git clone https://github.com/HabanaAI/vllm-hpu-extension.git
+git clone https://github.com/yiliu30/vllm-hpu-extension-fork.git vllm-hpu-extension
 cd vllm-hpu-extension
 git checkout qwen-fp8
 pip install -e . -vvv
