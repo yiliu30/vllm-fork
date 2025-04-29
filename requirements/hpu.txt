@@ -9,4 +9,5 @@ tabulate
 setuptools>=61
 setuptools-scm>=8
 numpy==1.26.4
-# vllm-hpu-extension @ git+https://github.com/HabanaAI/vllm-hpu-extension.git@c7f8752
+vllm-hpu-extension @ git+https://github.com/HabanaAI/vllm-hpu-extension.git@d8ecda17faa1b5fdded80be0b511d3e19748f3a9
+neural_compressor_pt @ git+https://github.com/intel/neural-compressor.git@qwen-fp8
