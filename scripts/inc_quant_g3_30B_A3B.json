@@ -11,7 +11,14 @@
         "types": [],
         "names": [
             "lm_head",
-            "mlp\\.gate\\b"
+            "mlp\\.gate\\b",
+            "k_cache",
+            "v_cache",
+            "matmul_av",
+            "matmul_qk",
+            "batch2block_matmul",
+            "block2batch_matmul",
+            "softmax"
         ]
     },
     "dump_stats_path": "nc_workspace_measure_kvache_g3_30B_A3B/inc_measure_output"
