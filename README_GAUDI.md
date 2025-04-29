@@ -396,7 +396,7 @@ measurements for a given model. The quantization configuration is used during in
 However, disabling this feature in production environments is not recommended, as it can lead to a significant performance decrease.
 
 > [!TIP]
-> If you are benchmarking an FP8 model with `scale_format=const`, setting `VLLM_DISABLE_MARK_SCALES_AS_CONST=true` can help speed up the warmup stage.
+> If you are benchmarking an FP8 model with `scale_format=const`, setting `VLLM_HPU_MARK_SCALES_AS_CONST=false` can help speed up the warmup stage.
 
 > [!TIP]
 > When using FP8 models, you may experience timeouts caused by the long compilation time of FP8 operations. To mitigate this, set the following environment variables:
