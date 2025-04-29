@@ -7,7 +7,6 @@ export VLLM_DISABLE_MARK_SCALES_AS_CONST=1
 
 export OFFICIAL_MODEL="/mnt/disk5/Qwen3-30B-A3B-250425"
 
-
 #############################
 # Qwen
 #############################
@@ -33,7 +32,7 @@ if [ -z "$MODE" ] || [ -z "$MODEL" ] || [ -z "$TOKENIZER" ]; then
   exit 1
 fi
 
-COMMON_ARGS="--model $MODEL --tokenizer $TOKENIZER --osl 32 --max_model_len 2048 --max_num_seqs 1"
+COMMON_ARGS="--model $MODEL --tokenizer $TOKENIZER --osl 32 --max_model_len 2048 --max_num_seqs 1 --tp_size 1 --ep_size 1"
 
 if [ "$MODE" == "bf16" ]; then
   python ./scripts/run_example_tp_qwen.py $COMMON_ARGS
