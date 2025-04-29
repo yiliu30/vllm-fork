@@ -34,33 +34,27 @@ fi
 
 COMMON_ARGS="--model $MODEL --tokenizer $TOKENIZER --osl 32 --max_model_len 2048 --max_num_seqs 1 --tp_size 1 --ep_size 1"
 
+model_name=$(basename ${MODEL})
+if [ ${model_name} == "Qwen3-30B-A3B-250425" ]; then
+    quant_file_path="inc_meaure_g3_30B_A3B.json"
+elif [ ${model_name} == "Qwen3-32B-250426" ]; then
+    quant_file_path="inc_meaure_g3_32B.json"
+else
+    echo "Unknown model name: ${model_name}"
+    exit 1
+fi
+
+
 if [ "$MODE" == "bf16" ]; then
   python ./scripts/run_example_tp_qwen.py $COMMON_ARGS
 
 elif [ "$MODE" == "calib" ]; then
-  QUANT_CONFIG=./scripts/inc_measure_v2.json \
+  QUANT_CONFIG=${quant_file_path} \
   python ./scripts/run_example_tp_qwen.py $COMMON_ARGS --inc --dataset pile --nprompts 512
-
-elif [ "$MODE" == "quant" ]; then
-  QUANT_CONFIG=./scripts/inc_quant_v2.json \
-  python ./scripts/run_example_tp_qwen.py $COMMON_ARGS --inc --fp8_kv_cache
-
-elif [ "$MODE" == "eval" ]; then
-  VLLM_PROMPT_SEQ_BUCKET_MIN=2048 \
-  VLLM_PROMPT_SEQ_BUCKET_STEP=2048 \
-  VLLM_PROMPT_SEQ_BUCKET_MAX=2048 \
-  QUANT_CONFIG=./scripts/inc_quant_v2.json \
-  python ./scripts/run_lm_eval_local.py \
-    --model $MODEL \
-    --tokenizer $TOKENIZER \
-    --task gsm8k \
-    --batch_size 16 \
-    --inc \
-    --fp8_kv_cache 2>&1 | tee ./gsm8k.pile.inc_quant_v2.g2.428.log
 
 else
   echo "Unknown mode: $MODE"
-  echo "Valid modes are: bf16, calib, quant, eval"
+  echo "Valid modes are: bf16, calib"
   exit 1
 fi
 
