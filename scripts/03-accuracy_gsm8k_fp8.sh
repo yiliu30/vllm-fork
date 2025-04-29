@@ -12,12 +12,15 @@ else
     tp_size=1
 fi
 
+export VLLM_LOGGING_LEVEL=DEBUG
+
 model_name=$(basename ${model_path})
-output_dir="${model_name}-tp${tp_size}-gsm8k-acc-fp8"
+timestamp=$(date +"%Y%m%d_%H%M%S")
+output_dir="${model_name}-tp${tp_size}-gsm8k-acc-fp8-${timestamp}"
 #limit=None
 
 if [ ${model_name} == "Qwen3-30B-A3B-250425" ]; then
-    quant_file_path="inc_quant_g3_30B_A3B.json"
+    quant_file_path="inc_quant_g3_30B_A3B_default.json"
 elif [ ${model_name} == "Qwen3-235B-A22B-250426" ]; then
     quant_file_path="inc_quant_g3_235B_A22B.json"
 else
@@ -27,6 +30,10 @@ fi
 
 mkdir -p ${output_dir}
 
+
+VLLM_PROMPT_SEQ_BUCKET_MIN=2048 \
+VLLM_PROMPT_SEQ_BUCKET_STEP=2048 \
+VLLM_PROMPT_SEQ_BUCKET_MAX=2048 \
 QUANT_CONFIG=${quant_file_path} \
 PT_HPU_LAZY_MODE=1 \
 VLLM_SKIP_WARMUP=true \
