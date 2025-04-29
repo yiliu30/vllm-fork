@@ -12,8 +12,10 @@ else
     tp_size=1
 fi
 
+
 model_name=$(basename ${model_path})
-output_dir="${model_name}-tp${tp_size}-gsm8k-acc"
+timestamp=$(date +"%Y%m%d_%H%M%S")
+output_dir="${model_name}-tp${tp_size}-gsm8k-acc-${timestamp}"
 #limit=None
 
 mkdir -p ${output_dir}

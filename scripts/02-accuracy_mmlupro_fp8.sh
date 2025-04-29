@@ -17,12 +17,16 @@ output_dir="${model_name}-tp${tp_size}-mmlu-pro-acc"
 #limit=None
 if [ ${model_name} == "Qwen3-30B-A3B-250425" ]; then
     quant_file_path="inc_quant_g3_30B_A3B.json"
+elif [ ${model_name} == "Qwen3-32B-250426" ]; then
+    quant_file_path="inc_quant_g3_32B.json"
 elif [ ${model_name} == "Qwen3-235B-A22B-250426" ]; then
     quant_file_path="inc_quant_g3_235B_A22B.json"
 else
     echo "Unknown model name: ${model_name}"
     exit 1
 fi
+
+echo "Eval model ${model_name} with config ${quant_file_path}"
 
 mkdir -p ${output_dir}
 
