@@ -1,4 +1,5 @@
 # !/bin/bash
+set +x
 
 if [ $# -gt 0 ] && [ "$1" == "--model_path" ]; then
     model_path=$2
@@ -12,8 +13,13 @@ else
     tp_size=1
 fi
 
+export PT_HPU_LAZY_MODE=1 
+export GRAPH_VISUALIZATION=1 
+export VLLM_LOGGING_LEVEL=DEBUG
+
 model_name=$(basename ${model_path})
-output_dir="${model_name}-tp${tp_size}-gsm8k-acc"
+timestamp=$(date +"%Y%m%d_%H%M%S")
+output_dir="${model_name}-tp${tp_size}-gsm8k-acc-${timestamp}"
 #limit=None
 
 mkdir -p ${output_dir}
