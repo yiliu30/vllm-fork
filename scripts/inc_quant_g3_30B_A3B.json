@@ -18,6 +18,7 @@
             "matmul_qk",
             "batch2block_matmul",
             "block2batch_matmul",
+            "fused_scaled_dot_product_attention",
             "softmax"
         ]
     },
