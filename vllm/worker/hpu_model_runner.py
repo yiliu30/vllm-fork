@@ -829,11 +829,11 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         "false") in ("1", "true")
                     config = FP8Config.from_json_file(
                         os.getenv("QUANT_CONFIG", ""))
-                    self._inc_preprocess_(self.model, config)
                     if config.measure:
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
+                    logger.debug(f"INC Model: {self.model}")
                     if not disable_mark_scales_as_const:
                         htcore.hpu_initialize(self.model,
                                               mark_only_scales_as_const=True)
