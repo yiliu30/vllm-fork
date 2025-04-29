@@ -44,17 +44,4 @@ bash ./scripts/run_qwen.sh calib ${OFFICIAL_MODEL}
 huggingface-cli download Yi30/q3-g2-pile512 --local-dir  ./scripts/nc_workspace_measure_kvache_v2
 ```
 
-### Quantization 
-```bash
-cd vllm-fork
-export OFFICIAL_MODEL=/path/to/qwen/model
-bash ./scripts/run_qwen.sh quant ${OFFICIAL_MODEL} 
-```
-
-### Evalution 
-```bash
-cd vllm-fork
-export OFFICIAL_MODEL=/path/to/qwen/model
-bash ./scripts/run_qwen.sh eval ${OFFICIAL_MODEL} 
-```
 
