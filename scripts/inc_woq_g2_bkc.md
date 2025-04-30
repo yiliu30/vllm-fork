@@ -7,8 +7,7 @@ Please use the firmware and software stack mentioned [here](https://github.com/H
 - vLLM
 
 ```bash
-git clone https://github.com/yiliu30/vllm-fork.git
-git checkout inc-r1-g2
+git clone -b deepseek_r1 https://github.com/HabanaAI/vllm-fork.git
 cd vllm-fork
 pip install -r requirements-hpu.txt
 VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation
