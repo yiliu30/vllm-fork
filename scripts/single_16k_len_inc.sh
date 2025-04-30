@@ -14,7 +14,7 @@ done
 
 
 BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
-source "$BASH_DIR"/utils.sh
+# source "$BASH_DIR"/utils.sh
 
 ray stop --force
 
