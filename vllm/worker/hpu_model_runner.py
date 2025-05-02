@@ -648,6 +648,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                if self.model_config is not None else None)
         self.device_config = (self.device_config if self.device_config
                               is not None else DeviceConfig())
+        self.is_prompt = True
         if is_fake_hpu():
             self.device_config.device = torch.device('cpu')
             self.device_config.device_type = 'cpu'
@@ -1663,6 +1664,22 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                      slot_mapping=slot_mapping,
                                      lora_ids=lora_ids)
 
+    def start_profile(self):
+        import queue
+        if not hasattr(self, 'pt_profiler') or (hasattr(self, 'pt_profoler_started')  and self.pt_profoler_started):
+            return
+        logger.info("=============== Starting profiler ===============")
+        high_level_profiler = self.profiler
+        with high_level_profiler.record_event('internal', 'start_profiler'):
+            # Clean up the queue
+            while True:
+                try:
+                    high_level_profiler.profiling_trace_events.get_nowait()
+                except queue.Empty:
+                    break
+            self.pt_profiler.start()
+            self.pt_profoler_started = True
+
     def prepare_input_tensors(
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
@@ -1684,6 +1701,9 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
 
         self.event_start = self.profiler.get_timestamp_us()
         is_prompt = seq_group_metadata_list[0].is_prompt
+        self.is_prompt = is_prompt
+        if not is_prompt:
+            self.start_profile()
         base_event_name = 'prompt' if is_prompt else 'decode'
         self.profiler.start('internal', base_event_name)
 
@@ -2234,6 +2254,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def warmup_model(self, kv_caches: List[torch.Tensor]) -> None:
         if not self.is_pooler:
             max_blocks = kv_caches[0][0].size(0)
+            max_blocks = int((max_blocks - self.block_size + 1) // self.block_size) * self.block_size
+            logger.info(f"Max blocks: {max_blocks}")
             self.bucketing_ctx.generate_decode_buckets(max_blocks)
 
         if profile := os.environ.get('VLLM_PT_PROFILE', None):
