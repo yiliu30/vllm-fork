@@ -104,6 +104,7 @@ for req_in_out in "${req_in_out_list[@]}"; do
     echo "- Output Length: ${out_len}"
     echo "- Total Length: ${total_len}"
 
+    VLLM_DMOE_FORCE_LOOP=1 \
     VLLM_DYNAMIC_MOE_MIN_TOKENS=256 \
     PT_HPU_LAZY_MODE=1 \
     VLLM_PROMPT_BS_BUCKET_MIN=1 \
