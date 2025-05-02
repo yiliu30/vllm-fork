@@ -86,7 +86,7 @@ for req_in_out in "${req_in_out_list[@]}"; do
     #===========================================================
 
     # Create a descriptive log name based on parameters
-    log_name="staticmoe-${model_name}-gaudi3-tp${tp_parallel}-ep${ep_size}-moe${moe_n_slice}-ms${multi_step}_np${num_prompts}_rr${request_rate}_bs${bs}_i${in_len}_o${out_len}_len${total_len}"
+    log_name="${model_name}-gaudi3-tp${tp_parallel}-ep${ep_size}-moe${moe_n_slice}-ms${multi_step}_np${num_prompts}_rr${request_rate}_bs${bs}_i${in_len}_o${out_len}_len${total_len}"
 
     # Create log directory
     mkdir -p benchmark_logs
@@ -104,6 +104,7 @@ for req_in_out in "${req_in_out_list[@]}"; do
     echo "- Output Length: ${out_len}"
     echo "- Total Length: ${total_len}"
 
+    VLLM_DYNAMIC_MOE_MIN_TOKENS=256 \
     PT_HPU_LAZY_MODE=1 \
     VLLM_PROMPT_BS_BUCKET_MIN=1 \
     VLLM_PROMPT_BS_BUCKET_MAX=8 \
