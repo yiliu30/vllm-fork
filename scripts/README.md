@@ -1,5 +1,10 @@
 ## How to deploy
 ```bash
+docker run -d -it --runtime=habana --name qwen3-vllm-1.20  -v `pwd`:/workspace/vllm/  -v /data:/data -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none --cap-add=sys_nice --ipc=host --net=host -e HF_HOME=/data/huggingface vault.habana.ai/gaudi-docker/1.20.0/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest /bin/bash
+
+docker exec -it qwen3-vllm-1.20 /bin/bash
+cd /workspace/vllm/
+
 git clone -b dev/qwen3 https://github.com/HabanaAI/vllm-fork.git;
 cd vllm-fork; pip install -r requirements-hpu.txt; VLLM_TARGET_DEVICE=hpu pip install -e .  --no-build-isolation;
 pip install lm_eval datasets numpy==1.26.4
