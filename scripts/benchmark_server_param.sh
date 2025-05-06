@@ -13,7 +13,7 @@ PP_LAYER_PARTITION=${7:-}
 KV_CACHE_DTYPE=${8:-auto}
 HOST=${9:-127.0.0.1}
 PORT=${10:-8688}
-MODEL_PATH=${12:-${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2}}
+MODEL_PATH=${11:-${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2}}
 
 #hl-prof-config --use-template profile_api --hw-trace off
 #export HABANA_PROFILE=1
