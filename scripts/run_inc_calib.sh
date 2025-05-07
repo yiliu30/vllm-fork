@@ -1,4 +1,4 @@
-DEFAULT_MODEL_PATH="/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/"
+DEFAULT_MODEL_PATH="/mnt/disk3/DeepSeek-R1-G2-INC"
 FP8_MODEL_PATH="${1:-$DEFAULT_MODEL_PATH}"
 
 QUANT_CONFIG_FILE="scripts/quant_configs/inc_measure_with_fp8kv_config.json"
