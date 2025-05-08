@@ -12,7 +12,7 @@ COMM_BACKEND=$6
 PP_LAYER_PARTITION=${7:-}
 KV_CACHE_DTYPE=${8:-auto}
 HOST=${9:-127.0.0.1}
-PORT=${10:-8688}
+PORT=${10:-8988}
 MODEL_PATH=${11:-${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2}}
 
 #hl-prof-config --use-template profile_api --hw-trace off
@@ -108,7 +108,8 @@ python3 -m vllm.entrypoints.openai.api_server --host $HOST --port $PORT \
   --disable-log-requests \
   --use-padding-aware-scheduling \
   --use-v2-block-manager \
-  --distributed_executor_backend ray \
+  --distributed_executor_backend mp \
   --gpu_memory_utilization $VLLM_GPU_MEMORY_UTILIZATION \
   --enable-reasoning \
-  --reasoning-parser deepseek_r1
+  --reasoning-parser deepseek_r1 \
+  --enforce-eager

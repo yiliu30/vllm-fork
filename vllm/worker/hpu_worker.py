@@ -175,6 +175,23 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         return self.model_config.is_encoder_decoder
 
     def start_profile(self):
+        from vllm.worker.hpu_model_runner import get_layer_forward_time_recorders
+        logger.info("Starting profiling...")
+        res = get_layer_forward_time_recorders()
+        from loguru import logger as loguru_logger
+        if res:
+            for k, v in res.items():
+                loguru_logger.warning(
+                    f"layer {k} recorded {len(v)} forward times: {v}")
+            # write to csv
+            import csv
+            with open("layer_forward_times.csv", "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(["Layer", "Forward Times"])
+                for k, v in res.items():
+                    writer.writerow([k, ";".join(map(str, v))])  # join list into a string
+                
+    def _start_profile(self):
         if self.profiler is None:
             raise RuntimeError("Profiler is not enabled.")
         high_level_profiler = self.model_runner.profiler

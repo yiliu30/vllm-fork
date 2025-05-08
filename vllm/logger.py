@@ -13,6 +13,10 @@ from typing import Any, Optional, cast
 
 import vllm.envs as envs
 
+from collections import defaultdict
+# return 
+_time_recorders = defaultdict(list)
+
 VLLM_CONFIGURE_LOGGING = envs.VLLM_CONFIGURE_LOGGING
 VLLM_LOGGING_CONFIG_PATH = envs.VLLM_LOGGING_CONFIG_PATH
 VLLM_LOGGING_LEVEL = envs.VLLM_LOGGING_LEVEL

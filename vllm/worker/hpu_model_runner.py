@@ -159,6 +159,36 @@ def get_target_layer_suffix_list(model_type) -> list[str]:
     ]
 
 
+import functools
+
+from collections import defaultdict
+
+class ModelRunnerTimeRecorder:
+    _time_recorders = defaultdict(list)
+    
+    
+# @functools.lru_cache()
+def get_layer_forward_time_recorders():
+    return ModelRunnerTimeRecorder._time_recorders
+
+
+def add_event_recorder_for_layer(module):
+    module._record_cnt = torch.zeros(1, dtype=torch.int32, device='hpu')
+    module.forward_time_arr = torch.zeros(1000, dtype=torch.float32, device='hpu')
+    module.foward_start_event = torch.hpu.Event(enable_timing=True)
+    module.forward_end_event = torch.hpu.Event(enable_timing=True)
+
+def pre_forward_hook(module, input) -> None:
+    module.foward_start_event.record()
+
+def post_forward_hook(module, input, output) -> None:
+    module.forward_end_event.record()
+    htorch.core.mark_step()
+    torch.hpu.synchronize()
+    forward_time_ms = module.foward_start_event.elapsed_time(module.forward_end_event)
+    get_layer_forward_time_recorders()[module.prefix].append(forward_time_ms)
+    return output
+
 def modify_model_layers(module: torch.nn.Module,
                         suffix_list: list[str],
                         n=1,
@@ -179,7 +209,11 @@ def modify_model_layers(module: torch.nn.Module,
                 for layer in suffix_list):
             counter[0] += 1
             if counter[0] % n == 0:
-                child_module.register_forward_hook(forward_hook)
+                # child_module.register_forward_hook(forward_hook)
+                add_event_recorder_for_layer(child_module)
+                child_module.register_forward_pre_hook(pre_forward_hook)
+                child_module.register_forward_hook(post_forward_hook)
+                
         else:
             modify_model_layers(child_module, suffix_list, n, counter)
 
