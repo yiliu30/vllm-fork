@@ -37,6 +37,43 @@ from vllm.worker.worker_base import (LocalOrDistributedWorkerBase, WorkerBase,
 logger = init_logger(__name__)
 
 
+
+def update_mem():
+    import torch
+
+    import habana_frameworks.torch as htorch 
+    from vllm_hpu_extension.profiler import HabanaMemoryProfiler, format_bytes
+    memory_stats = torch.hpu.memory.memory_stats()
+    csv_file = "vllm_memory_stats_pp.csv"
+
+    # Define the field names (header)
+    fieldnames = [
+        "Timestamp",
+        "Limit", "InUse", "MaxInUse", "NumAllocs", "NumFrees",
+        "ActiveAllocs", "MaxAllocSize", "TotalSystemAllocs",
+        "TotalSystemFrees", "TotalActiveAllocs"
+    ]
+
+    # Check if the file exists to decide if the header needs to be written
+    import os
+    import csv
+    write_header = not os.path.exists(csv_file)
+
+    # Append the row to the CSV
+    with open(csv_file, mode='a', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        import time
+        memory_stats['Timestamp'] = time.strftime("%Y-%m-%d-%H:%M:%S")
+        writer.writerow({key: memory_stats[key] for key in fieldnames})
+        logger.warning(f"<<<<<<<<<<<<<<<<< Update mem >>>>>>>>>>>>>>>>>")
+        msg = f"Memory stats: "
+        for key in fieldnames:
+            msg += f"{key}: {str(memory_stats[key])}, "
+        logger.warning(msg)
+
+
 class HPUWorker(LocalOrDistributedWorkerBase):
     """A worker class that executes (a partition of) the model on a HPU.
 
@@ -175,6 +212,10 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         return self.model_config.is_encoder_decoder
 
     def start_profile(self):
+        self.get_mem()
+
+
+    def _start_profile(self):
         if self.profiler is None:
             raise RuntimeError("Profiler is not enabled.")
         high_level_profiler = self.model_runner.profiler
@@ -286,7 +327,23 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         output = LocalOrDistributedWorkerBase.execute_model(
             self, execute_model_req)
         return output
-
+    
+    
+    def get_mem(self):
+        # Below sample memory stats printout and details
+        # ('Limit', 3050939105) : amount of total reserved memory on HPU device
+        # ('InUse', 20073088) : amount of allocated memory at any instance. ( starting point after reset_peak_memroy_stats() )
+        # ('MaxInUse', 20073088) : amount of total active memory allocated
+        # ('NumAllocs', 0) : number of allocations
+        # ('NumFrees', 0) : number of freed chunks
+        # ('ActiveAllocs', 0) : number of active allocations
+        # ('MaxAllocSize', 0) : maximum allocated size
+        # ('TotalSystemAllocs', 34) : total number of system allocations
+        # ('TotalSystemFrees', 2) : total number of system frees
+        # ('TotalActiveAllocs', 32)] : total number of active allocations
+        update_mem()
+        
+    
     @torch.inference_mode()
     def determine_num_available_blocks(self) -> Tuple[int, int]:
         """Profiles the peak memory usage of the model to determine how many
@@ -353,6 +410,15 @@ class HPUWorker(LocalOrDistributedWorkerBase):
             self.model_runner.remove_all_loras()
 
         gc.collect()
+        local_rank = torch.distributed.get_rank()
+        logger.warning(f"[rank {local_rank}] "
+                       f"determine_num_available_blocks: "
+                       f"num_hpu_blocks={num_hpu_blocks}, "
+                       f"num_cpu_blocks={num_cpu_blocks}, "
+                       f"cache_block_size={cache_block_size}, "
+                       f"gpu_memory_utilization="
+                       f"{self.cache_config.gpu_memory_utilization}, "
+                       f"graph_reserved_mem={graph_reserved_mem}")
         return num_hpu_blocks, num_cpu_blocks
 
     def initialize_cache(self, num_gpu_blocks: int,
