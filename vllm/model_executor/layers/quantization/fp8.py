@@ -490,7 +490,22 @@ class Fp8LinearMethod(LinearMethodBase):
             # Default to using per_token quantization if cutlass is supported
             use_per_token_if_dynamic=self.cutlass_fp8_supported)
 
+import sys
+import pdb
 
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+            
 class Fp8MoEMethod(FusedMoEMethodBase):
     """MoE method for FP8.
     Supports loading FP8 checkpoints with static weight scale and
@@ -1027,6 +1042,10 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                     s = i * self.moe_slice_length
                     e = batched_tokens if i == (n_slice -
                                     1) else (i + 1) * self.moe_slice_length
+                    # if torch.distributed.get_rank() == 0:
+                    #     # import pdb; pdb.set_trace()
+                    #     ForkedPdb().set_trace()
+                    # torch.distributed.barrier()
                     current_hidden_states = torch.ops.hpu.mixture_of_experts(
                     hidden_states=x_fp8[s:e, ...],
                     expert_routing_table=selected_experts[s:e, ...],

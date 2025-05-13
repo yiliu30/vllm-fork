@@ -56,18 +56,23 @@ unset VLLM_DECODE_BS_BUCKET_MIN VLLM_DECODE_BS_BUCKET_STEP VLLM_DECODE_BS_BUCKET
 unset VLLM_DECODE_BLOCK_BUCKET_MIN VLLM_DECODE_BLOCK_BUCKET_STEP VLLM_DECODE_BLOCK_BUCKET_MAX
 
 export VLLM_SKIP_WARMUP=True
-export PT_HPU_RECIPE_CACHE_CONFIG=/data/16k_cache,false,16384
+export PT_HPU_RECIPE_CACHE_CONFIG=/data/16k_cache/inc/pcs_test,false,16384
 #set_bucketing
 
-####### INC WOQ ReQuant Start #######
+
+# model_path=/mnt/disk2/hf_models/DeepSeek-R1-G2-static/
+# export VLLM_MOE_SLICE_LENGTH=32768
+KV_CACHE_DTYPE="auto"
+# ####### INC WOQ ReQuant Start #######
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
-unset PT_HPU_RECIPE_CACHE_CONFIG
+# unset PT_HPU_RECIPE_CACHE_CONFIG
 export VLLM_MOE_N_SLICE=1
 export VLLM_MLA_DISABLE_REQUANTIZATION=1
 export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
 export VLLM_REQUANT_FP8_INC=1
 export VLLM_ENABLE_RUNTIME_DEQUANT=1
 export VLLM_HPU_MARK_SCALES_AS_CONST=false
+
 
 # Check if FP8 KVCache is enabled
 if $USE_FP8_KV; then
@@ -80,6 +85,49 @@ else
     KV_CACHE_DTYPE="auto"
 fi
 ####### INC WOQ ReQuant End   #######
+
+
+# #######Debug
+# export ENABLE_EXPERIMENTAL_FLAGS=1 
+# export PRINT_FILE_AND_LINE=1
+# export LOG_LEVEL_PASS_MANAGER=1 
+# export LOG_LEVEL_ALL_PT=0
+# timestamp=$(date +%Y%m%d_%H%M%S)
+# export HABANA_LOGS=".habana_logs-512-${timestamp}"
+
+
+
+
+# ################## Profiling ##################
+# export HABANA_PROFILE=1
+# export HABANA_PROFILE_WRITE_HLTV=1
+# export GRAPH_VISUALIZATION=1
+
+
+
+# # # export VLLM_PROFILER_ENABLED=full
+# # # hl-prof-config --use-template profile_api_with_nics --fuser on --trace-analyzer on --trace-analyzer-xlsx on
+# hl-prof-config --use-template profile_api_with_nics --fuser on --trace-analyzer on --gaudi2 --merged "hltv,csv" --trace-analyzer-xlsx on
+# # #  hl-prof-config --gaudi2
+# hl-prof-config --gaudi2
+# timestamp=$(date +%Y%m%d_%H%M%S)
+# profile_folder="a_profile_results_${timestamp}"
+# hl-prof-config  -o  $profile_folder
+# torch_profile_folder="a_torch_profile_results_${timestamp}"
+# export VLLM_TORCH_PROFILER_DIR=$torch_profile_folder
+# export VLLM_LOGGING_LEVEL="DEBUG"
+
+# echo "Profiling folder: $profile_folder"
+# echo "Torch Profiling folder: $torch_profile_folder"
+
+# # export VLLM_ENGINE_PROFILER_WARMUP_WAIT=1000
+# # export VLLM_ENGINE_PROFILER_WARMUP_STEPS=5
+# # export VLLM_ENGINE_PROFILER_STEPS=5
+# # export VLLM_ENGINE_PROFILER_REPEAT=2
+# export VLLM_ENGINE_PROFILER_USE_SCHEDULER=0
+
+
+# ################# Profiling End ##################
 
 # !!!!!!!!!!!!!!!!!!!! set bucketing !!!!!!!!!!!!!
 prompt_bs_min=1
@@ -129,7 +177,7 @@ python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
 --max-num-batched-tokens $max_num_batched_tokens  \
 --use-padding-aware-scheduling \
 --use-v2-block-manager \
---distributed_executor_backend ray \
+--distributed_executor_backend mp \
 --gpu_memory_utilization 0.9 \
 --disable-log-requests \
 --enable-reasoning \

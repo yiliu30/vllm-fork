@@ -621,7 +621,7 @@ class DeepseekV2Model(nn.Module):
 
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-
+        # config.num_hidden_layers = 6
         if get_pp_group().is_first_rank:
             self.embed_tokens = VocabParallelEmbedding(
                 config.vocab_size,

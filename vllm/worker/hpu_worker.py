@@ -59,6 +59,8 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         model_runner_cls: Optional[Type[HPUModelRunner]] = None,
     ) -> None:
         WorkerBase.__init__(self, vllm_config=vllm_config)
+        self._profiler_started = False
+        self._need_start_profile = False
         self.parallel_config.rank = rank
         self.local_rank = local_rank
         self.rank = rank
@@ -108,20 +110,54 @@ class HPUWorker(LocalOrDistributedWorkerBase):
             torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
             logger.info("Profiling enabled. Traces will be saved to: %s",
                         torch_profiler_trace_dir)
-
+            wait = int(os.getenv("VLLM_ENGINE_PROFILER_WARMUP_WAIT", "0"))
+            warmup = int(os.getenv("VLLM_ENGINE_PROFILER_WARMUP_STEPS", "0"))
+            steps = int(os.getenv("VLLM_ENGINE_PROFILER_STEPS", "1"))
+            repeat = int(os.getenv("VLLM_ENGINE_PROFILER_REPEAT", "1"))
+            schedule = torch.profiler.schedule(wait=wait,
+                                            warmup=warmup,
+                                            active=steps,
+                                            repeat=repeat)
             if os.getenv('VLLM_PROFILER_ENABLED') == 'full':
                 fn = self.full_trace_handler
                 with_stack = False
             else:
                 fn = torch.profiler.tensorboard_trace_handler
                 with_stack = True
+            use_scheduler = os.getenv('VLLM_ENGINE_PROFILER_USE_SCHEDULER', '0') in ["true", "1"]
+            # if use_scheduler:
+            #     self.profiler = torch.profiler.profile(
+            #         schedule=schedule,
+            #         activities=[
+            #             torch.profiler.ProfilerActivity.CPU,
+            #             torch.profiler.ProfilerActivity.HPU,
+            #         ],
+            #         with_stack=with_stack,
+            #         on_trace_ready=fn(torch_profiler_trace_dir, use_gzip=True))
+            # else:
+            #     self.profiler = torch.profiler.profile(
+            #         activities=[
+            #             torch.profiler.ProfilerActivity.CPU,
+            #             torch.profiler.ProfilerActivity.HPU,
+            #         ],
+            #         with_stack=with_stack,
+            #         on_trace_ready=fn(torch_profiler_trace_dir, use_gzip=True))
+            activities = [ torch.profiler.ProfilerActivity.CPU ]
+
+            activities.append(torch.profiler.ProfilerActivity.HPU)
+            # from habana_frameworks.torch.activity_profiler import DebugActivity
+            # debug_activities=[DebugActivity.BRIDGE_FUNCTION_CALLS]
+            VLLM_TORCH_PROFILER_DIR: str= os.getenv('VLLM_TORCH_PROFILER_DIR', ".")
             self.profiler = torch.profiler.profile(
-                activities=[
-                    torch.profiler.ProfilerActivity.CPU,
-                    torch.profiler.ProfilerActivity.HPU,
-                ],
-                with_stack=with_stack,
-                on_trace_ready=fn(torch_profiler_trace_dir, use_gzip=True))
+                # schedule=schedule,
+                activities=activities,
+                # debug_activities=debug_activities,
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(
+                    VLLM_TORCH_PROFILER_DIR, use_gzip=True),
+                record_shapes=False,
+                with_modules=False,
+                profile_memory=False,
+                with_stack=True)
         else:
             self.profiler = None
 
@@ -175,23 +211,35 @@ class HPUWorker(LocalOrDistributedWorkerBase):
     def _is_encoder_decoder_model(self):
         return self.model_config.is_encoder_decoder
 
-    def start_profile(self):
+    def _start_profile(self):
         if self.profiler is None:
             raise RuntimeError("Profiler is not enabled.")
-        high_level_profiler = self.model_runner.profiler
-        with high_level_profiler.record_event('internal', 'start_profiler'):
-            # Clean up the queue
-            while True:
-                try:
-                    high_level_profiler.profiling_trace_events.get_nowait()
-                except queue.Empty:
-                    break
-            self.profiler.start()
+        self._need_start_profile = True
+        
+    def start_profile(self):
+        if self._profiler_started:
+            logger.warning("Profiler is already started.")
+            return
+        if self.profiler is None:
+            raise RuntimeError("Profiler is not enabled.")
+        self._profiler_started = True
+        self.profiler.start()
+        # high_level_profiler = self.model_runner.profiler
+        # with high_level_profiler.record_event('internal', 'start_profiler'):
+        #     # Clean up the queue
+        #     while True:
+        #         try:
+        #             high_level_profiler.profiling_trace_events.get_nowait()
+        #         except queue.Empty:
+        #             break
+        #     self.profiler.start()
 
     def stop_profile(self):
         if self.profiler is None:
             raise RuntimeError("Profiler is not enabled.")
+        self._profiler_started = False
         self.profiler.stop()
+        logger.warning(f"profiler stopped successfully.........")
 
     def _set_env_vars(self):
         local_rank = self.local_rank
@@ -235,6 +283,9 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None,
     ) -> Optional[List[SamplerOutput]]:
+        # if self._need_start_profile:
+        #     self._start_profile()
+        #     self._need_start_profile = False
         # VLLM_HPU_LOG_STEP_GRAPH_COMPILATION     - will log graph compilations per engine step, only when there was any - highly recommended to use alongside PT_HPU_METRICS_GC_DETAILS! # noqa:E501
         # VLLM_HPU_LOG_STEP_GRAPH_COMPILATION_ALL - will log graph compilations per engine step, always, even if there were none # noqa:E501
         # VLLM_HPU_LOG_STEP_CPU_FALLBACKS         - will log cpu fallbacks per engine step, only when there was any # noqa:E501
@@ -292,12 +343,19 @@ class HPUWorker(LocalOrDistributedWorkerBase):
                 msg = ("VLLM_HPU_STEP_CPU_FALLBACK: "
                        f"{cpu_fallback_local_metric.stats()}, {input_stats}")
                 logger.warning(msg)
-
+            self.call_profiler_step()
             return output
 
         output = LocalOrDistributedWorkerBase.execute_model(
             self, execute_model_req)
+        self.call_profiler_step()
         return output
+    
+    def call_profiler_step(self):
+        return 
+        if self._profiler_started:
+            # logger.warning(f"profiling step")
+            self.profiler.step()
 
     @torch.inference_mode()
     def determine_num_available_blocks(self) -> Tuple[int, int]:

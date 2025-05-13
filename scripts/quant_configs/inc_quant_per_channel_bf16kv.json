@@ -19,6 +19,7 @@
             "kv_b_proj",
             "matmul_qk",
             "matmul_av",
+            "fused_scaled_dot_product_attention",
             "batch2block_matmul",
             "block2batch_matmul"
         ]
