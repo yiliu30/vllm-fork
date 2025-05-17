@@ -591,6 +591,13 @@ class ModelInputForHPUWithSamplingMetadata(ModelInputForHPU):
                 attn_backend, tensor_dict)
         return cls(**tensor_dict)
 
+def bytes2gb(size):
+    return size / (1024**3)
+    # return size
+
+def get_free_mem_in_gb():
+    free_hpu_memory = torch.hpu.mem_get_info()[0]
+    return format_bytes(free_hpu_memory)
 
 class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     """
@@ -1620,7 +1627,11 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         _, max_seq_len = self.bucketing_ctx.get_max_prompt_shape()
         max_batch_size = min(self.max_num_seqs,
                              self.max_num_batched_tokens // max_seq_len)
-
+        local_rank = torch.distributed.get_rank()
+        logger.info(
+            f"[local_rank: {local_rank}] "
+            f"Profiling run with max_batch_size: {max_batch_size}, "
+                    f"max_seq_len: {max_seq_len}")
         self.warmup_scenario(max_batch_size, max_seq_len, True, kv_caches,
                              False, True)
         return
@@ -1769,7 +1780,41 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         if not self.lora_manager:
             raise RuntimeError("LoRA is not enabled.")
         return self.lora_manager.list_adapters()
+    
+    
+    @functools.lru_cache()
+    def get_dump_file_name(self):
+        import time
+        timestamp = time.strftime("%Y-%m-%d-%H:%M:%S")
+        csv_file = "warmup_vllm_memory_stats_pp.csv"
+        return csv_file
+    
+    def dump_mem_info(self, dump_info: List[Union[str, int]]) -> None:
+        # dump the dump_info to local
+        # [phase, i+1, batch_size, seq_len, free_mem]
+        fieldnames = [
+            "Timestamp", "local_rank", "Phase", "Index", "BatchSize", "SeqLen or blocks", "FreeMem"]
+        csv_file = self.get_dump_file_name()
+        import os
+        import csv
+        write_header = not os.path.exists(csv_file)
+        memory_stats = {}
+        for i, field in enumerate(fieldnames):
+            memory_stats[field] = dump_info[i]
+        with open(csv_file, mode='a', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            if write_header:
+                writer.writeheader()
+            import time
+            writer.writerow({key: memory_stats[key] for key in memory_stats.keys()})
+            logger.warning(f"<<<<<<<<<<<<<<<<< Update mem >>>>>>>>>>>>>>>>>")
+            msg = f"Memory stats at warmup: "
+            for key in fieldnames:
+                msg += f"{key}: {str(memory_stats[key])}, "
+            logger.warning(msg)
+            
 
+        
     def log_warmup(self, phase, i, max_i, batch_size, seq_len):
         free_mem = format_bytes(
             HabanaMemoryProfiler.current_free_device_memory())
@@ -1781,6 +1826,10 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                f"{dim}:{seq_len} "
                f"free_mem:{free_mem}")
         logger.info(msg)
+        local_rank = torch.distributed.get_rank()
+        timestamp = time.strftime("%Y-%m-%d-%H:%M:%S")
+        dump_info = [timestamp, local_rank, phase, i+1, batch_size, seq_len, free_mem]
+        self.dump_mem_info(dump_info)
 
     def warmup_all_buckets(self, buckets, is_prompt, kv_caches):
         for i, (batch_size, seq_len) in enumerate(reversed(buckets)):
@@ -1864,9 +1913,30 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             self.warmup_scenario(int(bs), int(seq_len), is_prompt, kv_caches,
                                  True)
             raise AssertionError("Finished profiling")
+        kv_size_0 = kv_caches[0][0].size(0)
         max_blocks = kv_caches[0][0].size(0) // self.parallel_config.pipeline_parallel_size
         self.bucketing_ctx.generate_prompt_buckets()
         self.bucketing_ctx.generate_decode_buckets(max_blocks)
+        
+        
+        _pp_group = get_pp_group()
+        
+        free_mem = get_free_mem_in_gb()
+        local_rank = torch.distributed.get_rank()
+        logger.warning(f"[rank {local_rank}] "
+                       f"warmup_model: "
+                       f"max_blocks={max_blocks}, " 
+                       f"kv_caches[0][0].size(0)={kv_caches[0][0].size(0)} "
+                       f"free mem before warmup: {free_mem} GB "
+                       )
+        logger.warning(f"[rank {local_rank}] "
+                       f"_pp_group: {_pp_group}, pp_group_is_first_rank: {_pp_group.is_first_rank}, pp_group_is_last_rank: {_pp_group.is_last_rank}, pp_group_world_size: {_pp_group.world_size}, "
+                       )
+                    #    f"cache_block_size={cache_block_size}, "
+                    #    f"gpu_memory_utilization="
+                    #    f"{self.cache_config.gpu_memory_utilization}, "
+                    #    f"graph_reserved_mem={graph_reserved_mem}")
+        
         
         if not htorch.utils.internal.is_lazy() and not self.enforce_eager:
             multiplier = 3 if os.getenv('VLLM_REGIONAL_COMPILATION',
@@ -1976,9 +2046,16 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         end_mem = HabanaMemoryProfiler.current_device_memory_usage()
         elapsed_time = end_time - start_time
         msg = (
+            f"[rank {torch.distributed.get_rank()}] "
             f"Warmup finished in {elapsed_time:.0f} secs, "
             f"allocated {format_bytes(end_mem - start_mem)} of device memory")
         logger.info(msg)
+        left_mem = get_free_mem_in_gb()
+        local_rank = torch.distributed.get_rank()
+        logger.warning(f"[rank {local_rank}] "
+                       f"warmup_model: "
+                       f"free mem after warmup: {left_mem} GB "
+                       )
         self.profiler.end()
 
     def finish_measurements(self):

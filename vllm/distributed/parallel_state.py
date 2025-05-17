@@ -1068,16 +1068,27 @@ def initialize_model_parallel(
     assert _PP is None, (
         "pipeline model parallel group is already initialized")
     group_ranks = []
+
     for i in range(num_pipeline_model_parallel_groups):
         ranks = list(range(i, world_size, num_pipeline_model_parallel_groups))
         group_ranks.append(ranks)
+    local_rank = torch.distributed.get_rank()
+    logger.warning(
+        f"[rank {local_rank}] "
+        f"num_pipeline_model_parallel_groups: {num_pipeline_model_parallel_groups}, "
+        f"group_ranks: {group_ranks}, "
+        f"world_size: {world_size}"
+        f"get_world_group().local_rank: {get_world_group().local_rank}, "
+    )
     # pipeline parallel does not need custom allreduce
     _PP = init_model_parallel_group(group_ranks,
                                     get_world_group().local_rank,
                                     backend,
                                     use_custom_allreduce=False,
                                     group_name="pp")
-
+    # if torch.distributed.get_rank() == 0:
+    #     import pdb; pdb.set_trace()
+    # torch.distributed.barrier()
 
 def ensure_kv_transfer_initialized(vllm_config: "VllmConfig") -> None:
     """

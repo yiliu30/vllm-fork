@@ -38,6 +38,10 @@ logger = init_logger(__name__)
 
 
 
+# def get_mem_result_file_name():
+#     import time
+#     time = 
+
 def update_mem():
     import torch
 
@@ -73,6 +77,14 @@ def update_mem():
             msg += f"{key}: {str(memory_stats[key])}, "
         logger.warning(msg)
 
+
+def bytes2gb(size):
+    return size / (1024**3)
+    # return size
+
+def get_free_mem_in_gb():
+    free_hpu_memory = torch.hpu.mem_get_info()[0]
+    return format_bytes(free_hpu_memory)
 
 class HPUWorker(LocalOrDistributedWorkerBase):
     """A worker class that executes (a partition of) the model on a HPU.
@@ -371,7 +383,9 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         with HabanaMemoryProfiler() as m:
             self.model_runner.profile_run()
             torch.hpu.synchronize()
-        msg = ("Model profiling run "
+        local_rank = torch.distributed.get_rank()
+        msg = (f"[rank {local_rank}] "
+            "Model profiling run "
                f"took {m.get_summary_string()}")
         logger.info(msg)
         # At this point we should've allocated the maximum workspace for all
