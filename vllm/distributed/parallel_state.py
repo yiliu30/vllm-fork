@@ -904,6 +904,9 @@ _TP: Optional[GroupCoordinator] = None
 
 def get_tp_group() -> GroupCoordinator:
     assert _TP is not None, ("tensor model parallel group is not initialized")
+    logger.warning_once(
+        f"_TP group, world size: {_TP.world_size}, ranks: {_TP.ranks}, "
+    )
     return _TP
 
 

@@ -86,6 +86,15 @@ def get_free_mem_in_gb():
     free_hpu_memory = torch.hpu.mem_get_info()[0]
     return format_bytes(free_hpu_memory)
 
+def check_model_size(model):
+    # Check the size of the model
+    model_size = 0
+    for param in model.parameters():
+        model_size += param.numel() * param.element_size()
+    for buffer in model.buffers():
+        model_size += buffer.numel() * buffer.element_size()
+    return model_size
+
 class HPUWorker(LocalOrDistributedWorkerBase):
     """A worker class that executes (a partition of) the model on a HPU.
 
@@ -374,6 +383,12 @@ class HPUWorker(LocalOrDistributedWorkerBase):
 
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
+        model_size = check_model_size(self.model_runner.model.model)
+        local_rank = torch.distributed.get_rank()
+        logger.info(f"[rank {local_rank}] "
+                          f"determine_num_available_blocks: "
+                          f"model_size={format_bytes(model_size)}") 
+        
         if is_fake_hpu():
             cache_block_size = self.get_cache_block_size_bytes()
             fake_hpu_cache_alloc = 4 * 2**30  # take 4 GiB flat on fake hpu

@@ -31,7 +31,7 @@ from vllm_hpu_extension.profiler import (HabanaHighLevelProfiler,
 from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.config import DeviceConfig, VllmConfig
 from vllm.distributed import broadcast_tensor_dict, get_pp_group
-from vllm.distributed.parallel_state import get_world_group
+from vllm.distributed.parallel_state import get_world_group, get_tp_group
 from vllm.forward_context import set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
@@ -61,6 +61,11 @@ from vllm.worker.model_runner_base import (
     _add_sampling_metadata_broadcastable_dict,
     _init_attn_metadata_from_tensor_dict,
     _init_sampling_metadata_from_tensor_dict)
+
+import habana_frameworks.torch as htorch
+
+from vllm.platforms import current_platform
+is_hpu = current_platform.is_hpu()
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
@@ -101,11 +106,14 @@ def subtuple(obj: object,
 
 def align_workers(value, op):
     group = get_world_group().cpu_group
+    # group = get_tp_group().cpu_group
+    
     world_size = torch.distributed.get_world_size()
     if world_size <= 1:
         return value
     value_t = torch.tensor(value, device='cpu')
     torch.distributed.all_reduce(value_t, op=op, group=group)
+    torch.distributed.barrier(group=group)
     return value_t.item()
 
 
@@ -215,6 +223,28 @@ def get_path_to_rope(model: torch.nn.Module):
 
     # Return the result if found, otherwise None
     return path_to_rope
+
+def _add_one_and_minus_one(tensor):
+    one = torch.tensor(1, dtype=tensor.dtype, device=tensor.device)
+    minus_one = torch.tensor(-1, dtype=tensor.dtype, device=tensor.device)
+    tensor = tensor + one
+    if is_hpu:
+        htorch.core.mark_step()
+    tensor = tensor + minus_one
+    if is_hpu:
+        htorch.core.mark_step()
+    return tensor
+
+def add_one_and_minus_one(tensor):
+    # Add 1 to the tensor and then subtract 1
+    from vllm.sequence import IntermediateTensors
+    if isinstance(tensor, IntermediateTensors):
+        for key, val in tensor.items():
+            if isinstance(val, torch.Tensor):
+                tensor[key] = _add_one_and_minus_one(val)
+    else:
+        tensor = _add_one_and_minus_one(tensor)
+    return tensor
 
 
 class HpuModelAdapter:
@@ -1650,6 +1680,9 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                          f"bs{batch_size}_"
                          f"seq{seq_len}_"
                          f"graphs{'T' if use_graphs else 'F'}")
+        local_rank = torch.distributed.get_rank()
+        log_msg = f"[rank: {local_rank}][Warmup][{scenario_name}]"
+        logger.info(log_msg)
         # This represents the maximum number of different requests
         # that will have unique loras, an therefore the max amount of memory
         # consumption create dummy lora request copies from the lora request
@@ -1821,7 +1854,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         dim = "num_blocks"
         if "Prompt" in phase:
             dim = "seq_len"
-        msg = (f"[Warmup][{phase}][{i+1}/{max_i}] "
+        local_rank = torch.distributed.get_rank()
+        msg = (f"[rank: {local_rank}][Warmup][{phase}][{i+1}/{max_i}] "
                f"batch_size:{batch_size} "
                f"{dim}:{seq_len} "
                f"free_mem:{free_mem}")
@@ -1865,11 +1899,35 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             # Graph memory usage is proportional to seq dimension in a batch
             batch_seq = batch_size * seq_len if is_prompt else batch_size
             mem_estimate = batch_seq / total_batch_seq * total_mem
+            local_rank = torch.distributed.get_rank()
+            # logger.info(
+            #     f"[rank {local_rank}] "
+            #     f"warmup_graphs: "
+            #     f"batch_size={batch_size}, "
+            #     f"seq_len={seq_len}, "
+            #     f"mem_estimate={mem_estimate}, "
+            #     f"available_mem={available_mem}"
+            #     f"total_mem={total_mem}, "
+            #     f"total_batch_seq={total_batch_seq}, "
+            # )
             if mem_estimate >= available_mem or batch_seq > self.max_seq_len_to_capture:
                 captured_all = False
+                # logger.info(
+                #     f"[rank {local_rank}] "
+                #     f"Skipping graph warmup for batch_size={batch_size}, "
+                #     f"seq_len={seq_len}, "
+                #     f"as mem_estimate >= available_mem : {mem_estimate} >= {available_mem}"
+                #     f" or batch_seq > max_seq_len_to_capture: {batch_seq} > {self.max_seq_len_to_capture}"
+                # )
                 continue
             graphed_bucket = (batch_size, seq_len, is_prompt)
             if graphed_bucket in self.graphed_buckets:
+                # logger.info(
+                #     f"[rank {local_rank}] "
+                #     f"Skipping graph warmup for batch_size={batch_size}, "
+                #     f"seq_len={seq_len}, "
+                #     f"as it has already been captured"
+                # )
                 continue
             self.graphed_buckets.add(graphed_bucket)
             self.log_warmup(phase, idx, num_candidates, batch_size, seq_len)
@@ -1881,12 +1939,23 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                      temperature=1.0 if batch_size
                                      not in warmed_random_sampler_bs else 0)
             warmed_random_sampler_bs.add(batch_size)
+            stage_name = 'prompt' if is_prompt else 'decode'
+            logger.info(
+                f"[rank {local_rank}][warmup][graph][{stage_name}] idx: {idx}, batch_size: {batch_size}, seq_len: {seq_len}, "
+                f"consumed_device_memory:  {format_bytes(mem_prof.consumed_device_memory)}"
+            )
             used_mem = align_workers(mem_prof.consumed_device_memory,
                                      torch.distributed.ReduceOp.MAX)
+            logger.info(
+                f"[rank {local_rank}][warmup][graph][{stage_name}] idx: {idx}, batch_size: {batch_size}, seq_len: {seq_len}, "
+                f"used_mem after align across the workers: {format_bytes(used_mem)}, "
+            )
             available_mem -= used_mem
+            
             total_mem += used_mem
             total_batch_seq += batch_seq
-
+        # group = get_tp_group()
+        torch.distributed.barrier()
         return total_mem, total_batch_seq, captured_all
 
     def log_graph_warmup_summary(self, buckets, is_prompt, total_mem):
@@ -1984,8 +2053,11 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     "to be called before warming up the model.")
                 free_mem = HabanaMemoryProfiler.current_free_device_memory()
                 graph_free_mem = free_mem - self.mem_margin
+                local_rank = torch.distributed.get_rank()
+                logger.info(f"[rank {local_rank}]  graph_free_mem before align_workers: {format_bytes(graph_free_mem)}, mem_margin: {format_bytes(self.mem_margin)}")
                 graph_free_mem = align_workers(graph_free_mem,
                                                torch.distributed.ReduceOp.MIN)
+                logger.info(f"[rank {local_rank}]  graph_free_mem after align_workers: {format_bytes(graph_free_mem)}, mem_margin: {format_bytes(self.mem_margin)}")
                 prompt_graph_mem_ratio = float(
                     os.environ.get('VLLM_GRAPH_PROMPT_RATIO', '0.3'))
                 prompt_available_memory = (prompt_graph_mem_ratio *
@@ -2016,6 +2088,11 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 # Not all prompt buckets were captured, but all decode buckets
                 # were captured and we have some free graph-allocated space
                 # left. Let's try to use it for capturing more prompt buckets.
+                logger.info(
+                    f"[rank {local_rank}] "
+                    f"Not all prompt buckets were captured, but all decode "
+                    f"buckets were captured and we have some free graph-allocated : {format_bytes(graph_free_mem - mem_post_prompt - mem_post_decode)}"
+                )
                 if (mem_post_decode + mem_post_prompt < graph_free_mem
                         and not prompt_captured_all and decode_captured_all):
                     mem_post_prompt, _, prompt_captured_all = (
@@ -2024,18 +2101,22 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                             True, kv_caches,
                             graph_free_mem - mem_post_prompt - mem_post_decode,
                             mem_post_prompt, prompt_batch_seq))
-
-                # Not all decode buckets were captured, but all prompt buckets
-                # were captured and we have some free graph-allocated space
-                # left. Let's try to use it for capturing more decode buckets.
-                if mem_post_decode + mem_post_prompt < graph_free_mem \
-                    and not decode_captured_all \
-                        and prompt_captured_all:
-                    mem_post_decode, _, _ = self.warmup_graphs(
-                        decode_strategy, self.bucketing_ctx.decode_buckets,
-                        False, kv_caches,
-                        graph_free_mem - mem_post_prompt - mem_post_decode,
-                        mem_post_decode, decode_batch_seq)
+                # logger.info(
+                #     f"[rank {local_rank}] "
+                #     f"Not all decode buckets were captured, but all prompt "
+                #     f"buckets were captured and we have some free graph-allocated : {format_bytes(graph_free_mem - mem_post_prompt - mem_post_decode)}"
+                # )
+                # # Not all decode buckets were captured, but all prompt buckets
+                # # were captured and we have some free graph-allocated space
+                # # left. Let's try to use it for capturing more decode buckets.
+                # if mem_post_decode + mem_post_prompt < graph_free_mem \
+                #     and not decode_captured_all \
+                #         and prompt_captured_all:
+                #     mem_post_decode, _, _ = self.warmup_graphs(
+                #         decode_strategy, self.bucketing_ctx.decode_buckets,
+                #         False, kv_caches,
+                #         graph_free_mem - mem_post_prompt - mem_post_decode,
+                #         mem_post_decode, decode_batch_seq)
 
                 self.log_graph_warmup_summary(
                     self.bucketing_ctx.prompt_buckets, True, mem_post_prompt)
