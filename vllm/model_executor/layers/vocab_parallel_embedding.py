@@ -412,6 +412,9 @@ class VocabParallelEmbedding(torch.nn.Module):
         # Get the embeddings.
         output_parallel = self.linear_method.embedding(self,
                                                        masked_input.long())
+        # import habana_frameworks.torch as htorch
+        # htorch.core.mark_step()
+        # htorch.sychronize()
         # Mask the output embedding.
         if self.tp_size > 1:
             output_parallel.masked_fill_(input_mask.unsqueeze(-1), 0)

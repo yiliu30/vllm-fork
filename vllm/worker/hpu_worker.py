@@ -1,6 +1,16 @@
 ###############################################################################
 # Copyright (C) 2024 Habana Labs, Ltd. an Intel Company
 ###############################################################################
+import towl.instrument as ti
+# ti.MemoryInterceptor.enable()
+# import functools
+
+# @functools.lru_cache()
+# def enable_instrumentation():
+#     """Enable instrumentation for the current process."""
+    
+
+# enable_instrumentation()
 
 import contextlib
 import gc
@@ -35,6 +45,8 @@ from vllm.worker.worker_base import (LocalOrDistributedWorkerBase, WorkerBase,
                                      WorkerInput)
 
 logger = init_logger(__name__)
+
+
 
 
 

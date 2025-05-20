@@ -67,6 +67,9 @@ import habana_frameworks.torch as htorch
 from vllm.platforms import current_platform
 is_hpu = current_platform.is_hpu()
 
+import towl.instrument as ti
+# ti.MemoryInterceptor.enable()
+
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
 
@@ -250,6 +253,9 @@ def add_one_and_minus_one(tensor):
 class HpuModelAdapter:
 
     def __init__(self, model, vllm_config, layer_names):
+        # ti.MemoryInterceptor.install_wrappers_on(model,  recursive=True)
+        import towl.instrument as ti
+        ti.MemoryInterceptor.enable(0.5)
         self.model = model
         self.prefill_use_fusedsdpa = "fsdpa" in enabled_flags()
         self.recompute_cos_sin = os.getenv('VLLM_COS_SIN_RECOMPUTE',
@@ -628,6 +634,46 @@ def bytes2gb(size):
 def get_free_mem_in_gb():
     free_hpu_memory = torch.hpu.mem_get_info()[0]
     return format_bytes(free_hpu_memory)
+
+import sys
+import pdb
+
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+
+def get_free_mem():
+    free_hpu_memory, _ = torch.hpu.mem_get_info()
+    return free_hpu_memory
+
+def _tocpu(out):
+    local_rank = torch.distributed.get_rank()
+    if isinstance(out, torch.Tensor):
+        logger.info(f"[rank {local_rank}] TENSOR: {out.size()} {out.device}")
+        return out.cpu()
+    elif isinstance(out, list):
+        logger.info(f"[rank {local_rank}] LIST: {[x.size() for x in out]}")
+        return [x.cpu() for x in out]
+    elif isinstance(out, (IntermediateTensors, dict)):
+        for k, v in out.items():
+            logger.info(f"[rank {local_rank}] DICT:  {str(v.device)}")
+        return {k: v.cpu() for k, v in out.items()}
+    else:
+        raise TypeError(f"Unsupported type: {type(out)}")
+
+def tocpu(out):
+    return _tocpu(out)    
+
+
 
 class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     """
@@ -1736,8 +1782,13 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         if is_pt_profiler_run and self.is_driver_worker:
             profiler = setup_profiler()
             profiler.start()
+        local_rank = torch.distributed.get_rank()
         for time_index in range(times):
+            logger.info(f"[rank: {local_rank}] {time_index} / {times}")
             inputs = self.prepare_model_input(seqs)
+            # if torch.distributed.get_rank() == 0 and is_prompt and use_graphs:
+            #     ForkedPdb().set_trace()
+            # torch.distributed.barrier()
             if time_index == 0:
                 if self.is_driver_worker:
                     broadcast_tensor_dict({"input_tokens": inputs.input_tokens}, src=0)
@@ -1754,10 +1805,27 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                             context_size=seq_len if is_prompt else 1,
                             dtype=self.model_config.dtype,
                             device=self.device)
-                self.execute_model(inputs,
+                    # ForkedPdb().set_trace()
+                    
+                    logger.info(
+                        f"[rank: {local_rank}] "
+                        f"intermediate_tensors: batch_size: {batch_size}, "
+                        f"context_size: {seq_len if is_prompt else 1}, "
+                    )
+                
+                # if torch.distributed.get_rank() == 0:
+                #     ForkedPdb().set_trace()
+
+
+                out = self.execute_model(inputs,
                                    kv_caches,
                                    intermediate_tensors=intermediate_tensors,
                                    warmup_mode=True)
+                # logger.info(f"")
+                torch.distributed.barrier()
+                # # if get_pp_group().is_first_rank and is_prompt and use_graphs:
+                # out = tocpu(out)
+                # del out
             else:  # decode with multi-step
                 inputs = dataclasses.replace(inputs,
                                              is_first_multi_step=True,
@@ -1879,6 +1947,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                       available_mem,
                       starting_mem=0,
                       total_batch_seq=0.001):
+        # set env to start 
+        # self.model.model.model._start_graph_new = 1
         total_mem = starting_mem
         idx = 0
         phase = f'Graph/{"Prompt" if is_prompt else "Decode"}'
@@ -1895,11 +1965,27 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         buckets = list(sorted(buckets, key=ordering))
         captured_all = True
         warmed_random_sampler_bs: Set[int] = set()
+        warmup_cnt = 0
+        pre_free_mem = get_free_mem()
         for idx, (batch_size, seq_len) in enumerate(buckets):
+            cur_free_mem = get_free_mem()
+            local_rank = torch.distributed.get_rank()
+            last_time_used_mem = pre_free_mem - cur_free_mem
+            logger.info(
+                f"[rank {local_rank}] "
+                f"warmup_graphs: "
+                f"batch_size={batch_size}, "
+                f"seq_len={seq_len}, "
+                f"last_time_used_mem={last_time_used_mem}, "
+            )
+            pre_free_mem = cur_free_mem
+            time.sleep(3)
             # Graph memory usage is proportional to seq dimension in a batch
             batch_seq = batch_size * seq_len if is_prompt else batch_size
             mem_estimate = batch_seq / total_batch_seq * total_mem
             local_rank = torch.distributed.get_rank()
+            # if idx >=2:
+            #     continue
             # logger.info(
             #     f"[rank {local_rank}] "
             #     f"warmup_graphs: "
@@ -1938,12 +2024,15 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                      kv_caches,
                                      temperature=1.0 if batch_size
                                      not in warmed_random_sampler_bs else 0)
+            warmup_cnt += 1
             warmed_random_sampler_bs.add(batch_size)
             stage_name = 'prompt' if is_prompt else 'decode'
             logger.info(
                 f"[rank {local_rank}][warmup][graph][{stage_name}] idx: {idx}, batch_size: {batch_size}, seq_len: {seq_len}, "
                 f"consumed_device_memory:  {format_bytes(mem_prof.consumed_device_memory)}"
             )
+            # stage 0 10M
+            # stage 1 100k
             used_mem = align_workers(mem_prof.consumed_device_memory,
                                      torch.distributed.ReduceOp.MAX)
             logger.info(
@@ -1954,8 +2043,12 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             
             total_mem += used_mem
             total_batch_seq += batch_seq
+            if warmup_cnt >= 5:
+                torch.distributed.barrier()
+                return total_mem, total_batch_seq, captured_all
+                
         # group = get_tp_group()
-        torch.distributed.barrier()
+        
         return total_mem, total_batch_seq, captured_all
 
     def log_graph_warmup_summary(self, buckets, is_prompt, total_mem):
@@ -2042,10 +2135,10 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                            'Please update Gaudi Software Suite.')
         with compile_only_mode_context(
         ) if can_use_compile_only_mode else contextlib.nullcontext():
-            self.warmup_all_buckets(self.bucketing_ctx.prompt_buckets, True,
-                                    kv_caches)
-            self.warmup_all_buckets(self.bucketing_ctx.decode_buckets, False,
-                                    kv_caches)
+            # self.warmup_all_buckets(self.bucketing_ctx.prompt_buckets, True,
+            #                         kv_caches)
+            # self.warmup_all_buckets(self.bucketing_ctx.decode_buckets, False,
+            #                         kv_caches)
 
             if not self.enforce_eager and htorch.utils.internal.is_lazy():
                 assert self.mem_margin is not None, \
@@ -2080,10 +2173,12 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     self.warmup_graphs(
                     prompt_strategy, self.bucketing_ctx.prompt_buckets,
                     True, kv_caches, prompt_available_memory)
-                mem_post_decode, decode_batch_seq, decode_captured_all = \
-                    self.warmup_graphs(
-                    decode_strategy, self.bucketing_ctx.decode_buckets,
-                    False, kv_caches, decode_available_memory)
+                torch.distributed.barrier()
+                exit(0)
+                # mem_post_decode, decode_batch_seq, decode_captured_all = \
+                #     self.warmup_graphs(
+                #     decode_strategy, self.bucketing_ctx.decode_buckets,
+                #     False, kv_caches, decode_available_memory)
 
                 # Not all prompt buckets were captured, but all decode buckets
                 # were captured and we have some free graph-allocated space

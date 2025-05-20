@@ -5,7 +5,21 @@ import torch
 import torch.nn as nn
 
 from vllm.model_executor.custom_op import CustomOp
+import habana_frameworks.torch as htorch
 
+# one = torch.ones(1, dtype=torch.float32, device="hpu")
+
+
+def add_and_minus(tensor, one):
+    one = one.to(tensor.dtype)
+    tensor = tensor + one
+    htorch.core.mark_step()
+    tensor = tensor - one
+    htorch.core.mark_step()
+    return tensor
+
+
+from vllm.distributed import broadcast_tensor_dict, get_pp_group
 
 @CustomOp.register("rms_norm")
 class RMSNorm(CustomOp):
@@ -98,16 +112,23 @@ class RMSNorm(CustomOp):
             self.variance_epsilon,
         )
         return out
-
+    
+    @torch.no_grad()
     def forward_hpu(
         self,
         x: torch.Tensor,
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        # if get_pp_group().is_first_rank:
+        #     if residual is not None:
+        #         return x, residual
+        #     else:
+        #         return x
         from vllm_hpu_extension.kernels import rms_norm
         HPUFusedRMSNorm = rms_norm()
         if HPUFusedRMSNorm is None:
             return self.forward_native(x, residual)
+        # assert residual is None, f"Residual not supported in HPUFusedRMSNorm"
         if residual is not None:
             orig_shape = x.shape
             residual = residual + x.view(residual.shape)
@@ -115,8 +136,12 @@ class RMSNorm(CustomOp):
             x = HPUFusedRMSNorm.apply(residual, self.weight,
                                       self.variance_epsilon)
             return x.view(orig_shape), residual
+            # x = x.reshape(orig_shape)
+            # x = add_and_minus(x, one)
+            # return x, residual
 
         x = HPUFusedRMSNorm.apply(x, self.weight, self.variance_epsilon)
+        # x = add_and_minus(x, one)
         return x
 
     def forward_xpu(

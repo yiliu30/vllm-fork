@@ -604,7 +604,7 @@ class DeepseekV3Model(nn.Module):
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
-        # config.num_hidden_layers = 8
+        config.num_hidden_layers = 4
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
@@ -670,6 +670,10 @@ class DeepseekV3Model(nn.Module):
                 htorch.core.mark_step()
 
         if not get_pp_group().is_last_rank:
+            # if getattr(self, "_start_graph_new", False):
+            #     hidden_states = hidden_states.cpu()
+            #     if residual is not None:
+            #         residual = residual.cpu()
             return IntermediateTensors({
                 "hidden_states": hidden_states,
                 "residual": residual
