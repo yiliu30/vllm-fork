@@ -994,6 +994,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         return self.model
 
     def _use_graphs(self, batch_size, seq_len, is_prompt, is_profile_run=False):
+        if is_prompt and not get_pp_group().is_last_rank:
+            return False
         if is_prompt and batch_size * seq_len > self.max_seq_len_to_capture:
             return False
         if self.enforce_eager:
