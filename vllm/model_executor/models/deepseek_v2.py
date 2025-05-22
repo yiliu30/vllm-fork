@@ -27,7 +27,10 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import torch
 from torch import nn
 from transformers import PretrainedConfig
+from vllm.logger import init_logger
 
+
+logger = init_logger(__name__)
 from vllm.attention import Attention, AttentionMetadata
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, ModelConfig, VllmConfig
@@ -586,6 +589,17 @@ class DeepseekV2DecoderLayer(nn.Module):
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
         # Self Attention
+
+        # if hidden_states.shape[-1] == 1:
+        #     hidden_states_shape = hidden_states.shape
+        #     repeat_shape = [1]*(len(hidden_states_shape) - 1) + [self.hidden_size]
+        #     hidden_states = hidden_states.repeat(repeat_shape)
+        # if residual is not None and residual.shape[-1] == 1:
+        #     residual_shape = residual.shape
+        #     repeat_shape = [1]*(len(hidden_states_shape) - 1 ) + [self.hidden_size]
+        #     residual = residual.repeat(repeat_shape)
+        if  get_pp_group().is_first_rank:
+            return hidden_states, residual
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -618,7 +632,8 @@ class DeepseekV2Model(nn.Module):
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
-
+        config.num_hidden_layers = 4
+        self.config = config
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
@@ -648,7 +663,11 @@ class DeepseekV2Model(nn.Module):
             self.norm = PPMissingLayer()
         self.make_empty_intermediate_tensors = (
             make_empty_intermediate_tensors_factory(
-                ["hidden_states", "residual"], config.hidden_size))
+                ["hidden_states", "residual"], 
+                config.hidden_size
+                # 1
+                
+                ))
 
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
@@ -666,7 +685,12 @@ class DeepseekV2Model(nn.Module):
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
             else:
-                hidden_states = self.get_input_embeddings(input_ids)
+                # hidden_states = self.get_input_embeddings(input_ids)
+                bs, seq_len = input_ids.shape
+                hidden_states = torch.randn(bs, seq_len, 
+                self.config.hidden_size, 
+                # 1,
+                dtype=torch.bfloat16).to(input_ids.device)
             residual = None
         else:
             assert intermediate_tensors is not None
@@ -674,6 +698,8 @@ class DeepseekV2Model(nn.Module):
             residual = intermediate_tensors["residual"]
 
         for i in range(self.start_layer, self.end_layer):
+            if get_pp_group().is_first_rank:
+                continue
             layer = self.layers[i]
             kvcaches = None if kv_caches is None else kv_caches[i - self.start_layer]
             hidden_states, residual = layer(positions, hidden_states,

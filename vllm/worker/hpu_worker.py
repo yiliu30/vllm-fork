@@ -262,6 +262,7 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         else:
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
+        self._set_env_vars()
         # Initialize the distributed environment.
         if self.model_config.quantization == 'inc':
             self._set_env_vars()

@@ -595,12 +595,16 @@ def is_pp_missing_parameter(name: str, model: torch.nn.Module) -> bool:
 
 def make_empty_intermediate_tensors_factory(keys: List[str], hidden_size: int):
 
+
     def make_empty_intermediate_tensors(
         batch_size: int,
         context_size: int,
         dtype: torch.dtype,
         device: torch.device,
     ) -> IntermediateTensors:
+        logger.warning_once(f"create empty intermediate tensors for bsz {batch_size} "
+                            f"and context size {context_size} with dtype {dtype} "
+                            f"and hidden_size size {hidden_size}  ")
         return IntermediateTensors({
             key:
             torch.zeros((batch_size, context_size, hidden_size),

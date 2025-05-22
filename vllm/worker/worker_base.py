@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+
 import dataclasses
 import os
 import time
@@ -400,7 +401,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         """Executes at least one model step on the given sequences, unless no
         sequences are provided."""
         start_time = time.perf_counter()
-
+        logger.warning(f"start execute_model:")
         inputs = self.prepare_input(execute_model_req)
 
         # Need to keep worker running when executing dummy batch under DP
@@ -450,7 +451,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             num_steps=num_steps,
             **kwargs,
         )
-
+        logger.error(f"start to send output tensor: {output.tensors}")
         model_execute_time = time.perf_counter() - start_time
         if not get_pp_group().is_last_rank:
             # output is IntermediateTensors
@@ -459,6 +460,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
                     and self.observability_config.collect_model_execute_time):
                 output.tensors["model_execute_time"] = torch.tensor(
                     model_execute_time + orig_model_execute_time)
+            logger.error(f"start to send output tensor: {output.tensors}")
             get_pp_group().send_tensor_dict(output.tensors,
                                             all_gather_group=get_tp_group())
             return [None]

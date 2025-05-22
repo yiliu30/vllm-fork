@@ -3,7 +3,7 @@
 ###############################################################################
 # Copyright (C) 2024 Habana Labs, Ltd. an Intel Company
 ###############################################################################
-
+import towl.instrument as ti
 import collections
 import contextlib
 import dataclasses
@@ -246,10 +246,16 @@ def get_path_to_rope(model: torch.nn.Module):
     return path_to_rope
 
 
+from vllm.sequence import _init_buffer
+
 class HpuModelAdapter:
 
     def __init__(self, model, vllm_config, layer_names):
+        ti.MemoryInterceptor.enable(0.1)
         self.model = model
+        tensor_buffer_dict = _init_buffer()
+        for key, val in tensor_buffer_dict.items():
+            self.model.register_buffer(key, val)
         self.prefill_use_fusedsdpa = "fsdpa" in enabled_flags()
         self.recompute_cos_sin = os.getenv('VLLM_COS_SIN_RECOMPUTE',
                                            'false').lower() in ['1', 'true']
@@ -484,6 +490,11 @@ class HpuModelAdapter:
                                  virtual_engine,
                                  dp_awared_padding=self.dp_awared_padding):
             hidden_states = self.model(*args, **kwargs)
+            # hidden_states = hidden_states.cpu()
+            # if is 
+            # for key, val in kwargs.items():
+            #     if isinstance(val, torch.Tensor):
+            #         kwargs[key] = val.cpu()
             if not get_pp_group().is_last_rank:
                 return hidden_states
             hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
@@ -677,6 +688,16 @@ class ModelInputForHPUWithSamplingMetadata(ModelInputForHPU):
                 attn_backend, tensor_dict)
         return cls(**tensor_dict)
 
+
+def mem_marker(times = 1):
+    # allocate 10MB as mark
+    time.sleep(1)
+    mark_mem = torch.randn(
+        1024//4, 1024, int(10 * times),
+        dtype=torch.float,
+        device="hpu"
+    )
+    time.sleep(2)
 
 class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     """
@@ -994,8 +1015,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         return self.model
 
     def _use_graphs(self, batch_size, seq_len, is_prompt, is_profile_run=False):
-        if is_prompt and not get_pp_group().is_last_rank:
-            return False
+        # if is_prompt and not get_pp_group().is_last_rank:
+        #     return False
         if is_prompt and batch_size * seq_len > self.max_seq_len_to_capture:
             return False
         if self.enforce_eager:
@@ -1963,6 +1984,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             profiler = setup_profiler()
             profiler.start()
         for time_index in range(times):
+            mem_marker(int((time_index + 1)))
             inputs = self.prepare_model_input_align_worker(
                 seqs, align_worker=align_worker)
             additional_inputs = {}
@@ -2078,6 +2100,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         logger.info(msg)
 
     def warmup_all_buckets(self, buckets, is_prompt, kv_caches):
+        return 
         for i, (batch_size, seq_len) in enumerate(reversed(buckets)):
             self.log_warmup('Prompt' if is_prompt else 'Decode', i,
                             len(buckets), batch_size, seq_len)
@@ -2107,7 +2130,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         buckets = list(sorted(buckets, key=ordering))
         captured_all = True
         warmed_random_sampler_bs: Set[int] = set()
-        for idx, (batch_size, seq_len) in enumerate(buckets):
+        
+        for idx, (batch_size, seq_len) in enumerate(buckets[:7][::-1]):
             # Graph memory usage is proportional to seq dimension in a batch
             batch_seq = batch_size * seq_len if is_prompt else batch_size
             mem_estimate = batch_seq / total_batch_seq * total_mem
@@ -2119,20 +2143,38 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 continue
             self.graphed_buckets.add(graphed_bucket)
             self.log_warmup(phase, idx, num_candidates, batch_size, seq_len)
+            mem_marker(2)
             with HabanaMemoryProfiler() as mem_prof:
+            # with NewHabanaMemoryProfiler(track_peak_memory=True) as mem_prof:
                 self.warmup_scenario(batch_size,
                                      seq_len,
                                      is_prompt,
                                      kv_caches,
                                      temperature=1.0 if batch_size
                                      not in warmed_random_sampler_bs else 0)
+            
             warmed_random_sampler_bs.add(batch_size)
+            local_rank = torch.distributed.get_rank()
+
+            logger.info(
+                f"[rank {local_rank}] "
+                f"[phase:{phase}]"
+                f"[idx: {idx}/{len(buckets)}], batch_size {batch_size}, "
+                f"seq_len {seq_len}, "
+                f"mem consumed_device_memory:  {format_bytes(mem_prof.consumed_device_memory)} "
+                )
+            torch.distributed.barrier()
+            mem_marker()
+            if local_rank == 0:
+                logger.info(f"[idx: {idx}/{len(buckets)}]------------------------------------")
             used_mem = align_workers(mem_prof.consumed_device_memory,
                                      torch.distributed.ReduceOp.MAX)
             available_mem -= used_mem
             total_mem += used_mem
             total_batch_seq += batch_seq
-
+            if idx >= 5:
+                torch.distributed.barrier()
+                exit(0)
         return total_mem, total_batch_seq, captured_all
 
     def log_graph_warmup_summary(self, buckets, is_prompt, total_mem):
@@ -2233,10 +2275,20 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         f"{format_bytes(decode_available_memory)} for decode "
                         f"(VLLM_GRAPH_PROMPT_RATIO={prompt_graph_mem_ratio})")
                     logger.info(msg)
-                    mem_post_prompt, prompt_batch_seq, prompt_captured_all = \
-                        self.warmup_graphs(
-                        prompt_strategy, self.bucketing_ctx.prompt_buckets,
-                        True, kv_caches, prompt_available_memory)
+                    
+
+                    with HabanaMemoryProfiler() as mem_prof:
+                        mem_post_prompt, prompt_batch_seq, prompt_captured_all = \
+                            self.warmup_graphs(
+                            prompt_strategy, self.bucketing_ctx.prompt_buckets,
+                            True, kv_caches, prompt_available_memory)
+
+                    local_rank = torch.distributed.get_rank()
+                    logger.info(
+                        f"[rank {local_rank}] "
+                        f"warmup_graphs[prompt][total] mem consumed_device_memory:  {format_bytes(mem_prof.consumed_device_memory)} "
+                        )
+
 
                     decode_strategy = os.environ.get(
                         'VLLM_GRAPH_DECODE_STRATEGY', 'max_bs')

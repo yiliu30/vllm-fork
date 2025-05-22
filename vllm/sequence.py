@@ -1111,6 +1111,19 @@ class PoolingSequenceGroupOutput(
         return self.data == other.data
 
 
+# from habana_frameworks.torch import core as htcore
+from functools import lru_cache
+
+@lru_cache()
+def _init_buffer():
+    tensor_buffer1 = torch.zeros([8, 16384, 8192], dtype=torch.bfloat16).to("hpu")
+    tensor_buffer2 = torch.zeros([8, 16384, 8192], dtype=torch.bfloat16).to("hpu")
+    tensor_buffer_dict = {
+        "hidden_states": tensor_buffer1,
+        "residual": tensor_buffer2
+    }
+    return tensor_buffer_dict
+
 # cannot use msgspec.Struct here because Dynamo does not support it
 @dataclass
 class IntermediateTensors:
@@ -1118,16 +1131,48 @@ class IntermediateTensors:
     states and residuals to be sent to the next stage. This data structure
     contains the hidden states and residuals for a request.
     """
-
+    
     tensors: Dict[str, torch.Tensor]
 
+    
+    @staticmethod
+    def _update_tensor(tensor: torch.Tensor, buffer: torch.Tensor):
+        if tensor is None:
+            return tensor
+        assert len(tensor.shape) == len(buffer.shape), f"Tensor shape {tensor.shape} and buffer shape {buffer.shape} do not match"
+        for i in range(len(tensor.shape)):
+            assert tensor.shape[i] <= buffer.shape[i], f"Tensor shape {tensor.shape} is larger than buffer shape {buffer.shape} at dimension {i}"
+        assert tensor.dtype == buffer.dtype, f"Tensor dtype {tensor.dtype} and buffer dtype {buffer.dtype} do not match"
+        bs, seq_len, hidden_size = tensor.shape
+        buffer[:bs, :seq_len, :hidden_size] = tensor
+        # del tensor
+        new_tensor = buffer[:bs, :seq_len, :hidden_size]
+        return new_tensor
+    
+    @classmethod
+    def update_tensors(cls, tensors):
+        for key in tensors.keys():
+            assert key in cls.tensor_buffer_dict, f"Key {key} not in tensor buffer dict"
+            new_tensor = IntermediateTensors._update_tensor(tensors[key], cls.tensor_buffer_dict[key])
+            tensors[key] = new_tensor
+        return tensors
+    
     def __init__(self, tensors):
         # manually define this function, so that
         # Dynamo knows `IntermediateTensors()` comes from this file.
         # Otherwise, dataclass will generate this function by evaluating
         # a string, and we will lose the information about the source file.
-        self.tensors = tensors
+        self.__class__.tensor_buffer_dict = _init_buffer()
+        new_tensors = self.update_tensors(tensors)
+        self.tensors = new_tensors
+        
 
+    def cpu(self):
+        for k, v in self.tensors.items():
+            if isinstance(v, torch.Tensor):
+                self.tensors[k] = v.cpu()
+        return self
+        
     def __getitem__(self, key: Union[str, slice]):
         if isinstance(key, str):
             return self.tensors[key]
