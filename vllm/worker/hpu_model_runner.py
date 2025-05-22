@@ -81,6 +81,9 @@ _PAD_BLOCK_ID = 0
 
 LORA_WARMUP_RANK = 8
 
+VLLM_DELAYED_SAMPLING = os.environ.get('VLLM_DELAYED_SAMPLING',
+                                       'false').lower() == 'true'
+
 VLLM_MERGED_PREFILL = os.environ.get('VLLM_MERGED_PREFILL',
                                      'false').lower() == 'true'
 DUMMY_TOKEN_ID = -1
@@ -195,7 +198,9 @@ def get_target_layer_suffix_list(model_type) -> list[str]:
     # model's decoder layer name differs from the default, it will need to
     # be specified here.
     decoder_layer_table = {
+        "chatglm": "GLMBlock",
         "gpt_bigcode": "BigCodeBlock",
+        "qwen": "QWenBlock",
     }
 
     return [
