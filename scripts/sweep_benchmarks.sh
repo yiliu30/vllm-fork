@@ -65,12 +65,12 @@ KV=auto
 WARMUP=true
 PROFILE=false
 server_config_list=(
-  "16384,32,2,4,hccl,${KV},${WARMUP},${PROFILE},[32,29]"
+  "8192,32,4,1,hccl,${KV},${WARMUP},${PROFILE},[20,20,20,20]"
 )
 # Client config list: input,output,num_prompts,conc
 client_config_list=(
-  "2048,2048,96,32"
-  "4096,4096,96,32"
+  "4096,2048,48,16"
+  "4096,2048,96,32"
 )
 
 # Helper function for profiling

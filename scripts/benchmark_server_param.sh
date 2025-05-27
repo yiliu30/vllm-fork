@@ -46,9 +46,6 @@ MODEL_PATH=${13:-${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-
 RESULTS_DIR=${14:-logs/test-results}
 
 if [ "$DO_PROFILE" == "true" ]; then
-  hl-prof-config --use-template profile_api --hw-trace off
-  export HABANA_PROFILE=1
-  export VLLM_PROFILER_ENABLED=full
   export VLLM_TORCH_PROFILER_DIR=${RESULTS_DIR}/profiler/
 fi
 
@@ -75,7 +72,7 @@ export VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.75}
 export VLLM_GRAPH_RESERVED_MEM=${VLLM_GRAPH_RESERVED_MEM:-0.4}
 export VLLM_GRAPH_PROMPT_RATIO=0
 
-export VLLM_EP_SIZE=$TP_SIZE
+#export VLLM_EP_SIZE=$TP_SIZE
 if [ "$PP_SIZE" -gt 1 ]; then
   if [ -n "$PP_LAYER_PARTITION" ]; then
     echo "PP_SIZE = ${PP_SIZE}, PP_LAYER_PARTITION = ${PP_LAYER_PARTITION}"
@@ -146,6 +143,4 @@ python3 -m vllm.entrypoints.openai.api_server --host $HOST --port $PORT \
   --use-padding-aware-scheduling \
   --use-v2-block-manager \
   --distributed_executor_backend ray \
-  --gpu_memory_utilization $VLLM_GPU_MEMORY_UTILIZATION \
-  --enable-reasoning \
-  --reasoning-parser deepseek_r1
+  --gpu_memory_utilization $VLLM_GPU_MEMORY_UTILIZATION
