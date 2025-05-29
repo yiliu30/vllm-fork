@@ -74,6 +74,16 @@ Resulting full path: "/path/to/vllm-fork/scripts/nc_workspace_measure_kvache/inc
 
 - Get calibration files
 
+Please get the pre-calibrated files from Hugging Face:
+
+#### For G2
+- [deepseek-ai/DeepSeek-R1-0528](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528): https://huggingface.co/Yi30/ds-r1-0528-default-pile-g2-0529
+- [deepseek-ai/DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1):  https://huggingface.co/Yi30/inc-woq-2282samples-514-g2
+
+#### For G3
+- [deepseek-ai/DeepSeek-R1-0528](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528): https://huggingface.co/Yi30/ds-r1-0528-default-pile-g3-0529
+
+
 ```bash
 cd vllm-fork
 huggingface-cli download Yi30/inc-woq-2282samples-514-g2  --local-dir ./scripts/nc_workspace_measure_kvache

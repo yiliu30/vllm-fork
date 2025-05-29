@@ -4,6 +4,7 @@
 
 USE_FP8_KV=false
 USE_NATIVE_SCALING=true
+export PT_HPU_LAZY_MODE=1
 
 # Parse arguments
 for arg in "$@"
