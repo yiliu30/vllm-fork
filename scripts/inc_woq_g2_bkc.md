@@ -72,7 +72,7 @@ Resulting full path: "/path/to/vllm-fork/scripts/nc_workspace_measure_kvache/inc
 
 ### 3.1 BF16 KV + Per-Channel Quantization
 
-- Get calibration files from Hugging Face:
+git Get calibration files from the Hugging Face:
 
 #### For G2
 - [deepseek-ai/DeepSeek-R1-0528](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528): https://huggingface.co/Yi30/ds-r1-0528-default-pile-g2-0529
@@ -81,6 +81,8 @@ Resulting full path: "/path/to/vllm-fork/scripts/nc_workspace_measure_kvache/inc
 #### For G3
 - [deepseek-ai/DeepSeek-R1-0528](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528): https://huggingface.co/Yi30/ds-r1-0528-default-pile-g3-0529
 
+
+Take [deepseek-ai/DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1) as example:
 
 ```bash
 cd vllm-fork
