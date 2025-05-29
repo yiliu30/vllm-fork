@@ -388,8 +388,12 @@ class HPUWorker(LocalOrDistributedWorkerBase):
 
         self.cache_config.num_gpu_blocks = num_gpu_blocks
         self.cache_config.num_cpu_blocks = num_cpu_blocks
-        self.model_runner.bucketing_ctx.num_hpu_blocks = num_gpu_blocks // self.parallel_config.pipeline_parallel_size
-
+        num_hpu_blocks = num_gpu_blocks // self.parallel_config.pipeline_parallel_size
+        # FIXME: (Yi) Use VLLM_DECODE_BLOCK_BUCKET_STEP
+        num_hpu_blocks = (num_hpu_blocks // 128) * 128
+        self.model_runner.bucketing_ctx.num_hpu_blocks = num_hpu_blocks
+        local_rank = torch.distributed.get_rank()
+        logger.info(f"[rank: {local_rank}] the number of HPU blocks: {num_hpu_blocks}")
         with HabanaMemoryProfiler() as m:
             self._init_cache_engine()
             torch.hpu.synchronize()
