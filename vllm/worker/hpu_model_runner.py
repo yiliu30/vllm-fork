@@ -834,7 +834,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
-                    logger.debug(f"INC Model: {self.model}")
+                    logger.info(f"INC Model: {self.model}")
+                    breakpoint()
                     if not disable_mark_scales_as_const:
                         htcore.hpu_initialize(self.model,
                                               mark_only_scales_as_const=True)

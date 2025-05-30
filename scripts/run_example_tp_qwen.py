@@ -14,6 +14,7 @@ file_path = os.path.abspath(__file__)
 dataset_path = os.path.join(os.path.dirname(file_path), "../benchmarks")
 
 model_path = "/mnt/disk5/Qwen3-30B-A3B-250425"
+model_path = "/mnt1/qwen/Qwen3-30B-A3B"
 
 # Parse the command-line arguments.
 parser = argparse.ArgumentParser()

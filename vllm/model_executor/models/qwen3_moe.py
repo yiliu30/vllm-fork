@@ -312,6 +312,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
+import os
 
 @support_torch_compile
 class Qwen3MoeModel(nn.Module):
@@ -325,7 +326,7 @@ class Qwen3MoeModel(nn.Module):
 
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-
+        config.num_hidden_layers = int(os.getenv("NUM_HIDDEN_LAYERS", config.num_hidden_layers))
         self.embed_tokens = VocabParallelEmbedding(
             config.vocab_size,
             config.hidden_size,
@@ -492,6 +493,8 @@ class Qwen3MoeForCausalLM(nn.Module, SupportsPP):
                     if ((name.endswith(".bias") or name.endswith("_bias"))
                             and name not in params_dict):
                         continue
+                    if name not in params_dict:
+                        continue
                     param = params_dict[name]
                     weight_loader = param.weight_loader
                     weight_loader(param,
@@ -522,6 +525,8 @@ class Qwen3MoeForCausalLM(nn.Module, SupportsPP):
                             continue
                         else:
                             name = remapped_kv_scale_name
+                    if name not in params_dict:
+                        continue
                     param = params_dict[name]
                     weight_loader = getattr(param, "weight_loader",
                                             default_weight_loader)
