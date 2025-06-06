@@ -147,26 +147,73 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         self.hpu_cache: Optional[List[List[torch.Tensor]]] = None
         # Torch profiler. Enabled and configured through env vars:
         # VLLM_TORCH_PROFILER_DIR=/path/to/save/trace
-        if envs.VLLM_TORCH_PROFILER_DIR:
-            torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
-            logger.info("Profiling enabled. Traces will be saved to: %s",
-                        torch_profiler_trace_dir)
+        # if envs.VLLM_TORCH_PROFILER_DIR:
+        #     torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
+        #     logger.info("Profiling enabled. Traces will be saved to: %s",
+        #                 torch_profiler_trace_dir)
+        #     self.profiler = self._setup_profiler()
+        #     # if os.getenv('VLLM_PROFILER_ENABLED') == 'full':
+        #     #     fn = self.full_trace_handler
+        #     #     with_stack = False
+        #     # else:
+        #     #     fn = torch.profiler.tensorboard_trace_handler
+        #     #     with_stack = True
+            
+        #     # self.profiler = torch.profiler.profile(
+        #     #     activities=[
+        #     #         torch.profiler.ProfilerActivity.CPU,
+        #     #         torch.profiler.ProfilerActivity.HPU,
+        #     #     ],
+        #     #     with_stack=with_stack,
+        #     #     on_trace_ready=fn(torch_profiler_trace_dir, use_gzip=True))
+        # else:
+        self.profiler = None
 
-            if os.getenv('VLLM_PROFILER_ENABLED') == 'full':
-                fn = self.full_trace_handler
-                with_stack = False
-            else:
-                fn = torch.profiler.tensorboard_trace_handler
-                with_stack = True
-            self.profiler = torch.profiler.profile(
-                activities=[
-                    torch.profiler.ProfilerActivity.CPU,
-                    torch.profiler.ProfilerActivity.HPU,
-                ],
-                with_stack=with_stack,
-                on_trace_ready=fn(torch_profiler_trace_dir, use_gzip=True))
-        else:
-            self.profiler = None
+    def _setup_profiler(self):
+        # if not self.is_driver_worker:
+        #     logger.warning(
+        #         "Torch profiler is only enabled for the driver worker. "
+        #         "Skipping setup for worker %d", self.rank)
+        #     return None
+        enable_profile = os.getenv(
+            "VLLM_ENGINE_PROFILER_ENABLED", "false"
+        ).lower() in ["true", "1"]
+        if not enable_profile:
+            return None
+        warmup = int(os.getenv("VLLM_ENGINE_PROFILER_WARMUP_STEPS", "0"))
+        steps = int(os.getenv("VLLM_ENGINE_PROFILER_STEPS", "1"))
+        repeat = int(os.getenv("VLLM_ENGINE_PROFILER_REPEAT", "1"))
+        logger.info(
+            (
+                f"VLLM_ENGINE_PROFILER_WARMUP_STEPS={warmup}, "
+                f"VLLM_ENGINE_PROFILER_STEPS={steps}, "
+                f"VLLM_ENGINE_PROFILER_REPEAT={repeat}"
+            )
+        )
+        schedule = torch.profiler.schedule(
+            wait=0, warmup=warmup, active=steps, repeat=repeat
+        )
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        activities.append(torch.profiler.ProfilerActivity.HPU)
+        # from habana_frameworks.torch.activity_profiler import DebugActivity
+        # debug_activities=[DebugActivity.BRIDGE_FUNCTION_CALLS]
+        prof_out_dir = envs.VLLM_TORCH_PROFILER_DIR
+        logger.warning(
+            "Setting up torch profiler with output directory: %s", prof_out_dir
+        )
+        profiler = torch.profiler.profile(
+            schedule=schedule,
+            activities=activities,
+            # debug_activities=debug_activities,
+            on_trace_ready=torch.profiler.tensorboard_trace_handler(
+                prof_out_dir, use_gzip=True
+            ),
+            record_shapes=False,
+            with_modules=False,
+            profile_memory=False,
+            with_stack=True,
+        )
+        return profiler
 
     def full_trace_handler(self, dir_name, use_gzip=False):
 
@@ -219,7 +266,14 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         return self.model_config.is_encoder_decoder
 
     def start_profile(self):
-        update_mem()
+        # update_mem()
+        if envs.VLLM_TORCH_PROFILER_DIR:
+            torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
+            logger.info("Profiling enabled. Traces will be saved to: %s",
+                        torch_profiler_trace_dir)
+            self.profiler = self._setup_profiler()
+        if self.profiler is not None:
+            self.profiler.start()
 
 
     def _start_profile(self):
@@ -236,6 +290,9 @@ class HPUWorker(LocalOrDistributedWorkerBase):
             self.profiler.start()
 
     def stop_profile(self):
+        if self.profiler is None:
+            logger.warning(f"Profiler is not enabled. Skipping stop.")
+            return 
         if self.profiler is None:
             raise RuntimeError("Profiler is not enabled.")
         self.profiler.stop()
@@ -348,6 +405,8 @@ class HPUWorker(LocalOrDistributedWorkerBase):
 
         output = LocalOrDistributedWorkerBase.execute_model(
             self, execute_model_req)
+        if self.profiler is not None:
+            self.profiler.step()
         return output
         
     
