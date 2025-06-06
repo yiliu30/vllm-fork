@@ -1,0 +1,41 @@
+{"mode": "QUANTIZE","observer": "maxabs","scale_method": "ACT_MAXABS_PCS_POW2_WEIGHT_MAXABS_PTS_POW2_HW","dynamic_quantization": "True","scale_format": "CONST","allowlist": {"types": [],"names": ["mlp"]},"blocklist": {"types": [],"names": ["lm_head"]},"dump_stats_path": "/software/data/vllm-benchmarks/inc/meta-llama-3.1-8b-instruct/g2/inc_output_dynamic_quant"}
+
+
+
+{
+    "dump_stats_path": "/yiliu7/inc_inner/test/3x/torch/algorithms/fp8_quant/test/3x/torch/algorithms/fp8_quant/output/unit_tests/test_layers/test_linear.py::test_linear_dynamic_quantization[no_hpu_graphs-ScaleFormat.CONST-GAUDI2-ScaleMethodString.ACT_MAXABS_PCS_POW2_WEIGHT_MAXABS_PTS_POW2_HW-fp8_e4m3fn-bf16] (call)",
+    "fp8_config": "e4m3",
+    "hp_dtype": "BF16",
+    "blocklist": {
+        "names": [],
+        "types": []
+    },
+    "allowlist": {
+        "names": [],
+        "types": [
+            "Linear",
+            "ParallelLMHead",
+            "RowParallelLinear",
+            "ColumnParallelLinear",
+            "MergedColumnParallelLinear",
+            "QKVParallelLinear",
+            "ReplicatedLinear",
+            "FusedMoE",
+            "VllmMixtureOfExpertsOp",
+            "MoeMatmul" 
+        ]
+    },
+    "mode": "QUANTIZE",
+    "scale_method": "ACT_MAXABS_PCS_POW2_WEIGHT_MAXABS_PTS_POW2_HW",
+    "scale_params": {},
+    "observer": "maxabs",
+    "mod_dict": {},
+    "_json_file": null,
+    "fake_quant": "False",
+    "use_qdq": "False",
+    "scale_format": "CONST",
+    "measure_on_hpu": true,
+    "method": "HOOKS",
+    "device_for_scales": "GAUDI2",
+    "dynamic_quantization": "True"
+}
