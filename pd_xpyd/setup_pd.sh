@@ -1,12 +1,12 @@
 # print all cmd
 set -x
-# alias apt with sudo apt
+# alias sudo apt with sudo apt
 # apt="sudo apt"
 
-alias apt="sudo apt"
-alias apt-get="sudo apt-get"
+# alias apt="sudo apt"
+# alias apt-get="sudo apt-get"
 
-apt install etcd -y
+sudo apt install etcd -y
 pip install mooncake-transfer-engine==0.3.0b3
 
 
@@ -14,7 +14,7 @@ pip install mooncake-transfer-engine==0.3.0b3
 
 # ```bash
 # # Install required packages
-# apt install git wget curl net-tools sudo iputils-ping etcd -y
+# sudo apt install git wget curl net-tools sudo iputils-ping etcd -y
 
 # # Clone the Mooncake repository
 # git clone https://github.com/kvcache-ai/Mooncake.git -b v0.3.0-beta
@@ -36,11 +36,11 @@ pip install mooncake-transfer-engine==0.3.0b3
 # To enable RDMA for high-speed data transfer, follow these steps:
 
 # ```bash
-apt remove ibutils libpmix-aws
+sudo apt remove ibutils libpmix-aws
 wget https://www.mellanox.com/downloads/DOCA/DOCA_v2.10.0/host/doca-host_2.10.0-093000-25.01-ubuntu2204_amd64.deb
-dpkg -i doca-host_2.10.0-093000-25.01-ubuntu2204_amd64.deb
-apt-get update
-apt-get -y install doca-ofed
+sudo dpkg -i doca-host_2.10.0-093000-25.01-ubuntu2204_amd64.deb
+sudo apt-get update
+sudo apt-get -y install doca-ofed
 
 # Check RDMA devices and network interfaces
 ibdev2netdev

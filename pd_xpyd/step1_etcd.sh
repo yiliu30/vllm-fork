@@ -1,0 +1,1 @@
+etcd --listen-client-urls http://10.111.231.48:2379 --advertise-client-urls http://localhost:2379 2>&1 | tee ./_pd_logs/etcd.log 

@@ -166,6 +166,7 @@ class MooncakeStoreConnector(KVConnectorBase):
 
             if remote_kv is None or hidden is None:
                 # didn't find any match.
+
                 bypass_model_exec = False
                 continue
 
@@ -343,6 +344,10 @@ class MooncakeStoreConnector(KVConnectorBase):
             if remote_kv is None or hidden is None:
                 logger.warning("Didn't find any match, load_key_prefix: %s",
                                load_kvcache_key)
+                logger.debug(f"[rank: {torch.distributed.get_rank()}"
+                             f"remote_kv is None: {remote_kv is None}, "
+                             f"hidden is None: {hidden is None}, ")
+
                 bypass_model_exec = False
                 continue
 

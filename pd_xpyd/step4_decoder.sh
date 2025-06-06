@@ -1,5 +1,6 @@
 timestamp=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="./_pd_logs/decoder.${timestamp}.log"
+
 TP_SIZE=4
 export MOONCAKE_CONFIG_PATH=./mooncake.json
 export PT_HPU_LAZY_MODE=1
@@ -10,10 +11,11 @@ export VLLM_SKIP_WARMUP=true
 export VLLM_LOGGING_LEVEL=DEBUG
 
 model_path="/mnt/weka/data/pytorch/llama3/Meta-Llama-3-8B/"
-model_path="/mnt/weka/data/pytorch/llama3.3/Meta-Llama-3.3-70B-Instruct"
+# model_path="/mnt/weka/data/pytorch/llama3.3/Meta-Llama-3.3-70B-Instruct"
 python3 -m vllm.entrypoints.openai.api_server \
     --model  $model_path \
-    --port 8100 \
+    --port 8200 \
     -tp $TP_SIZE \
     --gpu-memory-utilization 0.9 \
-    --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_producer"}' 2>&1 | tee $LOG_FILE
+    --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}' 2>&1 | tee $LOG_FILE
+    

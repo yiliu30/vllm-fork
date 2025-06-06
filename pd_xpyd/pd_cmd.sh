@@ -9,6 +9,12 @@ curl -s http://localhost:8088/v1/completions -H "Content-Type: application/json"
     "max_tokens": 100
 }'
 
+curl -s http://localhost:8088/v1/completions -H "Content-Type: application/json" -d '{
+    "model": "/mnt/weka/data/pytorch/llama3/Meta-Llama-3-8B/",
+    "prompt": "Explain the significance of the moon landing in 1969.",
+    "max_tokens": 100
+}'
+
 export PATH=$PATH:/home/yiliu4/.local/bin
 
 mooncake_master --enable_gc true --port 50001
