@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from .compressed_tensors_scheme import CompressedTensorsScheme
+from .compressed_tensors_w4a4_nvfp4 import CompressedTensorsW4A4Fp4
 from .compressed_tensors_w4a16_24 import (W4A16SPARSE24_SUPPORTED_BITS,
                                           CompressedTensorsW4A16Sparse24)
 from .compressed_tensors_w8a8_fp8 import CompressedTensorsW8A8Fp8
@@ -16,5 +17,6 @@ __all__ = [
     "CompressedTensorsW8A16Fp8", "CompressedTensorsW4A16Sparse24",
     "CompressedTensorsW8A8Int8", "CompressedTensorsW8A8Fp8",
     "WNA16_SUPPORTED_BITS", "W4A16SPARSE24_SUPPORTED_BITS",
-    "CompressedTensors24"
+    "CompressedTensors24",
+    "CompressedTensorsW4A4Fp4"
 ]
