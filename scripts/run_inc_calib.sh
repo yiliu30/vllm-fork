@@ -43,5 +43,5 @@ QUANT_CONFIG=${QUANT_CONFIG_FILE} \
     --nprompts 512 \
     --max_model_len 2048 \
     --tp_size $WORLD_SIZE \
-    --ep_szie $WORLD_SIZE \
+    --ep_size $WORLD_SIZE \
     --dataset pile 2>&1 | tee $LOG_FILE
