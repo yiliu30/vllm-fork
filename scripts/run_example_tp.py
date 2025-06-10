@@ -247,8 +247,11 @@ if __name__ == "__main__":
         param["kv_cache_dtype"] = "fp8_inc"
     if args.max_num_seqs is not None:
         param["max_num_seqs"] = args.max_num_seqs
+    param["distributed_executor_backend"] = "mp"
     if args.enforce_eager:
         param["enforce_eager"] = True
+    if args.tp_size > 8:
+        param["distributed_executor_backend"] = "ray"
     if args.tp_size == 1:
         llm = LLM(
             model=model, 
@@ -264,7 +267,6 @@ if __name__ == "__main__":
             model=model, 
             tokenizer=args.tokenizer,
             tensor_parallel_size=args.tp_size,
-            distributed_executor_backend='mp',
             trust_remote_code=True,
             max_model_len=args.max_model_len,
             dtype="bfloat16",

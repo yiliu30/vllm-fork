@@ -1,4 +1,4 @@
-DEFAULT_MODEL_PATH="/mnt/disk3/DeepSeek-R1-G2-INC"
+DEFAULT_MODEL_PATH="/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207"
 FP8_MODEL_PATH="${1:-$DEFAULT_MODEL_PATH}"
 
 QUANT_CONFIG_FILE="scripts/quant_configs/inc_measure_with_fp8kv_config.json"
@@ -20,6 +20,7 @@ echo "======================================================"
 
 echo "Start INC calibration with model ${FP8_MODEL_PATH}, log file ${LOG_FILE}"
 
+WORLD_SIZE=16
 
 PT_HPU_LAZY_MODE=1 \
 VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0 \
@@ -41,4 +42,6 @@ QUANT_CONFIG=${QUANT_CONFIG_FILE} \
     --max_num_seqs 1 \
     --nprompts 512 \
     --max_model_len 2048 \
+    --tp_size $WORLD_SIZE \
+    --ep_szie $WORLD_SIZE \
     --dataset pile 2>&1 | tee $LOG_FILE
