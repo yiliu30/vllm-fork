@@ -904,8 +904,9 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     mark_scales_as_const = os.getenv(
                         "VLLM_HPU_MARK_SCALES_AS_CONST", "true"
                     ) in ("1", "true")
-                    config = FP8Config.from_json_file(
-                        os.getenv("QUANT_CONFIG", ""))
+                    quant_config_file = os.getenv("QUANT_CONFIG", "")
+                    logger.info(f"load quant file form {quant_config_file}")
+                    config = FP8Config.from_json_file(quant_config_file)
 
                     self._inc_preprocess_(self.model, config)
                     if config.measure:
