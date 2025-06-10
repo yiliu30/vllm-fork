@@ -1,7 +1,7 @@
 DEFAULT_MODEL_PATH="/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207"
 FP8_MODEL_PATH="${1:-$DEFAULT_MODEL_PATH}"
 
-QUANT_CONFIG_FILE="scripts/quant_configs/inc_measure_with_fp8kv_config.json"
+QUANT_CONFIG_FILE="./scripts/quant_configs/inc_measure_with_fp8kv_config.json"
 timestamp=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="prepare.pile.512.${timestamp}.log"
 
@@ -22,6 +22,9 @@ echo "Start INC calibration with model ${FP8_MODEL_PATH}, log file ${LOG_FILE}"
 
 WORLD_SIZE=16
 
+export RAY_DEDUP_LOGS=0
+
+VLLM_LOGGING_LEVEL=DEBUG \
 PT_HPU_LAZY_MODE=1 \
 VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0 \
 VLLM_ENABLE_RUNTIME_DEQUANT=1 \
