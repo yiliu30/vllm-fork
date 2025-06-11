@@ -20,7 +20,7 @@ done
 BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
 # source "$BASH_DIR"/utils.sh
 
-ray stop --force
+# ray stop --force
 
 
 # DO NOT change unless you fully undersand its purpose
@@ -33,13 +33,13 @@ export HABANA_VISIBLE_MODULES="0,1,2,3,4,5,6,7"
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 
 export VLLM_MOE_N_SLICE=8
-export VLLM_EP_SIZE=8
+export VLLM_EP_SIZE=16
 
 block_size=128
 # DO NOT change ends...
 
 # memory footprint tunning params
-export VLLM_GPU_MEMORY_UTILIZATION=0.9
+export VLLM_GPU_MEMORY_UTILIZATION=0.8
 export VLLM_GRAPH_RESERVED_MEM=0.4
 export VLLM_GRAPH_PROMPT_RATIO=0
 export VLLM_MLA_DISABLE_REQUANTIZATION=0
@@ -48,9 +48,10 @@ export VLLM_DELAYED_SAMPLING="true"
 
 # params
 CONST_LEN=16384
+CONST_LEN=67584
 max_model_len=$CONST_LEN
 max_num_batched_tokens=$CONST_LEN
-max_num_seqs=256
+max_num_seqs=32
 input_min=1
 input_max=$CONST_LEN
 output_max=$CONST_LEN
@@ -61,12 +62,13 @@ unset VLLM_DECODE_BS_BUCKET_MIN VLLM_DECODE_BS_BUCKET_STEP VLLM_DECODE_BS_BUCKET
 unset VLLM_DECODE_BLOCK_BUCKET_MIN VLLM_DECODE_BLOCK_BUCKET_STEP VLLM_DECODE_BLOCK_BUCKET_MAX
 
 export VLLM_SKIP_WARMUP=True
-export PT_HPU_RECIPE_CACHE_CONFIG=/data/16k_cache,false,16384
+export PT_HPU_RECIPE_CACHE_CONFIG=/data/66k_cache,false,16384
 #set_bucketing
 
 ####### INC WOQ ReQuant Start #######
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
-unset PT_HPU_RECIPE_CACHE_CONFIG
+model_path=/mnt/disk7/yiliu4/DeepSeek-R1-0528-G2-2nd
+# unset PT_HPU_RECIPE_CACHE_CONFIG
 export VLLM_MOE_N_SLICE=1
 export VLLM_MLA_DISABLE_REQUANTIZATION=1
 export VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0
@@ -89,7 +91,7 @@ if $USE_FP8_KV; then
     KV_CACHE_DTYPE="fp8_inc"
 else
     echo "Using BF16 KV"
-    export QUANT_CONFIG="./scripts/quant_configs/inc_quant_per_channel_bf16kv.json"
+    export QUANT_CONFIG="/mnt/disk3/yiliu4/vllm-fork/scripts/quant_configs/inc_quant_per_channel_bf16kv.json"
     KV_CACHE_DTYPE="auto"
 fi
 ####### INC WOQ ReQuant End   #######
@@ -124,7 +126,8 @@ export VLLM_DECODE_BLOCK_BUCKET_MIN=${VLLM_DECODE_BLOCK_BUCKET_MIN:-$decode_bloc
 export VLLM_DECODE_BLOCK_BUCKET_STEP=${VLLM_DECODE_BLOCK_BUCKET_STEP:-$decode_block_step}
 export VLLM_DECODE_BLOCK_BUCKET_MAX=${VLLM_DECODE_BLOCK_BUCKET_MAX:-$decode_block_max}
 
-
+export RAY_DEDUP_LOGS=0
+export VLLM_LOGGING_LEVEL=DEBUG
 echo " environments are reseted "
 
 env | grep VLLM
@@ -135,7 +138,7 @@ python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
 --model $model_path \
 --device hpu \
 --dtype bfloat16 \
---tensor-parallel-size 8 \
+--tensor-parallel-size 16 \
 --trust-remote-code  \
 --max-model-len $max_model_len \
 --max-num-seqs $max_num_seqs \
