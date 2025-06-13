@@ -16,7 +16,9 @@
         ]
     },
     "blocklist": {
-        "types": [],
+        "types": [
+            "RowParallelLinear"
+        ],
         "names": [
             "lm_head"
         ]
