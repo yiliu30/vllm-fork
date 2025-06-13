@@ -198,6 +198,8 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         # from habana_frameworks.torch.activity_profiler import DebugActivity
         # debug_activities=[DebugActivity.BRIDGE_FUNCTION_CALLS]
         prof_out_dir = envs.VLLM_TORCH_PROFILER_DIR
+        local_rank = torch.distributed.get_rank()
+        prof_out_dir = f"{prof_out_dir}/rank_{local_rank}"
         logger.warning(
             "Setting up torch profiler with output directory: %s", prof_out_dir
         )

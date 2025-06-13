@@ -63,8 +63,12 @@ export VLLM_ENGINE_PROFILER_STEPS=2
 export VLLM_ENGINE_PROFILER_REPEAT=1
 
 bash benchmark_server_param.sh \
-    1 16384 128 4 2 hccl 4,4 fp8_inc \
+    1 16384 128 4 2 hccl 32,29 fp8_inc \
     false false 127.0.0.1 8688  /mnt/disk6/yiliu4/DeepSeek-R1-G2-static 2>&1 | tee $LOG_FILE
+
+# bash benchmark_server_param.sh \
+#     1 16384 128 4 2 hccl 29,32 fp8_inc \
+#     false false 127.0.0.1 8688  /mnt/disk6/yiliu4/DeepSeek-R1-G2-static 2>&1 | tee $LOG_FILE
 
 # bash benchmark_server_param.sh \
 #     1 16384 128 1 4 hccl "20,20,20,20" fp8_inc \
