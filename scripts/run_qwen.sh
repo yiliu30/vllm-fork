@@ -6,6 +6,21 @@
 # MaxAbsDynamicPcs(round_scale_method=ScaleToPow2, params={'hp_dtype': torch.bfloat16, 'lp_dtype': torch.float8_e4m3fn}, fullscale=240.0, scale=None, is_dynamic=True)
 
 
+# - BF16 strict-match: 91.66
+# - FP8 Dynamic (exclude `RowParallelLinear`)
+
+# vllm (pretrained=/mnt/weka/data/pytorch/Qwen/Qwen3-30B-A3B,tensor_parallel_size=8,max_model_len=4096,max_num_seqs=32,gpu_memory_utilization=0.75,use_v2_block_manager=True,dtype=bfloat16,max_gen_toks=2048,disable_log_stats=True,enable_expert_parallel=True), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 256
+# |Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
+# |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
+# |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.9060|±  |0.0080|
+# |     |       |strict-match    |     5|exact_match|↑  |0.9166|±  |0.0076|
+
+# vllm (pretrained=/mnt/weka/data/pytorch/DeepSeek-R1/,tensor_parallel_size=8,max_model_len=4096,max_num_seqs=32,gpu_memory_utilization=0.75,use_v2_block_manager=True,dtype=bfloat16,max_gen_toks=2048,disable_log_stats=True,enable_expert_parallel=True), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 256
+# |Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
+# |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
+# |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.9591|±  |0.0055|
+# |     |       |strict-match    |     5|exact_match|↑  |0.9591|±  |0.0055|
+
 pkill -9 python
 
 # GOOD
