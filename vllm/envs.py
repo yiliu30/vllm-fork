@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     VLLM_ROCM_USE_AITER_MOE: bool = True
     VLLM_ROCM_USE_AITER_RMSNORM: bool = True
     VLLM_ROCM_USE_AITER_MLA: bool = True
+    VLLM_ROCM_USE_AITER_MHA: bool = True
     VLLM_ROCM_USE_SKINNY_GEMM: bool = True
     VLLM_ROCM_FP8_PADDING: bool = True
     VLLM_ROCM_MOE_PADDING: bool = True
@@ -130,6 +131,7 @@ if TYPE_CHECKING:
     VLLM_MQ_MAX_CHUNK_BYTES_MB: int = 16
     VLLM_KV_CACHE_LAYOUT: Optional[str] = None
     VLLM_USE_NVFP4_CT_EMULATIONS: bool = False
+    VLLM_COMPUTE_NANS_IN_LOGITS: bool = False
 
 
 def get_default_cache_root():
@@ -654,6 +656,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_ROCM_USE_AITER_MLA":
     lambda: (os.getenv("VLLM_ROCM_USE_AITER_MLA", "True").lower() in
              ("true", "1")),
+
+    # Whether to use aiter mha ops.
+    # By default is enabled.
+    "VLLM_ROCM_USE_AITER_MHA":
+    lambda: (os.getenv("VLLM_ROCM_USE_AITER_MHA", "True").lower() in
+             ("true", "1")),
+
     # use rocm skinny gemms
     "VLLM_ROCM_USE_SKINNY_GEMM":
     lambda: (os.getenv("VLLM_ROCM_USE_SKINNY_GEMM", "True").lower() in
@@ -896,7 +905,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # generations on machines < 100 for compressed-tensors
     # models
     "VLLM_USE_NVFP4_CT_EMULATIONS":
-    lambda: bool(int(os.getenv("VLLM_USE_NVFP4_CT_EMULATIONS", "0")))
+    lambda: bool(int(os.getenv("VLLM_USE_NVFP4_CT_EMULATIONS", "0"))),
+  
+    # Enable checking whether the generated logits contain NaNs,
+    # indicating corrupted output. Useful for debugging low level bugs
+    # or bad hardware but it may add compute overhead.
+    "VLLM_COMPUTE_NANS_IN_LOGITS":
+    lambda: bool(int(os.getenv("VLLM_COMPUTE_NANS_IN_LOGITS", "0"))),
+
 }
 
 # --8<-- [end:env-vars-definition]
