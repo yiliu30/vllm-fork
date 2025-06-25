@@ -3,6 +3,8 @@
 model_path = "/models/Qwen3-32B"
 model_path = "/models/DeepSeek-R1-Distill-Qwen-7B"
 model_path= "/mnt/disk3/yiliu4/RedHatAI/Llama-3.1-8B-tldr-FP8-dynamic"
+model_path  = "/software/users/yiliu4/HF_HOME/RedHatAI/Llama-3.1-8B-tldr-FP8-dynamic"
+model_path  = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-NVFP4-llm-compressor"
 model_name = model_path.split("/")[-1]
 
 import os
@@ -30,12 +32,14 @@ sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
 def main():
     # Create an LLM.
-    # kv_cache_dtype="fp8_inc", 
-    llm = LLM(model=model_path, 
-            #   quantization="inc", 
-              max_num_batched_tokens=1024, max_model_len=1024,
-              enforce_eager=True,
-              )
+    # kv_cache_dtype="fp8_inc",
+    llm = LLM(
+        model=model_path,
+        #   quantization="inc",
+        max_num_batched_tokens=1024,
+        max_model_len=1024,
+        #   enforce_eager=True,
+    )
     # Generate texts from the prompts.
     # The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
