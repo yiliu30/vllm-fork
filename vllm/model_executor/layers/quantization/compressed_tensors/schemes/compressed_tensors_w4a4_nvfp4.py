@@ -44,6 +44,16 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         return 80
 
     def run_nvfp4_emulations(self, x: torch.Tensor, layer):
+        need_reshape = False
+        bs = None
+        if len(x.shape) != 2:
+
+            assert len(x.shape) == 3, f"Expected 2D or 3D input, got {len(x.shape)}D"
+            need_reshape = True
+            bs = x.shape[0]
+            x = x.reshape(-1, x.shape[-1])
+            x = x.squeeze(0)
+
         x_m, x_k = x.shape
         output_dtype = x.dtype
 
@@ -67,6 +77,8 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         # matmul
         out = torch.matmul(x_dq, w_dq.t())
         del w_dq, x_dq
+        if need_reshape:
+            out = out.reshape(bs, -1, out.shape[-1])
         return out
 
     def create_weights(self, layer: torch.nn.Module,
@@ -131,7 +143,7 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         padded_scale = padded_scale.reshape(batches, rows // 128, 4, 32,
                                             cols // 4, 4)
         swizzled_scale = padded_scale.permute((0, 1, 4, 3, 2, 5))
-        swizzled_scale = swizzled_scale.contiguous().cuda()
+        swizzled_scale = swizzled_scale.contiguous().to(scale.device)
         return (swizzled_scale.reshape(M, K)
                 if scale_ndim == 2 else swizzled_scale.reshape(B, M, K))
 

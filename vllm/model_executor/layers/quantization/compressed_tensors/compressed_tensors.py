@@ -619,7 +619,9 @@ class CompressedTensorsLinearMethod(LinearMethodBase):
         layer input.  See LinearMethodBase for param details
 
         """
-        if current_platform.is_hpu():
+        is_w4a4_nvfp4 = isinstance(layer.scheme, CompressedTensorsW4A4Fp4)
+        # Note: On HPU, for NVFP4, we use the `run_nvfp4_emulations`.
+        if current_platform.is_hpu() and not is_w4a4_nvfp4:
             if layer.weight_scale.dim() > 1:
                 weight_scale = layer.weight_scale.transpose(0, 1)
             else:
