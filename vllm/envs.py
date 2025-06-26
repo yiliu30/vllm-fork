@@ -920,6 +920,14 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_USE_NVFP4_CT_EMULATIONS":
     lambda: bool(int(os.getenv("VLLM_USE_NVFP4_CT_EMULATIONS", "0"))),
 
+    # static moe on HPU
+    "VLLM_USE_STATIC_MOE_HPU":
+    lambda: bool(int(os.getenv("VLLM_USE_STATIC_MOE_HPU", "0"))),
+
+    # Disable QDQ nvfp4 emulations
+    "VLLM_DISABLE_INPUT_QDQ":
+    lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
+
     # Enable checking whether the generated logits contain NaNs,
     # indicating corrupted output. Useful for debugging low level bugs
     # or bad hardware but it may add compute overhead.
