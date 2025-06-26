@@ -35,7 +35,7 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         self.group_size = 16
         self.cutlass_nvfp4_supported = cutlass_fp4_supported()
         if not self.cutlass_nvfp4_supported:
-            logger.warning("Current platform does not support cutlass NVFP4."
+            logger.warning_once("Current platform does not support cutlass NVFP4."
                            " Running emulations.")
 
     @classmethod

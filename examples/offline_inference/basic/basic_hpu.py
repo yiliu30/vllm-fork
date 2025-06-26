@@ -16,7 +16,7 @@ import os
 os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
 os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 os.environ["HABANA_VISIBLE_DEVICES"] = "All"
-os.environ["HABANA_VISIBLE_MODULES"] = "0,1"
+os.environ["HABANA_VISIBLE_MODULES"] = "0,1,2,3,4,5,6,7"
 
 if "DeepSeek" in model_path:
     os.environ["VLLM_DISABLE_INPUT_QDQ"] = "1"
