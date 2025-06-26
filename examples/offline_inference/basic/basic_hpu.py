@@ -5,9 +5,16 @@ model_path = "/models/DeepSeek-R1-Distill-Qwen-7B"
 model_path= "/mnt/disk3/yiliu4/RedHatAI/Llama-3.1-8B-tldr-FP8-dynamic"
 model_path  = "/software/users/yiliu4/HF_HOME/RedHatAI/Llama-3.1-8B-tldr-FP8-dynamic"
 model_path  = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-NVFP4-llm-compressor"
+model_path = "/mnt/disk3/yiliu4/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor"
+
+
 model_name = model_path.split("/")[-1]
 
 import os
+if "DeepSeek" in model_path:
+    os.environ["VLLM_DISABLE_INPUT_QDQ"] = "1"
+    os.environ["VLLM_USE_STATIC_MOE_HPU"] = "1"
+
 # os.environ["HABANA_LOGS"] = "./habana_logs"
 # os.environ["LOG_LEVEL_ALL"] = "0"
 
@@ -38,7 +45,8 @@ def main():
         #   quantization="inc",
         max_num_batched_tokens=1024,
         max_model_len=1024,
-        #   enforce_eager=True,
+        enforce_eager=True,
+        trust_remote_code=True,
     )
     # Generate texts from the prompts.
     # The output is a list of RequestOutput objects
