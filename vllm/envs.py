@@ -733,6 +733,21 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # limit will actually be zero-copy decoded.
     "VLLM_MSGPACK_ZERO_COPY_THRESHOLD":
     lambda: int(os.getenv("VLLM_MSGPACK_ZERO_COPY_THRESHOLD", "256")),
+
+    # Controls whether or not emulations are used for NVFP4
+    # generations on machines < 100 for compressed-tensors
+    # models
+    "VLLM_USE_NVFP4_CT_EMULATIONS":
+    lambda: bool(int(os.getenv("VLLM_USE_NVFP4_CT_EMULATIONS", "0"))),
+
+    # static moe on HPU
+    "VLLM_USE_STATIC_MOE_HPU":
+    lambda: bool(int(os.getenv("VLLM_USE_STATIC_MOE_HPU", "0"))),
+
+    # Disable QDQ nvfp4 emulations
+    "VLLM_DISABLE_INPUT_QDQ":
+    lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
+
 }
 
 # end-env-vars-definition

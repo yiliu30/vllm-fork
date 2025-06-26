@@ -7,7 +7,7 @@ from vllm.scalar_type import scalar_types
 __all__ = ["break_fp4_bytes", "dequantize_to_dtype", "ref_nvfp4_quant"]
 
 FLOAT4_E2M1_MAX = scalar_types.float4_e2m1f.max()
-
+import vllm.envs as envs
 kE2M1ToFloat = torch.tensor([0., 0.5, 1., 1.5, 2., 3., 4., 6.],
                             dtype=torch.float32)
 
@@ -102,3 +102,71 @@ def ref_nvfp4_quant(x, global_scale, block_size):
     clipped_x = torch.clamp(scaled_x, -6.0, 6.0).reshape(m, n)
     # both outputs are float32
     return cast_to_fp4(clipped_x), scale.squeeze(-1)
+
+
+
+def dequantize_to_dtype_no_swizzele(tensor_fp4,
+                        tensor_sf,
+                        global_scale,
+                        dtype,
+                        device,
+                        block_size=16):
+    """Dequantize the fp4 tensor back to high precision."""
+    # Two fp4 values are packed into one uint8.
+    assert tensor_fp4.dtype == torch.uint8
+    m, packed_k = tensor_fp4.shape
+    k = packed_k * 2
+    tensor_f32 = break_fp4_bytes(tensor_fp4, torch.float32)
+    tensor_f32 = tensor_f32.reshape(m, k // block_size, block_size)
+    tensor_sf = tensor_sf.view(torch.float8_e4m3fn)
+    # tensor_sf = convert_swizzled_to_linear(tensor_sf, m, k, block_size)
+    tensor_sf_dtype = tensor_sf.to(torch.float32) / global_scale
+
+    # scale the tensor
+    out = (tensor_f32 * tensor_sf_dtype.unsqueeze(-1)).reshape(m, k)
+    return out.to(dtype)
+
+
+def check_nan(tensor: torch.Tensor) -> bool:
+    """
+    Check if the tensor contains NaN values.
+    """
+    return torch.isnan(tensor).any().item()
+
+def run_nvfp4_emulations_no_swizzle(
+    x: torch.Tensor,
+    input_global_scale: torch.Tensor,
+    weight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    weight_global_scale: torch.Tensor,
+):
+    group_size = 16
+    x_m, x_k = x.shape
+    output_dtype = x.dtype
+    if envs.VLLM_DISABLE_INPUT_QDQ:
+        x_dq = x
+    else:
+        # quantize input to (FP4 and interleaved block scale)
+        x_fp4, x_blockscale = ref_nvfp4_quant(x, input_global_scale, group_size)
+
+        # dequantize input
+        x_fp4 = x_fp4.reshape(x_m, x_k // group_size, group_size)
+        x_blockscale = x_blockscale.unsqueeze(-1) / input_global_scale
+        x_dq = (x_fp4 * x_blockscale).reshape(x_m, x_k).to(output_dtype)
+        del x_fp4, x_blockscale
+
+    # dequantize weight
+    w_fp4 = weight.data.view(torch.uint8)
+    w_dq = dequantize_to_dtype_no_swizzele(
+        w_fp4,
+        weight_scale.data,
+        weight_global_scale,
+        output_dtype,
+        x.device,
+        group_size,
+    )
+
+    # matmul
+    out = torch.matmul(x_dq, w_dq.t())
+    del w_dq, x_dq
+    return out
