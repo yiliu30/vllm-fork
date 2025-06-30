@@ -542,8 +542,8 @@ class CompressedTensorsConfig(QuantizationConfig):
         # (e.g. fp8 needs ada lovelace)
         if not current_platform.is_hpu():
             self._check_scheme_supported(scheme.get_min_capability())
-            logger.debug("Using scheme: %s for %s", scheme.__class__.__name__,
-                         layer_name)
+        logger.debug("Using scheme: %s for %s", scheme.__class__.__name__,
+                        layer_name)
         return scheme
 
     def get_cache_scale(self, name: str) -> Optional[str]:

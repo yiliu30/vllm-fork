@@ -11,6 +11,7 @@ model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-com
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.3-70B-Instruct-NVFP4-llmc"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.2-1B-Instruct-MXFP8-llmc"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.3-70B-Instruct-MXFP8-llmc"
+model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc"
 model_name = model_path.split("/")[-1]
 
 import os
