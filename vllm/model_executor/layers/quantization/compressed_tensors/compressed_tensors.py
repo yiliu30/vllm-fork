@@ -294,8 +294,7 @@ class CompressedTensorsConfig(QuantizationConfig):
         is_symmetric_weight = weight_quant.symmetric
         is_static_weight = not weight_quant.dynamic
         is_per_tensor_or_channel_weight = (weight_quant.strategy in [
-            QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL,
-            QuantizationStrategy.TENSOR_GROUP
+            QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL
         ])
         if not (is_floating_point and is_symmetric_weight and is_static_weight
                 and is_per_tensor_or_channel_weight):
