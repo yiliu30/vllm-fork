@@ -74,8 +74,9 @@ class CompressedTensorsMoEMethod(FusedMoEMethodBase):
         elif (quant_config._is_fp8_w8a8_sm90(weight_quant, input_quant)
               and layer.activation == "silu"):
             return CompressedTensorsW8A8Fp8MoECutlassMethod(quant_config)
-        elif quant_config._is_fp8_w8a8(weight_quant, input_quant):
-            return CompressedTensorsW8A8Fp8MoEMethod(quant_config)
+        elif quant_config._is_mxfp8_w8a8(weight_quant, input_quant):
+            from .compressed_tensors_moe_mxfp8 import CompressedTensorsW8A8MXFp8MoEMethod
+            return CompressedTensorsW8A8MXFp8MoEMethod(quant_config)
         elif quant_config._is_dynamic_token_w8a8(weight_quant, input_quant):
             return CompressedTensorsW8A8Int8MoEMethod(quant_config)
         else:
