@@ -9,6 +9,8 @@ model_path  = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-NVFP4-l
 model_path = "/mnt/disk3/yiliu4/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor/"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.3-70B-Instruct-NVFP4-llmc"
+model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.2-1B-Instruct-MXFP8-llmc"
+model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.3-70B-Instruct-MXFP8-llmc"
 model_name = model_path.split("/")[-1]
 
 import os
@@ -17,6 +19,8 @@ os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
 os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 os.environ["HABANA_VISIBLE_DEVICES"] = "All"
 os.environ["HABANA_VISIBLE_MODULES"] = "0,1,2,3,4,5,6,7"
+os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
+os.environ["VLLM_HPU_FORCE_CHANNEL_FP8"] = "0"
 
 if "DeepSeek" in model_path:
     os.environ["VLLM_DISABLE_INPUT_QDQ"] = "1"

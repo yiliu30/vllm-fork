@@ -11,7 +11,7 @@ from compressed_tensors.quantization import (QuantizationArgs,
                                              QuantizationStrategy,
                                              QuantizationType)
 from pydantic import BaseModel
-
+from vllm import envs
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
@@ -295,8 +295,7 @@ class CompressedTensorsConfig(QuantizationConfig):
         is_symmetric_weight = weight_quant.symmetric
         is_static_weight = not weight_quant.dynamic
         is_per_tensor_or_channel_weight = (weight_quant.strategy in [
-            QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL,
-            QuantizationStrategy.TENSOR_GROUP
+            QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL
         ])
         if not (is_floating_point and is_symmetric_weight and is_static_weight
                 and is_per_tensor_or_channel_weight):
@@ -666,9 +665,9 @@ class CompressedTensorsLinearMethod(LinearMethodBase):
         layer input.  See LinearMethodBase for param details
 
         """
-        is_w4a4_nvfp4 = isinstance(layer.scheme, CompressedTensorsW4A4Fp4)
-        # Note: On HPU, for NVFP4, we use the `run_nvfp4_emulations`.
-        if current_platform.is_hpu() and not is_w4a4_nvfp4:
+
+        # Note: On HPU, for dynamic standard FP8 linear, we use this path
+        if current_platform.is_hpu() and envs.VLLM_HPU_FORCE_CHANNEL_FP8:
             if layer.weight_scale.dim() > 1:
                 weight_scale = layer.weight_scale.transpose(0, 1)
             else:
