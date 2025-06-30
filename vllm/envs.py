@@ -134,6 +134,7 @@ if TYPE_CHECKING:
     VLLM_KV_CACHE_LAYOUT: Optional[str] = None
     VLLM_USE_NVFP4_CT_EMULATIONS: bool = False
     VLLM_COMPUTE_NANS_IN_LOGITS: bool = False
+    VLLM_W8A8_FP8_QDQ_MODE: bool = False
 
 
 def get_default_cache_root():
@@ -933,6 +934,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # or bad hardware but it may add compute overhead.
     "VLLM_COMPUTE_NANS_IN_LOGITS":
     lambda: bool(int(os.getenv("VLLM_COMPUTE_NANS_IN_LOGITS", "0"))),
+
+    # VLLM_W8A8_FP8_QDQ_MODE
+    "VLLM_W8A8_FP8_QDQ_MODE":
+    lambda: bool(int(os.getenv("VLLM_W8A8_FP8_QDQ_MODE", "0"))),
 }
 
 # --8<-- [end:env-vars-definition]

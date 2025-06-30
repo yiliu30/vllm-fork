@@ -6,7 +6,7 @@ from typing import Callable, Optional
 import torch
 from compressed_tensors.quantization import QuantizationStrategy
 from torch.nn import Parameter
-
+from vllm import envs
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsScheme)
 from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
@@ -31,7 +31,10 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
     @classmethod
     def get_min_capability(cls) -> int:
         # lovelace and up
-        return 89
+        if envs.VLLM_W8A8_FP8_QDQ_MODE:
+            return 80
+        else:
+            return 89
 
     def process_weights_after_loading(self, layer) -> None:
         # If per tensor, when we have a fused module (e.g. QKV) with per

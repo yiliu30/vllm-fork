@@ -110,6 +110,7 @@ def requantize_with_max_scale(
     # from disk in this case. Skip requantization in this case (since)
     # we already are quantized with the single scale.
     # * Sample Model: nm-testing/Phi-3-mini-128k-instruct-FP8
+    # breakpoint()
     unfused_module_in_checkpoint = (weight_scale[-1]
                                     > torch.finfo(torch.float8_e4m3fn).min)
 
@@ -313,6 +314,8 @@ class Fp8LinearOp:
         if pad_output is None:
             config = get_current_vllm_config().compilation_config
             pad_output = config.level < CompilationLevel.PIECEWISE
+        if envs.VLLM_W8A8_FP8_QDQ_MODE:
+            pad_output = None
         self.output_padding = 17 if (
             pad_output and not current_platform.is_rocm()) else None
 
@@ -328,6 +331,7 @@ class Fp8LinearOp:
         # TODO(luka) remove this parameter in favor of __init__
         use_per_token_if_dynamic: Optional[bool] = None
     ) -> torch.Tensor:
+        # breakpoint()
         # ops.scaled_fp8_quant supports both dynamic and static quant.
         #   If dynamic, layer.input_scale is None and x_scale computed from x.
         #   If static, layer.input_scale is scalar and x_scale is input_scale.
@@ -363,7 +367,13 @@ class Fp8LinearOp:
                     use_per_token_if_dynamic=use_per_token_if_dynamic)
             else:
                 qinput, x_scale = input_2d, input_scale
-
+        if envs.VLLM_W8A8_FP8_QDQ_MODE:
+            dequant_input = per_tensor_dequantize(qinput, x_scale)
+            dequant_weight = per_tensor_dequantize(weight, weight_scale)
+            out = dequant_input @ dequant_weight
+            out = out.reshape(*output_shape).to(out_dtype)
+            return out
+        
         per_tensor_weights = (weight_scale.numel() == 1)
         per_tensor_activations = (x_scale.numel() == 1)
 
