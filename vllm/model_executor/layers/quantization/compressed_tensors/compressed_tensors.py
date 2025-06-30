@@ -11,7 +11,7 @@ from compressed_tensors.quantization import (QuantizationArgs,
                                              QuantizationStrategy,
                                              QuantizationType)
 from pydantic import BaseModel
-
+from vllm import envs
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
@@ -23,7 +23,8 @@ from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tenso
     CompressedTensorsMoEMethod)
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     W4A16SPARSE24_SUPPORTED_BITS, WNA16_SUPPORTED_BITS, CompressedTensors24,
-    CompressedTensorsScheme, CompressedTensorsW4A16Sparse24,
+    CompressedTensorsScheme, CompressedTensorsW4A4Fp4,
+    CompressedTensorsW4A16Sparse24,
     CompressedTensorsW8A8Fp8, CompressedTensorsW8A8Int8,
     CompressedTensorsW8A16Fp8, CompressedTensorsWNA16)
 from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
@@ -219,6 +220,41 @@ class CompressedTensorsConfig(QuantizationConfig):
         else:
             return False
 
+    def _is_fp4a4_nvfp4(self, weight_quant: BaseModel, input_quant: BaseModel):
+
+        if weight_quant is None or input_quant is None:
+            return False
+
+        is_tensor_group_quant = (weight_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value
+                                 and input_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value)
+        is_symmetric = weight_quant.symmetric and input_quant.symmetric
+
+        is_group_size_16 = (weight_quant.group_size == 16
+                            and input_quant.group_size == 16)
+        is_float_type = (weight_quant.type == QuantizationType.FLOAT
+                         and input_quant.type == QuantizationType.FLOAT.value)
+        is_4_bits = weight_quant.num_bits == 4 and input_quant.num_bits == 4
+
+        return (is_tensor_group_quant and is_float_type and is_4_bits
+                and is_group_size_16 and is_symmetric)
+
+    def _is_fp4a16_nvfp4(self, weight_quant: BaseModel,
+                         input_quant: BaseModel):
+
+        is_weight_only = weight_quant is not None and input_quant is None
+        is_tensor_group_quant = (
+            weight_quant.strategy == QuantizationStrategy.TENSOR_GROUP.value)
+        is_symmetric = weight_quant.symmetric
+
+        is_group_size_16 = weight_quant.group_size == 16
+        is_float_type = weight_quant.type == QuantizationType.FLOAT
+        is_4_bits = weight_quant.num_bits == 4
+
+        return (is_weight_only and is_tensor_group_quant and is_float_type
+                and is_4_bits and is_group_size_16 and is_symmetric)
+
     def _is_static_tensor_w8a8(self, weight_quant: BaseModel,
                                input_quant: BaseModel) -> bool:
         is_8_bits = weight_quant.num_bits == input_quant.num_bits == 8
@@ -275,6 +311,40 @@ class CompressedTensorsConfig(QuantizationConfig):
             input_quant.strategy == QuantizationStrategy.TENSOR)
         return is_symmetric_activation and is_per_tensor_activation
 
+    def _is_mxfp8_w8a8(self, weight_quant: BaseModel,
+                     input_quant: BaseModel) -> bool:
+        # FIXME: (Yi) enhance check 
+        # Confirm weights and activations quantized.
+        if weight_quant is None or input_quant is None:
+            return False
+
+        # Confirm weight scheme is supported.
+        is_floating_point = (weight_quant.type == QuantizationType.FLOAT
+                             and input_quant.type == QuantizationType.FLOAT)
+        is_symmetric_weight = weight_quant.symmetric
+        is_static_weight = not weight_quant.dynamic
+        is_per_tensor_group_weight = (weight_quant.strategy in [
+            
+            QuantizationStrategy.TENSOR_GROUP
+        ])
+        if not (
+            is_floating_point
+            and is_symmetric_weight
+            and is_static_weight
+            and is_per_tensor_group_weight
+        ):
+            return False
+
+        # Dynamic quantization is always supported if weights supported.
+        if input_quant.dynamic:
+            return True
+
+        # Confirm activation scheme is supported.
+        is_symmetric_activation = input_quant.symmetric
+        is_per_tensor_activation = (
+            input_quant.strategy == QuantizationStrategy.TENSOR)
+        return is_symmetric_activation and is_per_tensor_activation
+
     def _is_fp8_w8a8_sm90(self, weight_quant: BaseModel,
                           input_quant: BaseModel) -> bool:
         return (self._check_scheme_supported(90, error=False, match_exact=True)
@@ -316,7 +386,7 @@ class CompressedTensorsConfig(QuantizationConfig):
     def _get_scheme_from_parts(
             self, weight_quant: BaseModel,
             input_quant: BaseModel) -> "CompressedTensorsScheme":
-
+        # breakpoint()
         # Detect If Mixed Precision
         if self._is_wNa16_group_channel(weight_quant, input_quant):
             if (self.quant_format == CompressionFormat.marlin_24.value
@@ -336,6 +406,9 @@ class CompressedTensorsConfig(QuantizationConfig):
                     actorder=weight_quant.actorder)
 
         if is_activation_quantization_format(self.quant_format):
+            if self._is_fp4a4_nvfp4(weight_quant, input_quant):
+                return CompressedTensorsW4A4Fp4()
+
             if self._is_fp8_w8a8(weight_quant, input_quant):
                 is_fp8_w8a8_supported = current_platform.is_hpu() or \
                     self._check_scheme_supported(
@@ -352,6 +425,18 @@ class CompressedTensorsConfig(QuantizationConfig):
                     return CompressedTensorsW8A16Fp8(
                         strategy=weight_quant.strategy,
                         is_static_input_scheme=not input_quant.dynamic)
+
+            if self._is_mxfp8_w8a8(weight_quant, input_quant):
+                from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
+                    CompressedTensorsW8A8MXFp8,
+                )
+
+                return CompressedTensorsW8A8MXFp8(
+                    strategy=weight_quant.strategy,
+                    is_static_input_scheme=(
+                        input_quant and not input_quant.dynamic
+                    ),
+                )
 
             # note: input_quant can be None
             if self._is_fp8_w8a16(weight_quant, input_quant):
@@ -580,7 +665,9 @@ class CompressedTensorsLinearMethod(LinearMethodBase):
         layer input.  See LinearMethodBase for param details
 
         """
-        if current_platform.is_hpu():
+
+        # Note: On HPU, for dynamic standard FP8 linear, we use this path
+        if current_platform.is_hpu() and envs.VLLM_HPU_FORCE_CHANNEL_FP8:
             if layer.weight_scale.dim() > 1:
                 weight_scale = layer.weight_scale.transpose(0, 1)
             else:
