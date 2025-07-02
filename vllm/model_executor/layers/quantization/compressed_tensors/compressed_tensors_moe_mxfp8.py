@@ -39,11 +39,25 @@ from .schemes.compressed_tensors_w8a8_mxfp8 import (
 )
 
 
+def run_mxfp8_emulations_v2(x, dequnat_weight, bias=None):
+    dequnat_weight = dequnat_weight.to(x.dtype)
+    if not envs.VLLM_DISABLE_INPUT_QDQ:
+        x_scale, x_quant = quant_mx_fp8(x)
+        dequant_x = dequant_mx_fp8(
+            weight_fp8=x_quant,
+            scale_e8m0=x_scale,
+            block_size=32,
+        )
+        x = dequant_x.to(x.dtype)
+    out = x @ dequnat_weight.t()
+    return out.to(x.dtype) + (bias if bias is not None else 0)
+
 def run_mxfp8_emulations(x, weight, weight_scale, bias=None):
     dequnat_weight = dequant_mx_fp8(
         weight_fp8=weight.data,
         scale_e8m0=weight_scale.data,
         block_size=32,
+        use_float_scale=envs.VLLM_PREPROCESS_MOE_SCALE,
     )
     dequnat_weight = dequnat_weight.to(x.dtype)
     if not envs.VLLM_DISABLE_INPUT_QDQ:
@@ -104,7 +118,10 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
         )
 
         self.rocm_aiter_moe_enabled = is_rocm_aiter_moe_enabled()
-
+        self.mask_weights_buffer = None
+        self.bt_threshold = 4096
+        self.pre_processed_scale = False
+        
     def create_weights(
         self,
         layer: torch.nn.Module,
@@ -235,11 +252,29 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
         )
-        torch.hpu.synchronize()
+        # htorch.core.mark_step()
+        # torch.hpu.synchronize()
 
         if envs.VLLM_USE_STATIC_MOE_HPU:
+            if envs.VLLM_PREPROCESS_MOE_SCALE and not self.pre_processed_scale:
+                from .schemes.compressed_tensors_w8a8_mxfp8 import get_fp_scale
 
-            htorch.core.mark_step()
+                w13_weight_scale = layer.w13_weight_scale.data
+                w13_weight_scale_fp = get_fp_scale(w13_weight_scale)
+                del layer.w13_weight_scale
+                layer.w13_weight_scale = torch.nn.Parameter(
+                    w13_weight_scale_fp, requires_grad=False
+                )
+                # breakpoint()
+                w2_weight_scale = layer.w2_weight_scale.data
+                w2_weight_scale_fp = get_fp_scale(w2_weight_scale)
+                del layer.w2_weight_scale
+                layer.w2_weight_scale = torch.nn.Parameter(
+                    w2_weight_scale_fp, requires_grad=False
+                )
+
+                self.pre_processed_scale = True
+                    
             num_experts, intermediate_size_per_partition_2x, _ = (
                 layer.w13_weight.shape
             )
@@ -258,69 +293,165 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             topk_weights = topk_weights.to(x.dtype)
             experts_mask.scatter_(-1, topk_ids, topk_weights)
             experts_mask = experts_mask.transpose(0, 1)
-
-            mask_weights = torch.zeros(
-                (num_all_tokens, total_num_experts),
-                dtype=x.dtype,
-                device=x.device,
-            )
+            
+            bt = num_all_tokens
+            if envs.VLLM_ENABLE_MOE_MASK_BUFFER:
+                
+                if (self.mask_weights_buffer is None
+                        or self.mask_weights_buffer.dtype != x.dtype
+                        or self.mask_weights_buffer.device != x.device
+                        or self.mask_weights_buffer.shape[0] < bt
+                        or self.mask_weights_buffer.shape[1] < total_num_experts):
+                    if (bt > self.bt_threshold):
+                        mask_weights = torch.zeros((bt, total_num_experts),
+                                                dtype=x.dtype,
+                                                device=x.device)
+                        if (self.mask_weights_buffer is None
+                                and self.bt_threshold != 0):
+                            self.mask_weights_buffer = torch.zeros(
+                                (self.bt_threshold, total_num_experts),
+                                dtype=x.dtype,
+                                device=x.device)
+                    else:
+                        self.mask_weights_buffer = torch.zeros(
+                            (bt, total_num_experts),
+                            dtype=x.dtype,
+                            device=x.device)
+                        mask_weights = self.mask_weights_buffer
+                else:
+                    self.mask_weights_buffer.zero_()
+                    mask_weights = self.mask_weights_buffer
+            else:
+                mask_weights = torch.zeros(
+                    (num_all_tokens, total_num_experts),
+                    dtype=x.dtype,
+                    device=x.device,
+                )
+            
             mask_weights.scatter_(-1, topk_ids, 1)
+            mask_weights = mask_weights[:bt, :total_num_experts]
             mask_weights = mask_weights.transpose(0, 1)
             # Note: ep_size equal tp_size
             ep_rank = get_tensor_model_parallel_rank()
             ep_shift = ep_rank * num_experts
-            htorch.core.mark_step()
-            w13_weight = layer.w13_weight.data
-            w13_weight_scale = layer.w13_weight_scale.data
-            w2_weight = layer.w2_weight.data
-            w2_weight_scale = layer.w2_weight_scale.data
-            for expert_index in range(num_experts):
-                mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
-                current_state_static = x * mask_weight
+            # htorch.core.mark_step()
+            if not envs.VLLM_STATIC_MOE_DEQUANT_WEIGHT_ONCE:
+                w13_weight = layer.w13_weight.data
+                w13_weight_scale = layer.w13_weight_scale.data
+                w2_weight = layer.w2_weight.data
+                w2_weight_scale = layer.w2_weight_scale.data
 
-                local_w13 = w13_weight[expert_index]
-                local_w13_scale = w13_weight_scale[expert_index]
+                    
+                for expert_index in range(num_experts):
+                    mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
+                    current_state_static = x * mask_weight
 
-                local_w2 = w2_weight[expert_index]
-                local_w2_scale = w2_weight_scale[expert_index]
+                    local_w13 = w13_weight[expert_index]
+                    local_w13_scale = w13_weight_scale[expert_index]
 
-                local_w1 = local_w13[:intermediate_size_per_partition, ...]
-                local_w1_scale = local_w13_scale[
-                    :intermediate_size_per_partition, ...
-                ]
+                    local_w2 = w2_weight[expert_index]
+                    local_w2_scale = w2_weight_scale[expert_index]
 
-                local_w3 = local_w13[intermediate_size_per_partition:, ...]
-                local_w3_scale = local_w13_scale[
-                    intermediate_size_per_partition:, ...
-                ]
+                    local_w1 = local_w13[:intermediate_size_per_partition, ...]
+                    local_w1_scale = local_w13_scale[
+                        :intermediate_size_per_partition, ...
+                    ]
+
+                    local_w3 = local_w13[intermediate_size_per_partition:, ...]
+                    local_w3_scale = local_w13_scale[
+                        intermediate_size_per_partition:, ...
+                    ]
 
 
-                local_w1_out = run_mxfp8_emulations(
-                    x=current_state_static,
-                    weight=local_w1,
-                    weight_scale=local_w1_scale,
+                    local_w1_out = run_mxfp8_emulations(
+                        x=current_state_static,
+                        weight=local_w1,
+                        weight_scale=local_w1_scale,
+                    )
+                    local_w3_out = run_mxfp8_emulations(
+                        x=current_state_static,
+                        weight=local_w3,
+                        weight_scale=local_w3_scale,
+                    )
+                    w13_out = act_fn(local_w1_out) * local_w3_out
+
+                    local_w2_out = run_mxfp8_emulations(
+                        x=w13_out,
+                        weight=local_w2,
+                        weight_scale=local_w2_scale,
+                    )
+                    padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
+                        1
+                    )
+                    local_w2_out = local_w2_out * padded_weight
+                    if expert_index == 0:
+                        final_hidden_states = local_w2_out * padded_weight
+                    else:
+                        final_hidden_states.add_(local_w2_out * padded_weight)
+            else:
+                w13_weight = layer.w13_weight.data
+                w13_weight_scale = layer.w13_weight_scale.data
+                w2_weight = layer.w2_weight.data
+                w2_weight_scale = layer.w2_weight_scale.data
+                dequant_w13_weight = dequant_mx_fp8(
+                    weight_fp8=w13_weight,
+                    scale_e8m0=w13_weight_scale,
+                    block_size=32,
+                    use_float_scale=envs.VLLM_PREPROCESS_MOE_SCALE,
                 )
-                local_w3_out = run_mxfp8_emulations(
-                    x=current_state_static,
-                    weight=local_w3,
-                    weight_scale=local_w3_scale,
+                dequant_w2_weight = dequant_mx_fp8(
+                    weight_fp8=w2_weight,
+                    scale_e8m0=w2_weight_scale,
+                    block_size=32,
+                    use_float_scale=envs.VLLM_PREPROCESS_MOE_SCALE,
                 )
-                w13_out = act_fn(local_w1_out) * local_w3_out
 
-                local_w2_out = run_mxfp8_emulations(
-                    x=w13_out,
-                    weight=local_w2,
-                    weight_scale=local_w2_scale,
-                )
-                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
-                    1
-                )
-                local_w2_out = local_w2_out * padded_weight
-                if expert_index == 0:
-                    final_hidden_states = local_w2_out
-                else:
-                    final_hidden_states = final_hidden_states + local_w2_out
-                htorch.core.mark_step()
-                torch.hpu.synchronize()
+                for expert_index in range(num_experts):
+                    mask_weight = mask_weights[
+                        expert_index + ep_shift
+                    ].unsqueeze(1)
+                    current_state_static = x * mask_weight
+
+                    local_w13 = dequant_w13_weight[expert_index]
+                    # local_w13_scale = w13_weight_scale[expert_index]
+
+                    local_w2 = dequant_w2_weight[expert_index]
+                    # local_w2_scale = w2_weight_scale[expert_index]
+
+                    local_w1 = local_w13[:intermediate_size_per_partition, ...]
+                    # local_w1_scale = local_w13_scale[
+                    #     :intermediate_size_per_partition, ...
+                    # ]
+
+                    local_w3 = local_w13[intermediate_size_per_partition:, ...]
+                    # local_w3_scale = local_w13_scale[
+                    #     intermediate_size_per_partition:, ...
+                    # ]
+
+                    local_w1_out = run_mxfp8_emulations_v2(
+                        x=current_state_static,
+                        dequnat_weight=local_w1,
+                    )
+                    local_w3_out = run_mxfp8_emulations_v2(
+                        x=current_state_static,
+                        dequnat_weight=local_w3,
+                    )
+                    w13_out = act_fn(local_w1_out) * local_w3_out
+
+                    local_w2_out = run_mxfp8_emulations_v2(
+                        x=w13_out,
+                        dequnat_weight=local_w2,
+                    )
+                    padded_weight = experts_mask[
+                        expert_index + ep_shift
+                    ].unsqueeze(1)
+                    local_w2_out = local_w2_out * padded_weight
+                    if expert_index == 0:
+                        final_hidden_states = local_w2_out * padded_weight
+                    else:
+                        final_hidden_states.add_(local_w2_out * padded_weight)
+
+                # htorch.core.mark_step()
+                # torch.hpu.synchronize()
                 
             return final_hidden_states

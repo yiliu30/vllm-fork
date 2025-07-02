@@ -10,9 +10,9 @@ model_path = "/mnt/disk3/yiliu4/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor/"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.3-70B-Instruct-NVFP4-llmc"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.2-1B-Instruct-MXFP8-llmc"
-model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.3-70B-Instruct-MXFP8-llmc"
-model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc"
-model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-R1-bf16-MXFP8-4L-llmc/"
+# model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.3-70B-Instruct-MXFP8-llmc"
+# model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc"
+# model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-R1-bf16-MXFP8-4L-llmc/"
 model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-V2-Lite-MXFP8-OFFLINE"
 # TP8 EP8
 #  DEBUG 07-01 01:18:01 [llm_engine.py:1517] Stopping remote worker execution loop.
@@ -86,9 +86,6 @@ os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"
 os.environ["VLLM_HPU_FORCE_CHANNEL_FP8"] = "0"
 os.environ["PT_HPUGRAPH_DISABLE_TENSOR_CACHE"] = "1"
 os.environ["VLLM_DELAYED_SAMPLING"] = "true"
-os.environ["VLLM_MLA_DISABLE_REQUANTIZATION"] = "1"
-os.environ["VLLM_MLA_PERFORM_MATRIX_ABSORPTION"] = "0"
-
 
 if "DeepSeek" in model_path:
     # os.environ["VLLM_DISABLE_INPUT_QDQ"] = "1"
@@ -153,7 +150,7 @@ def main(args):
         #   quantization="inc",
         max_model_len=2048,
         max_num_batched_tokens=2048,
-        # enforce_eager=True,
+        enforce_eager=True,
         trust_remote_code=True,
         dtype="bfloat16",
         tensor_parallel_size=tp_size,

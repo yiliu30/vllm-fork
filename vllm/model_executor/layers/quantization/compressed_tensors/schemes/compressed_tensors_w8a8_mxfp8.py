@@ -27,6 +27,8 @@ from vllm.model_executor.parameter import (
     PerTensorScaleParameter,
 )
 from vllm.platforms import current_platform
+from vllm.logger import init_logger
+logger = init_logger(__name__)
 
 __all__ = ["CompressedTensorsW8A8MXFp8"]
 
@@ -47,9 +49,16 @@ def get_fp_scale(scale_e8m0):
     
     return s_fp
 
+import vllm.envs as envs
 
-def dequant_mx_fp8(weight_fp8, scale_e8m0, block_size):
-    scale_float = get_fp_scale(scale_e8m0)
+def dequant_mx_fp8(weight_fp8, scale_e8m0, block_size, use_float_scale=False):
+    assert not use_float_scale, f"use_float_scale is not supported for MXFP8 dequantization, got {use_float_scale}"
+    if use_float_scale:
+        assert scale_e8m0.dtype in  (torch.float32, torch.bfloat16), f"scale_e8m0 should be float32, got {scale_e8m0.dtype}"
+        scale_float = scale_e8m0
+    else:
+        assert scale_e8m0.dtype == torch.uint8, f"scale_e8m0 should be uint8, got {scale_e8m0.dtype}"
+        scale_float = get_fp_scale(scale_e8m0)
     weight_bf16 = weight_fp8.to(torch.bfloat16)
     weight_original_shape = weight_bf16.shape
     weight_bf16 = weight_bf16.reshape(-1, block_size)
@@ -57,6 +66,21 @@ def dequant_mx_fp8(weight_fp8, scale_e8m0, block_size):
     dequant_weight = weight_bf16 * scale_float
     dequant_weight = dequant_weight.reshape(weight_original_shape)
     return dequant_weight
+
+
+def dequant_mx_fp8_v2(weight_fp8, scale_e8m0, block_size):
+    if envs.VLLM_FAKE_MX_DQ:
+        logger.warning_once("!!!! Using fake MX dequantization, the result is correct !!!!")
+        return weight_fp8.to(torch.bfloat16)
+    if not envs.VLLM_PREPROCESS_MOE_SCALE:
+        scale_e8m0 = get_fp_scale(scale_e8m0)
+    weight_fp8 = weight_fp8.to(torch.bfloat16)
+    weight_original_shape = weight_fp8.shape
+    weight_fp8 = weight_fp8.view(-1, block_size)
+    scale_e8m0 = scale_e8m0.view(-1, 1)
+    return  weight_fp8.mul_(scale_e8m0).view(weight_original_shape)
+    # dequant_weight = dequant_weight.reshape(weight_original_shape)
+    # return dequant_weight
 
 def quant_mx_fp8(tensor):
     from .torchao_patch import (
@@ -83,6 +107,7 @@ class CompressedTensorsW8A8MXFp8(CompressedTensorsScheme):
         self.is_static_input_scheme = is_static_input_scheme
         # self.fp8_linear = Fp8LinearOp(use_per_token_if_dynamic=True)
         self.group_size = 32
+        self.pre_processed_scale = False
 
     @classmethod
     def get_min_capability(cls) -> int:
@@ -148,14 +173,24 @@ class CompressedTensorsW8A8MXFp8(CompressedTensorsScheme):
                       layer: torch.nn.Module,
                       x: torch.Tensor,
                       bias: Optional[torch.Tensor] = None) -> torch.Tensor:
-        
+        if envs.VLLM_PREPROCESS_MOE_SCALE and not self.pre_processed_scale:
+            weight_scale = layer.weight_scale
+            weight_scale_fp = get_fp_scale(weight_scale.data)
+            del layer.weight_scale
+            layer.weight_scale = torch.nn.Parameter(
+                weight_scale_fp,
+                requires_grad=False
+            )
+            self.pre_processed_scale = True
+            
         # dequant weight
         weight = layer.weight
         weight_scale = layer.weight_scale
         dequnat_weight = dequant_mx_fp8(
             weight_fp8=weight.data,
             scale_e8m0=weight_scale.data,
-            block_size=self.group_size
+            block_size=self.group_size,
+            use_float_scale=envs.VLLM_PREPROCESS_MOE_SCALE
             )
         dequnat_weight = dequnat_weight.to(x.dtype)
         # q-dq input
