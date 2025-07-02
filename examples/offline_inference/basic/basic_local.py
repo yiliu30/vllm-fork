@@ -43,11 +43,11 @@ model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantization_
 model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-V2-Lite-NVFP4"
 model="/data5/yliu7/HF_HOME/Llama-3.2-1B-Instruct-FP8"
 model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP8"
-model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-R1-bf16-NVFP4"
+# model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-R1-bf16-NVFP4"
 
 
-model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16-MXFP8"
-model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16/DeepSeek-R1-bf16-mxfp8-offline"
+# model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16-MXFP8"
+# model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16/DeepSeek-R1-bf16-mxfp8-offline"
 
 # model="/data5/yliu7/HF_HOME/meta-llama/Llama-3.2-1B-Instruct-MXFP8-OFFLINE"
 # Generated Outputs:
@@ -121,7 +121,7 @@ if "deepseek" in model.lower():
     os.environ["VLLM_USE_STATIC_MOE_HPU"] = "1"
 # model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-V2-Lite-NVFP4"
 # model="/data5/yliu7/HF_HOME/Llama-3.2-1B-Instruct-MXFP8"
-def main():
+def main(args):
     # Create an LLM.
     tp_size = args.tp 
     kwargs = {}
@@ -167,3 +167,10 @@ if __name__ == "__main__":
     parser.add_argument("--ep", type=int, default=1, help="Pipeline parallel size.")
     args = parser.parse_args()
     main(args)
+
+
+# p basic_local.py
+# # tp 2 only
+# p basic_local.py --tp 2
+# # tp 2 ep 2
+# p basic_local.py --tp 2 --ep 2
