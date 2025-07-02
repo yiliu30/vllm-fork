@@ -105,7 +105,8 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
 
         self.rocm_aiter_moe_enabled = is_rocm_aiter_moe_enabled()
         
-        self.pre_processed_scale = False
+        self.mask_weights_buffer = None
+        self.bt_threshold = 4096
 
     def create_weights(
         self,
@@ -279,12 +280,40 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             experts_mask.scatter_(-1, topk_ids, topk_weights)
             experts_mask = experts_mask.transpose(0, 1)
 
-            mask_weights = torch.zeros(
-                (num_all_tokens, total_num_experts),
-                dtype=x.dtype,
-                device=x.device,
-            )
+            bt = num_all_tokens
+            if (self.mask_weights_buffer is None
+                    or self.mask_weights_buffer.dtype != x.dtype
+                    or self.mask_weights_buffer.device != x.device
+                    or self.mask_weights_buffer.shape[0] < bt
+                    or self.mask_weights_buffer.shape[1] < total_num_experts):
+                if (bt > self.bt_threshold):
+                    mask_weights = torch.zeros((bt, total_num_experts),
+                                            dtype=x.dtype,
+                                            device=x.device)
+                    if (self.mask_weights_buffer is None
+                            and self.bt_threshold != 0):
+                        self.mask_weights_buffer = torch.zeros(
+                            (self.bt_threshold, total_num_experts),
+                            dtype=x.dtype,
+                            device=x.device)
+                else:
+                    self.mask_weights_buffer = torch.zeros(
+                        (bt, total_num_experts),
+                        dtype=x.dtype,
+                        device=x.device)
+                    mask_weights = self.mask_weights_buffer
+            else:
+                self.mask_weights_buffer.zero_()
+                mask_weights = self.mask_weights_buffer
+            # else:
+            #     mask_weights = torch.zeros(
+            #         (num_all_tokens, total_num_experts),
+            #         dtype=x.dtype,
+            #         device=x.device,
+            #     )
+
             mask_weights.scatter_(-1, topk_ids, 1)
+            mask_weights = mask_weights[:bt, :total_num_experts]
             mask_weights = mask_weights.transpose(0, 1)
             # Note: ep_size equal tp_size
             ep_rank = get_tensor_model_parallel_rank()
