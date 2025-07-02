@@ -123,6 +123,13 @@ if "deepseek" in model.lower():
 # model="/data5/yliu7/HF_HOME/Llama-3.2-1B-Instruct-MXFP8"
 def main():
     # Create an LLM.
+    tp_size = args.tp 
+    kwargs = {}
+    if args.tp > 1:
+        kwargs["distributed_executor_backend"] = "mp"
+    if args.ep > 1:
+        kwargs["enable_expert_parallel"] = True
+        os.environ["VLLM_EP_SIZE"] = f"{args.ep}"
     llm = LLM(
         # model="facebook/opt-125m"
         # model="/data5/yliu7/HF_HOME/meta-llama/Llama-3.2-1B-Instruct/",
@@ -131,9 +138,9 @@ def main():
         trust_remote_code=True,
         max_model_len=2048,
         max_num_batched_tokens=2048,
-        tensor_parallel_size=2,
-        enable_expert_parallel=True,
-        gpu_memory_utilization=0.5
+        tensor_parallel_size=tp_size,
+        gpu_memory_utilization=0.65,
+        **kwargs,
     )
     # Generate texts from the prompts.
     # The output is a list of RequestOutput objects
@@ -150,4 +157,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run basic inference.")
+    parser.add_argument("--model_path", type=str, default=model,
+                        help="Path to the model directory.")
+    # tp size
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size.")
+    # ep size
+    parser.add_argument("--ep", type=int, default=1, help="Pipeline parallel size.")
+    args = parser.parse_args()
+    main(args)
