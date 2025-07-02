@@ -60,6 +60,19 @@ def run_mxfp8_emulations(x, weight, weight_scale, bias=None):
 
 import habana_frameworks.torch as htorch
 
+def run_mxfp8_emulations_float_weight(x, dequnat_weight, bias=None):
+    dequnat_weight = dequnat_weight.to(x.dtype)
+    if not envs.VLLM_DISABLE_INPUT_QDQ:
+        x_scale, x_quant = quant_mx_fp8(x)
+        dequant_x = dequant_mx_fp8(
+            weight_fp8=x_quant,
+            scale_e8m0=x_scale,
+            block_size=32,
+        )
+        x = dequant_x.to(x.dtype)
+    out = x @ dequnat_weight.t()
+    return out.to(x.dtype) + (bias if bias is not None else 0)
+
 class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
     def __init__(
         self,

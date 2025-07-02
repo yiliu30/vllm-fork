@@ -10,6 +10,7 @@ from torch.nn import Parameter
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsScheme,
 )
+import vllm.envs as envs
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
     Fp8LinearOp,
@@ -52,11 +53,18 @@ def get_fp_scale(scale_e8m0):
 
 
 def dequant_mx_fp8(weight_fp8, scale_e8m0, block_size):
-    if scale_e8m0.dtype != torch.uint8:
-        assert scale_e8m0.dtype in [torch.float32, torch.bfloat16], f"Unsupported scale_e8m0 dtype: {scale_e8m0.dtype}"
-        scale_float = scale_e8m0
-    else:
-        scale_float = get_fp_scale(scale_e8m0)
+    # FIXME: (Yi) add support for scale_e8m0 in uint8
+    # if scale_e8m0.dtype != torch.uint8:
+    #     assert scale_e8m0.dtype in [torch.float32, torch.bfloat16], f"Unsupported scale_e8m0 dtype: {scale_e8m0.dtype}"
+    #     scale_float = scale_e8m0
+    # else:
+    #     scale_float = get_fp_scale(scale_e8m0)
+    if envs.VLLM_DISABLE_INPUT_QDQ:
+        assert scale_e8m0.dtype in [
+            torch.float32,
+            torch.bfloat16,
+        ], f"Unsupported scale_e8m0 dtype: {scale_e8m0.dtype}"
+    scale_float = scale_e8m0
         
     weight_bf16 = weight_fp8.to(torch.bfloat16)
     weight_original_shape = weight_bf16.shape
@@ -174,13 +182,14 @@ class CompressedTensorsW8A8MXFp8(CompressedTensorsScheme):
             )
         dequnat_weight = dequnat_weight.to(x.dtype)
         # q-dq input
-        x_scale, x_quant = quant_mx_fp8(x)
-        dequant_x = dequant_mx_fp8(
-            weight_fp8=x_quant,
-            scale_e8m0=x_scale,
-            block_size=self.group_size
-        )
-        x = dequant_x.to(x.dtype)
+        if not envs.VLLM_DISABLE_INPUT_QDQ:
+            x_scale, x_quant = quant_mx_fp8(x)
+            dequant_x = dequant_mx_fp8(
+                weight_fp8=x_quant,
+                scale_e8m0=x_scale,
+                block_size=self.group_size,
+            )
+            x = dequant_x.to(x.dtype)
         out = x @ dequnat_weight.t()
         return out.to(x.dtype) + (bias if bias is not None else 0)
         
