@@ -643,7 +643,7 @@ class DeepseekV2Model(nn.Module):
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
         self.config = config
-
+        # config.num_hidden_layers = 31
         self.vocab_size = config.vocab_size
 
         if get_pp_group().is_first_rank:
@@ -810,7 +810,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                 if is_pp_missing_parameter(name, self):
                     continue
-
+                if name not in params_dict:
+                    continue
                 param = params_dict[name]
                 weight_loader = param.weight_loader
                 weight_loader(param, loaded_weight, shard_id)
@@ -824,7 +825,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                     if is_pp_missing_parameter(name, self):
                         continue
-
+                    if name not in params_dict:
+                        continue
                     param = params_dict[name]
                     weight_loader = param.weight_loader
                     weight_loader(param,
@@ -845,7 +847,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                     if is_pp_missing_parameter(name, self):
                         continue
-
+                    if name not in params_dict:
+                        continue
                     param = params_dict[name]
                     weight_loader = getattr(param, "weight_loader",
                                             default_weight_loader)
