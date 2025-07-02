@@ -33,10 +33,7 @@ __all__ = ["CompressedTensorsW8A8MXFp8"]
 
 def get_fp_scale(scale_e8m0):
     # https://github.com/pytorch/ao/blob/994a4ba6c869854fcaa6ca7e118fcbd75e6c28cc/torchao/prototype/mx_formats/mx_tensor.py#L337
-    from torchao.prototype.mx_formats.constants import (
-        E8M0_EXPONENT_BIAS,
-        E8M0_EXPONENT_NAN_VAL,
-    )
+    E8M0_EXPONENT_BIAS = 127
 
     scale_e8m0 = scale_e8m0.view(torch.uint8)
     s_offset = scale_e8m0.to(torch.int16) - E8M0_EXPONENT_BIAS
@@ -62,7 +59,7 @@ def dequant_mx_fp8(weight_fp8, scale_e8m0, block_size):
     return dequant_weight
 
 def quant_mx_fp8(tensor):
-    from torchao.prototype.mx_formats.mx_tensor import (
+    from .torchao_patch import (
         to_mx,
         ScaleCalculationMode,
     )

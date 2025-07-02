@@ -33,6 +33,33 @@ from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tenso
 logger = init_logger(__name__)
 
 
+from .schemes.compressed_tensors_w8a8_mxfp8 import (
+    dequant_mx_fp8,
+    quant_mx_fp8,
+)
+
+
+def run_mxfp8_emulations(x, weight, weight_scale, bias=None):
+    dequnat_weight = dequant_mx_fp8(
+        weight_fp8=weight.data,
+        scale_e8m0=weight_scale.data,
+        block_size=32,
+    )
+    dequnat_weight = dequnat_weight.to(x.dtype)
+    if not envs.VLLM_DISABLE_INPUT_QDQ:
+        x_scale, x_quant = quant_mx_fp8(x)
+        dequant_x = dequant_mx_fp8(
+            weight_fp8=x_quant,
+            scale_e8m0=x_scale,
+            block_size=32,
+        )
+        x = dequant_x.to(x.dtype)
+    out = x @ dequnat_weight.t()
+    return out.to(x.dtype) + (bias if bias is not None else 0)
+
+
+import habana_frameworks.torch as htorch
+
 class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
     def __init__(
         self,
@@ -208,8 +235,11 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
         )
+        torch.hpu.synchronize()
 
         if envs.VLLM_USE_STATIC_MOE_HPU:
+
+            htorch.core.mark_step()
             num_experts, intermediate_size_per_partition_2x, _ = (
                 layer.w13_weight.shape
             )
@@ -239,16 +269,20 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             # Note: ep_size equal tp_size
             ep_rank = get_tensor_model_parallel_rank()
             ep_shift = ep_rank * num_experts
-
+            htorch.core.mark_step()
+            w13_weight = layer.w13_weight.data
+            w13_weight_scale = layer.w13_weight_scale.data
+            w2_weight = layer.w2_weight.data
+            w2_weight_scale = layer.w2_weight_scale.data
             for expert_index in range(num_experts):
                 mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
                 current_state_static = x * mask_weight
 
-                local_w13 = layer.w13_weight[expert_index]
-                local_w13_scale = layer.w13_weight_scale[expert_index]
+                local_w13 = w13_weight[expert_index]
+                local_w13_scale = w13_weight_scale[expert_index]
 
-                local_w2 = layer.w2_weight[expert_index]
-                local_w2_scale = layer.w2_weight_scale[expert_index]
+                local_w2 = w2_weight[expert_index]
+                local_w2_scale = w2_weight_scale[expert_index]
 
                 local_w1 = local_w13[:intermediate_size_per_partition, ...]
                 local_w1_scale = local_w13_scale[
@@ -260,28 +294,6 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
                     intermediate_size_per_partition:, ...
                 ]
 
-                from .schemes.compressed_tensors_w8a8_mxfp8 import (
-                    dequant_mx_fp8,
-                    quant_mx_fp8,
-                )
-
-                def run_mxfp8_emulations(x, weight, weight_scale, bias=None):
-                    dequnat_weight = dequant_mx_fp8(
-                        weight_fp8=weight.data,
-                        scale_e8m0=weight_scale.data,
-                        block_size=self.group_size,
-                    )
-                    dequnat_weight = dequnat_weight.to(x.dtype)
-                    if not envs.VLLM_DISABLE_INPUT_QDQ:
-                        x_scale, x_quant = quant_mx_fp8(x)
-                        dequant_x = dequant_mx_fp8(
-                            weight_fp8=x_quant,
-                            scale_e8m0=x_scale,
-                            block_size=self.group_size,
-                        )
-                        x = dequant_x.to(x.dtype)
-                    out = x @ dequnat_weight.t()
-                    return out.to(x.dtype) + (bias if bias is not None else 0)
 
                 local_w1_out = run_mxfp8_emulations(
                     x=current_state_static,
@@ -307,5 +319,8 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
                 if expert_index == 0:
                     final_hidden_states = local_w2_out
                 else:
-                    final_hidden_states += local_w2_out
+                    final_hidden_states = final_hidden_states + local_w2_out
+                htorch.core.mark_step()
+                torch.hpu.synchronize()
+                
             return final_hidden_states
