@@ -1131,10 +1131,17 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         return seq_group_metadata_list, real_batch_size, batch_size_padded
 
     def _maybe_wrap_in_hpu_graph(self, *args, **kwargs):
+        log_frequency = envs.VLLM_HPU_LOG_HPU_GRAPH
+        graph_kwargs = {}
+        if log_frequency > 0:
+            graph_kwargs = {"verbose": True, "log_frequency": log_frequency}
         if htorch.utils.internal.is_lazy():
-            return htorch.hpu.wrap_in_hpu_graph(HpuModelAdapter(
-                *args, **kwargs),
-                                                disable_tensor_cache=True)
+            return htorch.hpu.wrap_in_hpu_graph(
+                HpuModelAdapter(*args, **kwargs),
+                disable_tensor_cache=True,
+                free_inplace=True,
+                **graph_kwargs,
+            )
         else:
             return HpuModelAdapter(*args, **kwargs)
 
@@ -2458,6 +2465,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                              self.max_num_batched_tokens // max_seq_len)
         # Using batch_size 1 is profile multimodal models
         max_batch_size = max_batch_size if not self.model_is_mrope else 1
+        logger.info(f"profile_run: batch_size={max_batch_size}, seq_len={max_seq_len}")
         self.warmup_scenario(
             batch_size=max_batch_size,
             seq_len=max_seq_len,

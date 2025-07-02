@@ -748,6 +748,28 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_DISABLE_INPUT_QDQ":
     lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
 
+    # If set, 
+    "VLLM_HPU_LOG_HPU_GRAPH":
+    lambda: int(os.getenv("VLLM_HPU_LOG_HPU_GRAPH", "0")),
+
+    # If set, cast fp8 to bf16 directly without using the scale
+    "VLLM_FAKE_MX_DQ":
+    lambda: bool(int(os.getenv("VLLM_FAKE_MX_DQ", "0"))),
+
+    # If set, vLLM will use the MoE mask buffer to store the MoE mask
+    "VLLM_ENABLE_MOE_MASK_BUFFER":
+    lambda: bool(int(os.getenv("VLLM_ENABLE_MOE_MASK_BUFFER", "0"))),
+    
+    # If set, dequantize all fp8 weights to bf16 before expert forward pass.
+    "VLLM_STATIC_MOE_DEQUANT_WEIGHT_ONCE":
+    lambda: bool(int(os.getenv("VLLM_STATIC_MOE_DEQUANT_WEIGHT_ONCE", "0"))),
+    
+    # If set, pre process the MoE scale to bf16 before expert forward pass.
+    "VLLM_PREPROCESS_MOE_SCALE":
+    lambda: bool(int(os.getenv("VLLM_PREPROCESS_MOE_SCALE", "0"))),
+    
+    
+
 }
 
 # end-env-vars-definition

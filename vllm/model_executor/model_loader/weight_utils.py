@@ -432,6 +432,7 @@ def safetensors_weights_iterator(
     use_tqdm_on_load: bool,
 ) -> Generator[Tuple[str, torch.Tensor], None, None]:
     """Iterate over the weights in the model safetensor files."""
+    # hf_weights_files = hf_weights_files[:5]
     for st_file in tqdm(
             hf_weights_files,
             desc="Loading safetensors checkpoint shards",
