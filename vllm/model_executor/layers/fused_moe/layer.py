@@ -442,7 +442,7 @@ class FusedMoE(torch.nn.Module):
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
         self.params_dtype = params_dtype
-
+        self.prefix = prefix
         # Note: here we guard against accessing the TP and DP groups when
         # uninitialized (this happens when testing)
         self.tp_size = (tp_size if tp_size is not None else

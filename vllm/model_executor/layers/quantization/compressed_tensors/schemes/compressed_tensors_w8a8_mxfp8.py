@@ -10,6 +10,7 @@ from torch.nn import Parameter
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsScheme,
 )
+from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
     Fp8LinearOp,
     maybe_create_device_identity,
@@ -27,6 +28,8 @@ from vllm.model_executor.parameter import (
     PerTensorScaleParameter,
 )
 from vllm.platforms import current_platform
+
+logger = init_logger(__name__)
 
 __all__ = ["CompressedTensorsW8A8MXFp8"]
 
@@ -49,7 +52,12 @@ def get_fp_scale(scale_e8m0):
 
 
 def dequant_mx_fp8(weight_fp8, scale_e8m0, block_size):
-    scale_float = get_fp_scale(scale_e8m0)
+    if scale_e8m0.dtype != torch.uint8:
+        assert scale_e8m0.dtype in [torch.float32, torch.bfloat16], f"Unsupported scale_e8m0 dtype: {scale_e8m0.dtype}"
+        scale_float = scale_e8m0
+    else:
+        scale_float = get_fp_scale(scale_e8m0)
+        
     weight_bf16 = weight_fp8.to(torch.bfloat16)
     weight_original_shape = weight_bf16.shape
     weight_bf16 = weight_bf16.reshape(-1, block_size)
@@ -91,7 +99,14 @@ class CompressedTensorsW8A8MXFp8(CompressedTensorsScheme):
         return 80
 
     def process_weights_after_loading(self, layer) -> None:
-        return
+        weight_scale_data = layer.weight_scale.data
+        weight_scale_data_float = get_fp_scale(weight_scale_data)
+        del layer.weight_scale
+        layer.weight_scale = torch.nn.Parameter(
+            weight_scale_data_float,
+            requires_grad=False,
+        )
+        logger.warning_once(f"Pre-processed weight scale for {getattr(layer, 'prefix', None)  }" )
 
     def create_weights(self, layer: torch.nn.Module,
                        output_partition_sizes: list[int],

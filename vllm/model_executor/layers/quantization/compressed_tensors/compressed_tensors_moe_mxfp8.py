@@ -104,6 +104,8 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
         )
 
         self.rocm_aiter_moe_enabled = is_rocm_aiter_moe_enabled()
+        
+        self.pre_processed_scale = False
 
     def create_weights(
         self,
@@ -203,7 +205,26 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             layer.w2_input_scale = None
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        return
+        from .schemes.compressed_tensors_w8a8_mxfp8 import get_fp_scale
+        w13_weight_scale_data = layer.w13_weight_scale.data
+        w13_weight_scale_data_float = get_fp_scale(w13_weight_scale_data)
+        del layer.w13_weight_scale
+        layer.w13_weight_scale = torch.nn.Parameter(
+            w13_weight_scale_data_float,
+            requires_grad=False,
+        )
+        
+        w2_weight_scale_data = layer.w2_weight_scale.data
+        w2_weight_scale_data_float = get_fp_scale(w2_weight_scale_data)
+        del layer.w2_weight_scale
+        layer.w2_weight_scale = torch.nn.Parameter(
+            w2_weight_scale_data_float,
+            requires_grad=False,
+        )
+        
+        logger.warning_once(f"Pre-processed scales for {getattr(layer, 'prefix', None) }.")
+        htorch.core.mark_step()
+        torch.hpu.synchronize()
 
     def apply(
         self,
@@ -235,11 +256,10 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
         )
-        torch.hpu.synchronize()
+
 
         if envs.VLLM_USE_STATIC_MOE_HPU:
 
-            htorch.core.mark_step()
             num_experts, intermediate_size_per_partition_2x, _ = (
                 layer.w13_weight.shape
             )
@@ -269,7 +289,6 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
             # Note: ep_size equal tp_size
             ep_rank = get_tensor_model_parallel_rank()
             ep_shift = ep_rank * num_experts
-            htorch.core.mark_step()
             w13_weight = layer.w13_weight.data
             w13_weight_scale = layer.w13_weight_scale.data
             w2_weight = layer.w2_weight.data
@@ -319,8 +338,6 @@ class CompressedTensorsW8A8MXFp8MoEMethod(CompressedTensorsMoEMethod):
                 if expert_index == 0:
                     final_hidden_states = local_w2_out
                 else:
-                    final_hidden_states = final_hidden_states + local_w2_out
-                htorch.core.mark_step()
-                torch.hpu.synchronize()
+                    final_hidden_states.add_(local_w2_out)
                 
             return final_hidden_states
