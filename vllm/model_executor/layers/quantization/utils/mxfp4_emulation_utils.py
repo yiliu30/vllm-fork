@@ -24,7 +24,7 @@ def run_mxfp4_emulations(
                     scale_e8m0=input_scale,
                     elem_dtype="fp4_e2m1",
                     block_size=group_size,
-                    target_dtype=torch.bfloat16,
+                    target_dtype=x.dtype,
                     use_fp4_custom_triton_dequant_kernel=False,
                     pack_fp6=False)
 
