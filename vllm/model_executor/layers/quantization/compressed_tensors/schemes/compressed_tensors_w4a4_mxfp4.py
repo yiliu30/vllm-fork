@@ -80,25 +80,7 @@ class CompressedTensorsW4A4MXFp4(CompressedTensorsScheme):
 
 
     def process_weights_after_loading(self, layer) -> None:
-        return 
-        global_input_scale = layer.input_global_scale.max().to(torch.float32)
-        layer.input_global_scale = Parameter(global_input_scale,
-                                             requires_grad=False)
-
-        layer.weight_global_scale = Parameter(
-            layer.weight_global_scale.max().to(torch.float32),
-            requires_grad=False)
-
-        swizzled_weight_scale = self.swizzle_blockscale(layer.weight_scale)
-        layer.weight_scale_swizzled = Parameter(swizzled_weight_scale,
-                                                requires_grad=False)
-
-        # required by cutlass kernel; need Parameter, not ModelWeightParameter
-        layer.weight = Parameter(layer.weight_packed.data, requires_grad=False)
-
-        layer.alpha = Parameter(layer.input_global_scale *
-                                layer.weight_global_scale,
-                                requires_grad=False)
+        pass
 
     def apply_weights(self,
                       layer: torch.nn.Module,
