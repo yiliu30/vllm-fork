@@ -45,6 +45,8 @@ model="/data5/yliu7/HF_HOME/Llama-3.2-1B-Instruct-FP8"
 model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP8"
 model="/data5/zww/fast_config/Llama-3.2-1B-Instruct-w8g32"
 model="/data5/yliu7/HF_HOME/Llama-3.2-1B-Instruct-MXFP4"
+# USE_CT_UNPACK=1  VLLM_DISABLE_INPUT_QDQ=1  VLLM_USE_MXFP4_CT_EMULATIONS=1  p basic_local.py 
+model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP4"
 # model="/data5/zww/fast_config/DeepSeek-V2-Lite-w8g32/"
 # model="/data5/zww/fast_config/rtn_lite/DeepSeek-V2-Lite-w8g32/"
 # model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-R1-bf16-NVFP4"
