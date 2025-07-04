@@ -176,20 +176,30 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
             #     "w2_input_global_scale",
             # ]
             # # [num_experts, 2 * intermediate_size_per_partition, hidden_size//2]
-            num_experts, intermediate_size_per_partition_x2, _ = layer.w13_weight_packed.shape
-            intermediate_size_per_partition = intermediate_size_per_partition_x2 // 2
+            num_experts, intermediate_size_per_partition_x2, _ = (
+                layer.w13_weight_packed.shape
+            )
+            intermediate_size_per_partition = (
+                intermediate_size_per_partition_x2 // 2
+            )
             # FIXME: Handle mask
             act_fn = F.silu
             num_all_tokens, hidden_dim = x.shape
             num_experts = layer.local_num_experts
             total_num_experts = router_logits.size(-1)
-            experts_mask = torch.zeros((x.size(0), total_num_experts), dtype=x.dtype, device=x.device)
+            experts_mask = torch.zeros(
+                (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
+            )
             topk_ids = topk_ids.to(torch.int64)
             topk_weights = topk_weights.to(x.dtype)
             experts_mask.scatter_(-1, topk_ids, topk_weights)
             experts_mask = experts_mask.transpose(0, 1)
 
-            mask_weights = torch.zeros((num_all_tokens, total_num_experts), dtype=x.dtype, device=x.device)
+            mask_weights = torch.zeros(
+                (num_all_tokens, total_num_experts),
+                dtype=x.dtype,
+                device=x.device,
+            )
             mask_weights.scatter_(-1, topk_ids, 1)
             mask_weights = mask_weights.transpose(0, 1)
             # Note: ep_size equal tp_size
@@ -202,34 +212,27 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
 
                 local_w13_packed = layer.w13_weight_packed[expert_index]
                 local_w13_scale = layer.w13_weight_scale[expert_index]
-                # local_w13_global_scale = layer.w13_weight_global_scale[expert_index]
-                # local_w13_input_global_scale = layer.w13_input_global_scale[
-                #     expert_index
-                # ]
+
                 local_w2_packed = layer.w2_weight_packed[expert_index]
                 local_w2_scale = layer.w2_weight_scale[expert_index]
-                # local_w2_global_scale = layer.w2_weight_global_scale[expert_index]
-                # local_w2_input_global_scale = layer.w2_input_global_scale[expert_index]
 
                 local_w1_packed = local_w13_packed[
                     :intermediate_size_per_partition, ...
                 ]
-                local_w1_scale = local_w13_scale[:intermediate_size_per_partition, ...]
-                # local_w1_global_scale = local_w13_global_scale[0]
-                # local_w1_input_global_scale = local_w13_input_global_scale[0]
+                local_w1_scale = local_w13_scale[
+                    :intermediate_size_per_partition, ...
+                ]
 
                 local_w3_packed = local_w13_packed[
                     intermediate_size_per_partition:, ...
                 ]
-                local_w3_scale = local_w13_scale[intermediate_size_per_partition:, ...]
-                # local_w3_global_scale = local_w13_global_scale[1]
-                # local_w3_input_global_scale = local_w13_input_global_scale[1]
+                local_w3_scale = local_w13_scale[
+                    intermediate_size_per_partition:, ...
+                ]
 
                 from vllm.model_executor.layers.quantization.utils.mxfp4_emulation_utils import (
                     run_mxfp4_emulations,
                 )
-
-                # local_w13_input_global_scale_max = local_w13_input_global_scale.max()
 
                 local_w1_out = run_mxfp4_emulations(
                     x=current_state_static,
@@ -249,7 +252,9 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
                     weight=local_w2_packed,
                     weight_scale=local_w2_scale,
                 )
-                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(1)
+                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
+                    1
+                )
                 local_w2_out = local_w2_out * padded_weight
                 if expert_index == 0:
                     final_hidden_states = local_w2_out
