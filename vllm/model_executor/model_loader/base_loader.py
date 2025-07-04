@@ -37,7 +37,11 @@ class BaseModelLoader(ABC):
             with target_device:
                 model = initialize_model(vllm_config=vllm_config,
                                          model_config=model_config)
+                
             # Quantization does not happen in `load_weights` but after it
             self.load_weights(model, model_config)
             process_weights_after_loading(model, model_config, target_device)
+            print_model_state_dict(model)
         return model.eval()
+
+
