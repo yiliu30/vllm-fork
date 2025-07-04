@@ -14,6 +14,55 @@ model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/Llama-3.3-70B-Instruct-MX
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-R1-bf16-MXFP8-4L-llmc/"
 model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-V2-Lite-MXFP8-OFFLINE"
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP8-RTN"
+
+# Processed prompts: 100%|█| 4/4 [00:23<00:00,  5.79s/it, est. speed input:
+
+# Generated Outputs:
+# ------------------------------------------------------------
+# Prompt:    'Hello, my name is'
+# Output:    "*\nJohn *\nand I am looking for a job.\nI have finished my bachelor'"
+# Token IDs: (9, 185, 12014, 575, 185, 384, 304, 608, 2709, 327, 245, 3112, 13, 185, 40, 463, 7370, 601, 39544, 6)
+# ------------------------------------------------------------
+# Prompt:    'The president of the United States is'
+# Output:    ' not allowed to tweet about any of this stuff. It is a constitutional violation and the courts will have'
+# Token IDs: (441, 5987, 276, 29287, 786, 688, 280, 437, 6508, 13, 809, 317, 245, 33176, 22521, 285, 254, 20522, 543, 463)
+# ------------------------------------------------------------
+# Prompt:    'The capital of France is'
+# Output:    ' Paris. France has a population of about 65,400,000 people'
+# Token IDs: (8913, 13, 7239, 643, 245, 7125, 280, 786, 207, 21, 20, 11, 19, 15, 15, 11, 15, 15, 15, 1245)
+# ------------------------------------------------------------
+# Prompt:    'The future of AI is'
+# Output:    ' here. By 2025, it will have a huge impact on the world. The'
+# Token IDs: (1285, 13, 3563, 207, 17, 15, 17, 20, 11, 359, 543, 463, 245, 6791, 5454, 331, 254, 1843, 13, 429)
+# ------------------------------------------------------------
+# Adding requests: 100%|███████████████████| 4/4 [00:00<00:00, 3785.47it/s]
+# Processed prompts:   0%| | 0/4 [00:00<?, ?it/s, est. speed input: 0.00 toDEBUG 07-03 07:11:53 [llm_engine.py:1517] Stopping remote worker execution loop.
+# Processed prompts: 100%|█| 4/4 [00:01<00:00,  2.09it/s, est. speed input:
+# Time taken for second inference: 1.92 seconds
+# INFO 07-03 07:11:53 [multiproc_worker_utils.py:139] Terminating local vLLM worker processes
+
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP8-autoround"
+
+# Generated Outputs:
+# ------------------------------------------------------------
+# Prompt:    'Hello, my name is'
+# Output:    '*\nJohn *\nand I am looking for a job.\nI have applied for a job'
+# Token IDs: (9, 185, 12014, 575, 185, 384, 304, 608, 2709, 327, 245, 3112, 13, 185, 40, 463, 6315, 327, 245, 3112)
+# ------------------------------------------------------------
+# Prompt:    'The president of the United States is'
+# Output:    ' not allowed to tweet that his predecessor illegally spied on his campaign, even if the former president is'
+# Token IDs: (441, 5987, 276, 29287, 344, 586, 41529, 68749, 735, 1052, 331, 586, 7788, 11, 1236, 565, 254, 5676, 6847, 317)
+# ------------------------------------------------------------
+# Prompt:    'The capital of France is'
+# Output:    " Paris. The country's largest city is Paris, with a population of more than 10"
+# Token IDs: (8913, 13, 429, 3085, 6, 82, 8397, 3787, 317, 8913, 11, 366, 245, 7125, 280, 691, 853, 207, 16, 15)
+# ------------------------------------------------------------
+# Prompt:    'The future of AI is'
+# Output:    ' here. By 2025, it will have a huge impact on the world. The'
+# Token IDs: (1285, 13, 3563, 207, 17, 15, 17, 20, 11, 359, 543, 463, 245, 6791, 5454, 331, 254, 1843, 13, 429)
+# ------------------------------------------------------------
+
 # TP8 EP8
 #  DEBUG 07-01 01:18:01 [llm_engine.py:1517] Stopping remote worker execution loop.
 # Processed prompts: 100%|█| 4/4 [00:08<00:00,  2.19s/it, est. speed input: 2.97 toks/s, outp
@@ -74,6 +123,7 @@ model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-V2-Lite-MXFP8-OFFLINE"
 # Token IDs: (54362, 59408, 45098, 18862, 90197, 10193, 106668, 1366, 99105, 1719, 6384, 20378, 69452, 80531, 38433, 108491, 11276, 89976, 90418, 67586)
 
 # model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE"
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN-tiny"
 model_name = model_path.split("/")[-1]
 
 import os
