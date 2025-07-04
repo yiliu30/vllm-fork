@@ -38,8 +38,6 @@ class BaseModelLoader(ABC):
                 model = initialize_model(vllm_config=vllm_config,
                                          model_config=model_config)
                 
-            print(f"\nmodel_vllm:\n {model}\n")
-            print_model_state_dict(model)
             # Quantization does not happen in `load_weights` but after it
             print("\nafter load_weights\n")
             self.load_weights(model, model_config)
