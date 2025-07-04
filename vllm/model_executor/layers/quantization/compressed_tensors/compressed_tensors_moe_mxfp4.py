@@ -7,11 +7,6 @@ from enum import Enum
 from typing import Callable, Optional
 import torch.nn.functional as F
 import torch
-from compressed_tensors import CompressionFormat
-from compressed_tensors.quantization import (
-    ActivationOrdering,
-    QuantizationStrategy,
-)
 from vllm.distributed import get_tensor_model_parallel_rank
 import vllm.envs as envs
 from vllm import _custom_ops as ops
@@ -20,27 +15,6 @@ from vllm.model_executor.layers.fused_moe import (
     FusedMoE,
     FusedMoEMethodBase,
     FusedMoeWeightScaleSupported,
-)
-from vllm.model_executor.layers.quantization.compressed_tensors.schemes.compressed_tensors_wNa16 import (  # noqa
-    WNA16_SUPPORTED_BITS,
-    WNA16_SUPPORTED_TYPES_MAP,
-)
-from vllm.model_executor.layers.quantization.utils import replace_parameter
-from vllm.model_executor.layers.quantization.utils.marlin_utils import (
-    check_moe_marlin_supports_layer,
-    marlin_make_workspace_new,
-    marlin_moe_permute_scales,
-)
-from vllm.model_executor.layers.quantization.utils.marlin_utils_fp4 import (
-    prepare_moe_fp4_layer_for_marlin,
-)
-from vllm.model_executor.layers.quantization.utils.marlin_utils_fp8 import (
-    prepare_moe_fp8_layer_for_marlin,
-)
-from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
-    all_close_1d,
-    normalize_e4m3fn_to_e4m3fnuz,
-    per_tensor_dequantize,
 )
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
@@ -117,40 +91,6 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
             {"quant_method": FusedMoeWeightScaleSupported.GROUP.value})
         set_weight_attrs(w2_weight_scale, extra_weight_attrs)
 
-        # # Weight Global Scales
-        # w13_weight_scale_2 = torch.nn.Parameter(torch.empty(
-        #     num_experts, 2, dtype=torch.float32),
-        #                                         requires_grad=False)
-        # layer.register_parameter("w13_weight_global_scale", w13_weight_scale_2)
-        # extra_weight_attrs.update(
-        #     {"quant_method": FusedMoeWeightScaleSupported.TENSOR.value})
-        # set_weight_attrs(w13_weight_scale_2, extra_weight_attrs)
-
-        # w2_weight_scale_2 = torch.nn.Parameter(torch.empty(
-        #     num_experts, dtype=torch.float32),
-        #                                        requires_grad=False)
-        # layer.register_parameter("w2_weight_global_scale", w2_weight_scale_2)
-        # extra_weight_attrs.update(
-        #     {"quant_method": FusedMoeWeightScaleSupported.TENSOR.value})
-        # set_weight_attrs(w2_weight_scale_2, extra_weight_attrs)
-
-        # # Input Global Scales
-        # w13_input_scale = torch.nn.Parameter(torch.empty(num_experts,
-        #                                                  2,
-        #                                                  dtype=torch.float32),
-        #                                      requires_grad=False)
-        # layer.register_parameter("w13_input_global_scale", w13_input_scale)
-        # extra_weight_attrs.update(
-        #     {"quant_method": FusedMoeWeightScaleSupported.TENSOR.value})
-        # set_weight_attrs(w13_input_scale, extra_weight_attrs)
-
-        # w2_input_scale = torch.nn.Parameter(torch.empty(num_experts,
-        #                                                 dtype=torch.float32),
-        #                                     requires_grad=False)
-        # layer.register_parameter("w2_input_global_scale", w2_input_scale)
-        # extra_weight_attrs.update(
-        #     {"quant_method": FusedMoeWeightScaleSupported.TENSOR.value})
-        # set_weight_attrs(w2_input_scale, extra_weight_attrs)
 
     def swizzle_blockscale(self, scale: torch.tensor):
         assert (scale.dtype == torch.float8_e4m3fn)
@@ -178,59 +118,10 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if envs.VLLM_USE_STATIC_MOE_HPU:
             return
-        # From packed to weight
-        layer.w13_weight = torch.nn.Parameter(layer.w13_weight_packed.data,
-                                              requires_grad=False)
-
-        layer.w2_weight = torch.nn.Parameter(layer.w2_weight_packed.data,
-                                             requires_grad=False)
-
-        if not torch.allclose(layer.w13_weight_global_scale[:, 0],
-                              layer.w13_weight_global_scale[:, 1]):
-            logger.warning_once(
-                "w1_weight_global_scale must match w3_weight_global_scale. "
-                "Accuracy may be affected.")
-
-        # Take inverse of global scale saved to disk
-        layer.w13_weight_scale_2 = torch.nn.Parameter(
-            1 / layer.w13_weight_global_scale[:, 0], requires_grad=False)
-
-        layer.w2_weight_scale_2 = torch.nn.Parameter(
-            1 / layer.w2_weight_global_scale.data, requires_grad=False)
-
-        if not self.use_marlin:
-            # swizzle weight scales
-            layer.w13_blockscale_swizzled = torch.nn.Parameter(
-                self.swizzle_blockscale(layer.w13_weight_scale),
-                requires_grad=False)
-
-            layer.w2_blockscale_swizzled = torch.nn.Parameter(
-                self.swizzle_blockscale(layer.w2_weight_scale),
-                requires_grad=False)
-
-            # w13
-            layer.g1_alphas = torch.nn.Parameter(
-                ((1 / (layer.w13_input_global_scale.max(dim=1).values.to(
-                    torch.float32))) * layer.w13_weight_scale_2),
-                requires_grad=False)
-
-            # w2
-            layer.g2_alphas = torch.nn.Parameter(
-                ((1 / layer.w2_input_global_scale) *
-                 layer.w2_weight_scale_2).to(torch.float32),
-                requires_grad=False)
-
-            # Inverse Input Quant Scales
-            layer.w13_input_scale_quant = torch.nn.Parameter(
-                (layer.w13_input_global_scale.max(dim=1).values.to(
-                    torch.float32)),
-                requires_grad=False)
-
-            layer.w2_input_scale_quant = torch.nn.Parameter(
-                (layer.w2_input_global_scale), requires_grad=False)
-
-        if self.use_marlin:
-            prepare_moe_fp4_layer_for_marlin(layer)
+        else:
+            raise NotImplementedError(
+                "process_weights_after_loading is not implemented for "
+                "CompressedTensorsW4A4MXFP4MoeMethod on this platform.")
 
     def apply(
         self,
