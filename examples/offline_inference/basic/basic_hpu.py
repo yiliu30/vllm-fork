@@ -16,6 +16,7 @@ model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-R1-bf16-MXFP8-4L-llmc
 model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-V2-Lite-MXFP8-OFFLINE"
 model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP8-RTN"
 
+
 # Processed prompts: 100%|█| 4/4 [00:23<00:00,  5.79s/it, est. speed input:
 
 # Generated Outputs:
@@ -123,7 +124,10 @@ model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP8-aut
 # Token IDs: (54362, 59408, 45098, 18862, 90197, 10193, 106668, 1366, 99105, 1719, 6384, 20378, 69452, 80531, 38433, 108491, 11276, 89976, 90418, 67586)
 
 # model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE"
-model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN-tiny"
+# model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN-tiny"
+model_path = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-MXFP4-llmc"
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP4-autoround"
+
 model_name = model_path.split("/")[-1]
 
 import os
