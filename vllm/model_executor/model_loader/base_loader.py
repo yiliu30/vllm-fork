@@ -37,7 +37,32 @@ class BaseModelLoader(ABC):
             with target_device:
                 model = initialize_model(vllm_config=vllm_config,
                                          model_config=model_config)
+                
+            print(f"\nmodel_vllm:\n {model}\n")
+            print_model_state_dict(model)
             # Quantization does not happen in `load_weights` but after it
+            print("\nafter load_weights\n")
             self.load_weights(model, model_config)
             process_weights_after_loading(model, model_config, target_device)
+            print(f"\nmodel_vllm:\n {model}\n")
+            print_model_state_dict(model)
         return model.eval()
+
+
+
+def print_model_state_dict(model):
+    print("\n" + "="*100)
+    print(f"{'Model State Dictionary':^100}")
+    print("="*100)
+
+    # 打印表头
+    print(f"{'Parameter Name':<{60}} | {'Shape':<20} | {'Dtype':<20} | {'Device'}")
+    print("-" * (60 + 20 + 20 + 10))
+
+    # 打印每个参数信息
+    for name, param in model.state_dict().items():
+        param_shape = str(tuple(param.shape))
+        param_dtype = str(param.dtype).replace("torch.", "")
+        param_device = str(param.device)
+
+        print(f"{name:<{60}} | {param_shape:<20} | {param_dtype:<20} | {param_device}")

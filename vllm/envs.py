@@ -133,6 +133,7 @@ if TYPE_CHECKING:
     VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: int = 300
     VLLM_KV_CACHE_LAYOUT: Optional[str] = None
     VLLM_USE_NVFP4_CT_EMULATIONS: bool = False
+    VLLM_USE_MXFP4_CT_EMULATIONS: bool = False
     VLLM_COMPUTE_NANS_IN_LOGITS: bool = False
 
 
@@ -919,6 +920,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # models
     "VLLM_USE_NVFP4_CT_EMULATIONS":
     lambda: bool(int(os.getenv("VLLM_USE_NVFP4_CT_EMULATIONS", "0"))),
+
+    # Controls whether or not emulations are used for MXFP4
+    # generations on machines < 100 for compressed-tensors
+    # models
+    "VLLM_USE_MXFP4_CT_EMULATIONS":
+    lambda: bool(int(os.getenv("VLLM_USE_MXFP4_CT_EMULATIONS", "0"))),
 
     # static moe on HPU
     "VLLM_USE_STATIC_MOE_HPU":

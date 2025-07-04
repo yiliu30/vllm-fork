@@ -241,8 +241,21 @@ class CompressedTensorsConfig(QuantizationConfig):
                 and is_group_size_16 and is_symmetric)
 
     def _is_fp4a4_mxfp4(self, weight_quant: BaseModel, input_quant: BaseModel):
-        # TODO: (Yi)
-        pass
+        if weight_quant is None or input_quant is None:
+            return False
+        is_tensor_group_quant = (weight_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value
+                                 and input_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value)
+        is_symmetric = weight_quant.symmetric and input_quant.symmetric
+        is_group_size_32 = (weight_quant.group_size == 32
+                            and input_quant.group_size == 32)
+        is_float_type = (weight_quant.type == QuantizationType.FLOAT
+                         and input_quant.type == QuantizationType.FLOAT.value)
+        is_4_bits = weight_quant.num_bits == 4 and input_quant.num_bits == 4
+
+        return (is_tensor_group_quant and is_float_type and is_4_bits
+                and is_group_size_32 and is_symmetric)
 
     def _is_fp4a16_nvfp4(self, weight_quant: BaseModel,
                          input_quant: BaseModel):
@@ -425,7 +438,7 @@ class CompressedTensorsConfig(QuantizationConfig):
                         has_input_global_scale=True)
 
             if self._is_fp4a4_mxfp4(weight_quant, input_quant):
-                if envs.VLLM_USE_NVFP4_CT_EMULATIONS:
+                if envs.VLLM_USE_MXFP4_CT_EMULATIONS:
                     logger.warning_once(
                         "Current platform does not support cutlass NVFP4."
                         " Running CompressedTensorsW4A4MXFp4.")
@@ -433,7 +446,7 @@ class CompressedTensorsConfig(QuantizationConfig):
                 else:
                     raise NotImplementedError(
                         "CompressedTensorsW4A4MXFp4 is not supported on the "
-                        "current platform. Please use VLLM_USE_NVFP4_CT_EMULATIONS"
+                        "current platform. Please use VLLM_USE_MXFP4_CT_EMULATIONS"
                         " instead.")
             
             if self._is_fp8_w8a8(weight_quant, input_quant=input_quant):
