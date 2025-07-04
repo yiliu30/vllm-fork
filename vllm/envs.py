@@ -766,6 +766,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Disable QDQ nvfp4 emulations
     "VLLM_DISABLE_INPUT_QDQ":
     lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
+
+    # Q-DQ input without packing
+    "VLLM_INPUT_QUICK_QDQ":
+    lambda: bool(int(os.getenv("VLLM_INPUT_QUICK_QDQ", "0"))),
     
     # Whether to log HPU graph information.
     "VLLM_HPU_LOG_HPU_GRAPH":
