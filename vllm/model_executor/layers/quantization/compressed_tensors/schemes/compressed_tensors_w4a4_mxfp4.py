@@ -65,7 +65,7 @@ class CompressedTensorsW4A4MXFp4(CompressedTensorsScheme):
             sum(output_partition_sizes),
             input_size_per_partition // self.group_size,
             # dtype=torch.uint8,
-            dtype=torch.float8_e8m0fnu,
+            dtype=torch.uint8,
         ),
                                                 input_dim=1,
                                                 output_dim=0,
