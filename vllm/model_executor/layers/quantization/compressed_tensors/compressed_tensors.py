@@ -250,7 +250,7 @@ class CompressedTensorsConfig(QuantizationConfig):
         is_symmetric = weight_quant.symmetric and input_quant.symmetric
         is_group_size_32 = (weight_quant.group_size == 32
                             and input_quant.group_size == 32)
-        is_float_type = (weight_quant.type == QuantizationType.FLOAT
+        is_float_type = (weight_quant.type == QuantizationType.FLOAT.value
                          and input_quant.type == QuantizationType.FLOAT.value)
         is_4_bits = weight_quant.num_bits == 4 and input_quant.num_bits == 4
 
