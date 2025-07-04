@@ -211,7 +211,7 @@ class CompressedTensorsW4A4MXFp4(CompressedTensorsScheme):
         weight_scale = GroupQuantScaleParameter(data=torch.empty(
             sum(output_partition_sizes),
             input_size_per_partition // self.group_size,
-            dtype=torch.float8_e4m3fn,
+            dtype=torch.uint8,
         ),
                                                 input_dim=1,
                                                 output_dim=0,
@@ -252,9 +252,12 @@ class CompressedTensorsW4A4MXFp4(CompressedTensorsScheme):
                       bias: Optional[torch.Tensor] = None) -> torch.Tensor:
 
         if envs.VLLM_USE_NVFP4_CT_EMULATIONS:
-            out = run_mxfp4_emulations(
+            from vllm.model_executor.layers.quantization.utils.mxfp4_utils import (
+                    run_mxfp4_emulations_no_swizzle,
+                )
+            out = run_mxfp4_emulations_no_swizzle(
                 x=x,
-                weight=layer.weight,
+                weight=layer.weight_packed,
                 weight_scale=layer.weight_scale)
             if bias is not None:
                 out = out + bias

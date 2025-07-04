@@ -43,3 +43,26 @@ def per_token_group_quant_mxfp4(x: torch.Tensor,
     )
 
     return x, scale
+
+
+def run_mxfp4_emulations_no_swizzle(x, weight, weight_scale):
+    """
+    Run MXFP4 emulation without swizzling.
+        x: Input tensor, bf16
+        weight: packed weight tensor, uint8
+        weight_scale: fp8e8m0 scale tensor, uint8
+    """
+    from torchao.prototype.mx_formats.mx_tensor import to_dtype
+    from torchao.prototype.mx_formats.constants import DTYPE_FP4_E2M1
+
+    dequant_weight = to_dtype(
+        data_lp=weight,
+        scale_e8m0=weight_scale,
+        elem_dtype=DTYPE_FP4_E2M1,
+        block_size=32,
+        target_dtype=x.dtype,
+        use_fp4_custom_triton_dequant_kernel=False,
+        pack_fp6=False,
+    )
+    out = x @ dequant_weight.t()
+    return out

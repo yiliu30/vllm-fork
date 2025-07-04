@@ -241,8 +241,25 @@ class CompressedTensorsConfig(QuantizationConfig):
                 and is_group_size_16 and is_symmetric)
 
     def _is_fp4a4_mxfp4(self, weight_quant: BaseModel, input_quant: BaseModel):
-        # TODO: (Yi)
-        pass
+        if weight_quant is None or input_quant is None:
+            return False
+
+        is_tensor_group_quant = (weight_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value
+                                 and input_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value)
+        is_symmetric = weight_quant.symmetric and input_quant.symmetric
+
+        is_group_size_32 = (weight_quant.group_size == 32
+                            and input_quant.group_size == 32)
+        is_float_type = (weight_quant.type == QuantizationType.FLOAT
+                         and input_quant.type == QuantizationType.FLOAT.value)
+        is_4_bits = weight_quant.num_bits == 4 and input_quant.num_bits == 4
+        
+        is_mx = weight_quant.is_mx
+        return (is_tensor_group_quant and is_float_type and is_4_bits
+                and is_group_size_32 and is_symmetric and is_mx)
+
 
     def _is_fp4a16_nvfp4(self, weight_quant: BaseModel,
                          input_quant: BaseModel):
