@@ -24,7 +24,7 @@ from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tenso
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     W4A16SPARSE24_SUPPORTED_BITS, WNA16_SUPPORTED_BITS, CompressedTensors24,
     CompressedTensorsScheme, CompressedTensorsW4A4Fp4,
-    CompressedTensorsW4A16Sparse24,
+    CompressedTensorsW4A4MXFp4,
     CompressedTensorsW8A8Fp8, CompressedTensorsW8A8Int8,
     CompressedTensorsW8A16Fp8, CompressedTensorsWNA16)
 from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
@@ -240,6 +240,23 @@ class CompressedTensorsConfig(QuantizationConfig):
         return (is_tensor_group_quant and is_float_type and is_4_bits
                 and is_group_size_16 and is_symmetric)
 
+    def _is_fp4a4_mxfp4(self, weight_quant: BaseModel, input_quant: BaseModel):
+        if weight_quant is None or input_quant is None:
+            return False
+        is_tensor_group_quant = (weight_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value
+                                 and input_quant.strategy
+                                 == QuantizationStrategy.TENSOR_GROUP.value)
+        is_symmetric = weight_quant.symmetric and input_quant.symmetric
+        is_group_size_32 = (weight_quant.group_size == 32
+                            and input_quant.group_size == 32)
+        is_float_type = (weight_quant.type == QuantizationType.FLOAT.value
+                         and input_quant.type == QuantizationType.FLOAT.value)
+        is_4_bits = weight_quant.num_bits == 4 and input_quant.num_bits == 4
+
+        return (is_tensor_group_quant and is_float_type and is_4_bits
+                and is_group_size_32 and is_symmetric)
+
     def _is_fp4a16_nvfp4(self, weight_quant: BaseModel,
                          input_quant: BaseModel):
 
@@ -409,11 +426,20 @@ class CompressedTensorsConfig(QuantizationConfig):
             if self._is_fp4a4_nvfp4(weight_quant, input_quant):
                 return CompressedTensorsW4A4Fp4()
 
-            if self._is_fp8_w8a8(weight_quant, input_quant):
-                is_fp8_w8a8_supported = current_platform.is_hpu() or \
-                    self._check_scheme_supported(
-                    CompressedTensorsW8A8Fp8.get_min_capability(),
-                    error=False)
+            if self._is_fp4a4_mxfp4(weight_quant, input_quant):
+                if envs.VLLM_USE_MXFP4_CT_EMULATIONS:
+                    logger.warning_once(
+                        "Current platform does not support cutlass NVFP4."
+                        " Running CompressedTensorsW4A4MXFp4.")
+                    return CompressedTensorsW4A4MXFp4()
+                else:
+                    raise NotImplementedError(
+                        "CompressedTensorsW4A4MXFp4 is not supported on the "
+                        "current platform. Please use VLLM_USE_MXFP4_CT_EMULATIONS"
+                        " instead.")
+            
+            if self._is_fp8_w8a8(weight_quant, input_quant=input_quant):
+                is_fp8_w8a8_supported = self._check_scheme_supported(CompressedTensorsW8A8Fp8.get_min_capability(), error=False)
                 if is_fp8_w8a8_supported:
                     return CompressedTensorsW8A8Fp8(
                         strategy=weight_quant.strategy,

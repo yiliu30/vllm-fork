@@ -111,6 +111,19 @@ if TYPE_CHECKING:
     VLLM_USE_DEEP_GEMM: bool = False
     VLLM_XGRAMMAR_CACHE_MB: int = 0
     VLLM_MSGPACK_ZERO_COPY_THRESHOLD: int = 256
+    VLLM_ALLOW_INSECURE_SERIALIZATION: bool = False
+    VLLM_NIXL_SIDE_CHANNEL_HOST: str = "localhost"
+    VLLM_NIXL_SIDE_CHANNEL_PORT: int = 5557
+    VLLM_ALL2ALL_BACKEND: str = "naive"
+    VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE: int = 163840
+    VLLM_TOOL_PARSE_REGEX_TIMEOUT_SECONDS: int = 1
+    VLLM_SLEEP_WHEN_IDLE: bool = False
+    VLLM_MQ_MAX_CHUNK_BYTES_MB: int = 16
+    VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: int = 300
+    VLLM_KV_CACHE_LAYOUT: Optional[str] = None
+    VLLM_USE_NVFP4_CT_EMULATIONS: bool = False
+    VLLM_USE_MXFP4_CT_EMULATIONS: bool = False
+    VLLM_COMPUTE_NANS_IN_LOGITS: bool = False
 
 
 def get_default_cache_root():
@@ -739,6 +752,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # models
     "VLLM_USE_NVFP4_CT_EMULATIONS":
     lambda: bool(int(os.getenv("VLLM_USE_NVFP4_CT_EMULATIONS", "0"))),
+
+    # Controls whether or not emulations are used for MXFP4
+    # generations on machines < 100 for compressed-tensors
+    # models
+    "VLLM_USE_MXFP4_CT_EMULATIONS":
+    lambda: bool(int(os.getenv("VLLM_USE_MXFP4_CT_EMULATIONS", "0"))),
 
     # static moe on HPU
     "VLLM_USE_STATIC_MOE_HPU":
