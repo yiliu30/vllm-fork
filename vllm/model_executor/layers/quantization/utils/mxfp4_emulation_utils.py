@@ -3,8 +3,6 @@ import vllm.envs as envs
 from vllm.scalar_type import scalar_types
 
 
-def ref_mxfp4_quant():
-    pass
 
 from torchao.prototype.mx_formats.mx_tensor import to_mx, to_dtype, ScaleCalculationMode
 
