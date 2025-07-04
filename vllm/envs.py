@@ -940,6 +940,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # or bad hardware but it may add compute overhead.
     "VLLM_COMPUTE_NANS_IN_LOGITS":
     lambda: bool(int(os.getenv("VLLM_COMPUTE_NANS_IN_LOGITS", "0"))),
+
+    # Disable QDQ nvfp4 emulations
+    "VLLM_DISABLE_INPUT_QDQ":
+    lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
+
 }
 
 # --8<-- [end:env-vars-definition]
