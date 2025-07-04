@@ -45,20 +45,3 @@ class BaseModelLoader(ABC):
         return model.eval()
 
 
-
-def print_model_state_dict(model):
-    print("\n" + "="*100)
-    print(f"{'Model State Dictionary':^100}")
-    print("="*100)
-
-    # 打印表头
-    print(f"{'Parameter Name':<{60}} | {'Shape':<20} | {'Dtype':<20} | {'Device'}")
-    print("-" * (60 + 20 + 20 + 10))
-
-    # 打印每个参数信息
-    for name, param in model.state_dict().items():
-        param_shape = str(tuple(param.shape))
-        param_dtype = str(param.dtype).replace("torch.", "")
-        param_device = str(param.device)
-
-        print(f"{name:<{60}} | {param_shape:<20} | {param_dtype:<20} | {param_device}")
