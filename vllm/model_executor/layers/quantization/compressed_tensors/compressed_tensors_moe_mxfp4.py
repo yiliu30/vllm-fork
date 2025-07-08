@@ -117,6 +117,65 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if envs.VLLM_USE_STATIC_MOE_HPU:
+            if envs.VLLM_MXFP4_PREUNPACK_WEIGHTS:
+                logger.debug(
+                    f"start processing weights for {getattr(layer, 'prefix', 'unknown')}"
+                )
+                from torchao.prototype.mx_formats.mx_tensor import (
+                    to_mx,
+                    to_dtype,
+                    ScaleCalculationMode,
+                )
+
+                weight_name_lst = ["w13_weight", "w2_weight"]
+                from vllm.model_executor.layers.quantization.utils.mxfp4_qdq import (
+                    dequant_mxfp4_to_fp8,
+                )
+
+                for weight_name_prefix in weight_name_lst:
+                    weight_name = f"{weight_name_prefix}_packed"
+                    weight = getattr(layer, weight_name)
+                    weight_scale_name = f"{weight_name_prefix}_scale"
+                    weight_scale = getattr(layer, weight_scale_name)
+                    new_weight_name = f"{weight_name_prefix}_unpacked"
+                    new_scale_name = weight_scale_name
+                    num_experts, _, _ = weight.shape
+                    unpacked_weight_lst = []
+                    scale_list = []
+                    for expert_index in range(num_experts):
+                        weight_fp8, scale_bf16 = dequant_mxfp4_to_fp8(
+                            data_lp=weight[expert_index],
+                            scale_e8m0=weight_scale[expert_index],
+                        )
+
+                        unpacked_weight_lst.append(weight_fp8)
+                        scale_list.append(scale_bf16)
+                    unpacked_weight_fp8 = torch.stack(
+                        unpacked_weight_lst, dim=0
+                    )
+                    scale_bf16 = torch.stack(scale_list, dim=0)
+                    assert unpacked_weight_fp8.shape[0] == num_experts, (
+                        f"Expected {num_experts} unpacked weights, got "
+                        f"{unpacked_weight_fp8.shape[0]}"
+                    )
+                    delattr(layer, weight_name)
+                    delattr(layer, weight_scale_name)
+                    layer.register_parameter(
+                        new_weight_name,
+                        torch.nn.Parameter(
+                            unpacked_weight_fp8,
+                            requires_grad=False,
+                        ),
+                    )
+                    layer.register_parameter(
+                        new_scale_name,
+                        torch.nn.Parameter(
+                            scale_bf16,
+                            requires_grad=False,
+                        ),
+                    )
+                    torch.hpu.synchronize()
+
             return
         else:
             raise NotImplementedError(
@@ -176,13 +235,17 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
             #     "w2_input_global_scale",
             # ]
             # # [num_experts, 2 * intermediate_size_per_partition, hidden_size//2]
-            num_experts, intermediate_size_per_partition_x2, _ = (
-                layer.w13_weight_packed.shape
-            )
+            if not envs.VLLM_MXFP4_PREUNPACK_WEIGHTS:
+                num_experts, intermediate_size_per_partition_x2, _ = (
+                    layer.w13_weight_packed.shape
+                )
+            else:
+                num_experts, intermediate_size_per_partition_x2, _ = (
+                    layer.w13_weight_unpacked.shape
+                )
             intermediate_size_per_partition = (
                 intermediate_size_per_partition_x2 // 2
             )
-            # FIXME: Handle mask
             act_fn = F.silu
             num_all_tokens, hidden_dim = x.shape
             num_experts = layer.local_num_experts
@@ -205,63 +268,112 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
             # Note: ep_size equal tp_size
             ep_rank = get_tensor_model_parallel_rank()
             ep_shift = ep_rank * num_experts
+            if not envs.VLLM_MXFP4_PREUNPACK_WEIGHTS:
+                for expert_index in range(num_experts):
+                    mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
+                    current_state_static = x * mask_weight
 
-            for expert_index in range(num_experts):
-                mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
-                current_state_static = x * mask_weight
+                    local_w13_packed = layer.w13_weight_packed[expert_index]
+                    local_w13_scale = layer.w13_weight_scale[expert_index]
 
-                local_w13_packed = layer.w13_weight_packed[expert_index]
-                local_w13_scale = layer.w13_weight_scale[expert_index]
+                    local_w2_packed = layer.w2_weight_packed[expert_index]
+                    local_w2_scale = layer.w2_weight_scale[expert_index]
 
-                local_w2_packed = layer.w2_weight_packed[expert_index]
-                local_w2_scale = layer.w2_weight_scale[expert_index]
+                    local_w1_packed = local_w13_packed[
+                        :intermediate_size_per_partition, ...
+                    ]
+                    local_w1_scale = local_w13_scale[
+                        :intermediate_size_per_partition, ...
+                    ]
 
-                local_w1_packed = local_w13_packed[
-                    :intermediate_size_per_partition, ...
-                ]
-                local_w1_scale = local_w13_scale[
-                    :intermediate_size_per_partition, ...
-                ]
+                    local_w3_packed = local_w13_packed[
+                        intermediate_size_per_partition:, ...
+                    ]
+                    local_w3_scale = local_w13_scale[
+                        intermediate_size_per_partition:, ...
+                    ]
 
-                local_w3_packed = local_w13_packed[
-                    intermediate_size_per_partition:, ...
-                ]
-                local_w3_scale = local_w13_scale[
-                    intermediate_size_per_partition:, ...
-                ]
+                    from vllm.model_executor.layers.quantization.utils.mxfp4_emulation_utils import (
+                        run_mxfp4_emulations,
+                    )
 
-                from vllm.model_executor.layers.quantization.utils.mxfp4_emulation_utils import (
-                    run_mxfp4_emulations,
-                )
+                    local_w1_out = run_mxfp4_emulations(
+                        x=current_state_static,
+                        weight=local_w1_packed,
+                        weight_scale=local_w1_scale,
+                    )
+                    local_w3_out = run_mxfp4_emulations(
+                        x=current_state_static,
+                        weight=local_w3_packed,
+                        weight_scale=local_w3_scale,
+                    )
 
-                local_w1_out = run_mxfp4_emulations(
-                    x=current_state_static,
-                    weight=local_w1_packed,
-                    weight_scale=local_w1_scale,
-                )
-                local_w3_out = run_mxfp4_emulations(
-                    x=current_state_static,
-                    weight=local_w3_packed,
-                    weight_scale=local_w3_scale,
-                )
+                    w13_out = act_fn(local_w1_out) * local_w3_out
 
-                w13_out = act_fn(local_w1_out) * local_w3_out
+                    local_w2_out = run_mxfp4_emulations(
+                        x=w13_out,
+                        weight=local_w2_packed,
+                        weight_scale=local_w2_scale,
+                    )
+                    padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
+                        1
+                    )
+                    local_w2_out = local_w2_out * padded_weight
+                    if expert_index == 0:
+                        final_hidden_states = local_w2_out
+                    else:
+                        final_hidden_states += local_w2_out
+                
+                    return final_hidden_states
+            else:
+                for expert_index in range(num_experts):
+                    mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
+                    current_state_static = x * mask_weight
 
-                local_w2_out = run_mxfp4_emulations(
-                    x=w13_out,
-                    weight=local_w2_packed,
-                    weight_scale=local_w2_scale,
-                )
-                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
-                    1
-                )
-                local_w2_out = local_w2_out * padded_weight
-                if expert_index == 0:
-                    final_hidden_states = local_w2_out
-                else:
-                    final_hidden_states += local_w2_out
-            return final_hidden_states
+                    local_unpacked_w13 = layer.w13_weight_unpacked[expert_index]
+                    local_w13_scale = layer.w13_weight_scale[expert_index]
 
+                    local_unpacked_w2 = layer.w2_weight_unpacked[expert_index]
+                    local_w2_scale = layer.w2_weight_scale[expert_index]
+                    
+                    local_unpacked_w1 = local_unpacked_w13[:intermediate_size_per_partition, ...]
+                    half_scale = local_w13_scale.shape[0] // 2
+                    local_w1_scale = local_w13_scale[:half_scale, ...]
+                    local_unpacked_w3 = local_unpacked_w13[intermediate_size_per_partition:, ...]
+                    local_w3_scale = local_w13_scale[half_scale:, ...]
+
+                    from vllm.model_executor.layers.quantization.utils.mxfp4_qdq import (
+                        mxfp4_gemm_with_unpacked_weight,
+                    )
+
+                    local_w1_out = mxfp4_gemm_with_unpacked_weight(
+                        x=current_state_static,
+                        weigth_fp8=local_unpacked_w1,
+                        weight_scale_bf16=local_w1_scale,
+                    )
+                    local_w3_out = mxfp4_gemm_with_unpacked_weight(
+                        x=current_state_static,
+                        weigth_fp8=local_unpacked_w3,
+                        weight_scale_bf16=local_w3_scale,
+                    )
+
+                    w13_out = act_fn(local_w1_out) * local_w3_out
+
+                    local_w2_out = mxfp4_gemm_with_unpacked_weight(
+                        x=w13_out,
+                        weigth_fp8=local_unpacked_w2,
+                        weight_scale_bf16=local_w2_scale,
+                    )
+                    
+                    padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
+                        1
+                    )
+                    local_w2_out = local_w2_out * padded_weight
+                    if expert_index == 0:
+                        final_hidden_states = local_w2_out
+                    else:
+                        final_hidden_states += local_w2_out
+                return final_hidden_states
         if self.use_marlin:
             return torch.ops.vllm.fused_marlin_moe(
                 x,

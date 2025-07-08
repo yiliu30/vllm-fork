@@ -275,36 +275,3 @@ echo "Stopping vLLM server"
 kill ${pid}
 echo "Script execution completed"
 sleep 10
-
-# VLLM_MXFP4_PREUNPACK_WEIGHTS=1  VLLM_USE_MXFP4_CT_EMULATIONS=1 VLLM_HPU_LOG_HPU_GRAPH=0 VLLM_INPUT_QUICK_QDQ=1   USE_CT_UNPACK=1 bash start_vllm.sh --skip-warmup --ds-mxfp4
-# med-up!
-# INFO 07-07 11:14:45 [metrics.py:486] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.6%, CPU KV cache usage: 0.0%.
-# INFO:     127.0.0.1:54408 - "POST /v1/completions HTTP/1.1" 200 OK
-# Requesting API: 100%|██████████| 128/128 [12:24<00:00,  5.82s/it]
-# INFO:lm_eval.loggers.evaluation_tracker:Saving results aggregated
-# INFO:lm_eval.loggers.evaluation_tracker:Saving per-sample results for: gsm8k
-# local-completions (model=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1), gen_kwargs: (None), limit: 128.0, num_fewshot: None, batch_size: 32
-# |Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
-# |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
-# |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.9453|±  |0.0202|
-# |     |       |strict-match    |     5|exact_match|↑  |0.9453|±  |0.0202|
-
-
-# INFO:     127.0.0.1:47110 - "POST /v1/completions HTTP/1.1" 200 OK
-# Requesting API: 100%|██████████| 1319/1319 [1:50:37<00:00,  5.03s/it]
-# INFO:lm_eval.loggers.evaluation_tracker:Saving results aggregated
-# INFO:lm_eval.loggers.evaluation_tracker:Saving per-sample results for: gsm8k
-# INFO 07-07 13:17:12 [metrics.py:486] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.5 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.1%, CPU KV cache usage: 0.0%.
-# INFO 07-07 13:17:22 [metrics.py:486] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.1%, CPU KV cache usage: 0.0%.
-# local-completions (model=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 32
-# |Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
-# |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
-# |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.9522|±  |0.0059|
-# |     |       |strict-match    |     5|exact_match|↑  |0.9492|±  |0.0060|
-
-# INFO:lm_eval.loggers.evaluation_tracker:Saving results aggregated
-# INFO:lm_eval.loggers.evaluation_tracker:Saving per-sample results for: humaneval
-# local-completions (model=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 32
-# |  Tasks  |Version|  Filter   |n-shot|Metric|   |Value |   |Stderr|
-# |---------|------:|-----------|-----:|------|---|-----:|---|-----:|
-# |humaneval|      1|create_test|     0|pass@1|   |0.6646|±  | 0.037|

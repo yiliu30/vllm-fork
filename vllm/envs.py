@@ -775,6 +775,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_HPU_LOG_HPU_GRAPH":
     lambda: int(os.getenv("VLLM_HPU_LOG_HPU_GRAPH", "0")),
 
+    # Whether to pre-unpack weights for MXFP4 models.
+    "VLLM_MXFP4_PREUNPACK_WEIGHTS":
+    lambda: int(os.getenv("VLLM_MXFP4_PREUNPACK_WEIGHTS", "0")),
+
 }
 
 # end-env-vars-definition
