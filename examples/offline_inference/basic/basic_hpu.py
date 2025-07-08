@@ -126,10 +126,11 @@ model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP8-aut
 # model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE"
 # model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN-tiny"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-MXFP4-llmc"
-model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP4-autoround"
 
+model_path = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.3-70B-Instruct-MXFP4-llmc"
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN"
 model_name = model_path.split("/")[-1]
-
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP4-autoround"
 import os
 
 os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
@@ -153,7 +154,7 @@ if "DeepSeek" in model_path:
 
 # os.environ["GRAPH_VISUALIZATION"] = "1"
 os.environ["PT_HPU_LAZY_MODE"] = "1"
-os.environ["VLLM_SKIP_WARMUP"] = "true"
+# os.environ["VLLM_SKIP_WARMUP"] = "true"
 # os.environ["VLLM_PROFILER_ENABLED"] = "true"
 # os.environ["QUANT_CONFIG"] = f"quantization/{model_name}/maxabs_quant_g2.json"
 
@@ -180,12 +181,12 @@ from vllm import LLM, SamplingParams
 # Sample prompts.
 prompts = [
     "Hello, my name is",
-    "The president of the United States is",
-    "The capital of France is",
-    "The future of AI is",
-]
+    # "The president of the United States is",
+    # "The capital of France is",
+    # "The future of AI is",
+] *32
 # Create a sampling params object.
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95,max_tokens=20)
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=20)
 
 
 def main(args):
@@ -198,15 +199,23 @@ def main(args):
     if args.ep > 1:
         kwargs["enable_expert_parallel"] = True
         os.environ["VLLM_EP_SIZE"] = f"{args.ep}"
-
+    #load-format dummy"
+    if args.warmup:
+        os.environ["VLLM_SKIP_WARMUP"] = "false"
+        kwargs["load_format"] = "dummy"
+    else:
+        os.environ["VLLM_SKIP_WARMUP"] = "true"
+        # kwargs["load_format"] = "none"
+        
     #  21.32 GiB, 19.19 GiB usable (gpu_memory_utilization=0.9), 1.919 GiB reserved for HPUGraphs (VLLM_GRAPH_RESERVED_MEM=0.1), 17.27 GiB reserved for KV cache
     # INFO 07-01 07:42:40 [executor_base.py:112] # hpu blocks: 2061, # CPU blocks: 477
-    
+    max_model_len = 8192
+    model_path = args.model_path
     llm = LLM(
         model=model_path,
         #   quantization="inc",
-        max_model_len=2048,
-        max_num_batched_tokens=2048,
+        max_model_len=max_model_len,
+        max_num_batched_tokens=max_model_len,
         # enforce_eager=True,
         trust_remote_code=True,
         dtype="bfloat16",
@@ -237,7 +246,14 @@ def main(args):
 
     import time
     start_time = time.time()
+    if args.profile:
+        print("Starting profiling for second inference...")
+        llm.start_profile()
+    
     outputs = llm.generate(prompts, sampling_params)
+    if args.profile:
+        print("Stopping profiling for second inference...")
+        llm.stop_profile()
     end_time = time.time()
     print(f"Time taken for second inference: {end_time - start_time:.2f} seconds")
 
@@ -250,6 +266,11 @@ if __name__ == "__main__":
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size.")
     # ep size
     parser.add_argument("--ep", type=int, default=1, help="Pipeline parallel size.")
+    # run profile
+    parser.add_argument("--profile", action="store_true", help="Run with profiling enabled.")
+    # warmup
+    parser.add_argument("--warmup", action="store_true", help="Run with warmup enabled.")
+    
     args = parser.parse_args()
     main(args)
 
@@ -303,3 +324,14 @@ if __name__ == "__main__":
 #   warnings.warn('resource_tracker: There appear to be %d '
 
 # <p22> yiliu4@yiliu4-63gd-g3-l-vm:basic$ p basic_hpu.py --tp 8
+
+# VLLM_MXFP4_PREUNPACK_WEIGHTS=1  VLLM_USE_MXFP4_CT_EMULATIONS=1 VLLM_HPU_LOG_HPU_GRAPH=0 VLLM_INPUT_QUICK_QDQ=1   USE_CT_UNPACK=1  python basic_hpu.py --model_path  /software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN  --tp 8 --ep 8
+# VLLM_MXFP4_PREUNPACK_WEIGHTS=1  VLLM_USE_MXFP4_CT_EMULATIONS=1 VLLM_HPU_LOG_HPU_GRAPH=0 VLLM_INPUT_QUICK_QDQ=1   USE_CT_UNPACK=1  python basic_hpu.py --tp 2 --ep 2
+# Prompt:    'Hello, my name is'
+# Output:    ' Stephanie Elkowitz.\nI’m a former teacher and now a curriculum\nwriter who creates science'
+# Token IDs: (67204, 3909, 23804, 9208, 603, 43, 442, 79, 260, 7017, 8761, 305, 1928, 260, 16622, 201, 35872, 995, 15170, 6262)
+# ------------------------------------------------------------
+# Adding requests: 100%|███████████████████████████████████████████████| 32/32 [00:00<00:00, 9558.99it/s]
+# Processed prompts:   0%|    | 0/32 [00:00<?, ?it/s, est. speed input: 0.00 toks/s, output: 0.00 toks/s]DEBUG 07-07 10:05:11 [llm_engine.py:1517] Stopping remote worker execution loop.
+# Processed prompts: 100%|█| 32/32 [00:14<00:00,  2.18it/s, est. speed input: 13.09 toks/s, output: 43.63
+# Time taken for second inference: 14.67 seconds

@@ -643,7 +643,7 @@ class DeepseekV2Model(nn.Module):
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
         self.config = config
-        # config.num_hidden_layers = 4
+        # config.num_hidden_layers = 1
         self.vocab_size = config.vocab_size
 
         if get_pp_group().is_first_rank:
