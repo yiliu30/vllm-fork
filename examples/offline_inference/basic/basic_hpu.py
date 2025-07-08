@@ -209,7 +209,7 @@ def main(args):
         
     #  21.32 GiB, 19.19 GiB usable (gpu_memory_utilization=0.9), 1.919 GiB reserved for HPUGraphs (VLLM_GRAPH_RESERVED_MEM=0.1), 17.27 GiB reserved for KV cache
     # INFO 07-01 07:42:40 [executor_base.py:112] # hpu blocks: 2061, # CPU blocks: 477
-    max_model_len = 8192
+    max_model_len = 4096
     model_path = args.model_path
     llm = LLM(
         model=model_path,
@@ -335,3 +335,8 @@ if __name__ == "__main__":
 # Processed prompts:   0%|    | 0/32 [00:00<?, ?it/s, est. speed input: 0.00 toks/s, output: 0.00 toks/s]DEBUG 07-07 10:05:11 [llm_engine.py:1517] Stopping remote worker execution loop.
 # Processed prompts: 100%|█| 32/32 [00:14<00:00,  2.18it/s, est. speed input: 13.09 toks/s, output: 43.63
 # Time taken for second inference: 14.67 seconds
+
+
+# VLLM_MXFP4_PREUNPACK_WEIGHTS=1  VLLM_USE_MXFP4_CT_EMULATIONS=1 VLLM_HPU_LOG_HPU_GRAPH=0 VLLM_INPUT_QUICK_QDQ=1   USE_CT_UNPACK=1  python basic_hpu.py --model_path  /software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN  --tp 8 --ep 8
+# VLLM_MXFP4_PREUNPACK_WEIGHTS=1  VLLM_USE_MXFP4_CT_EMULATIONS=1 VLLM_HPU_LOG_HPU_GRAPH=0 VLLM_INPUT_QUICK_QDQ=1   USE_CT_UNPACK=1  python basic_hpu.py --model_path  /software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN  --tp 8 --ep 8 --warmup
+# VLLM_MXFP4_PREUNPACK_WEIGHTS=1  VLLM_USE_MXFP4_CT_EMULATIONS=1 VLLM_HPU_LOG_HPU_GRAPH=0 VLLM_INPUT_QUICK_QDQ=1   USE_CT_UNPACK=1  python basic_hpu.py --tp 2 --ep 2
