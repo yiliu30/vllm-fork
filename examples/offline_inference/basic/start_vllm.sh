@@ -7,10 +7,12 @@ model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE/
 model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN
 v2_model_path=/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc
+mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
 tp_size=8
 
-num_samples=32
-task_name="gsm8k"
+num_samples=128
+task_name="mmlu_pro_math,mmlu_pro_biology"
+task_name="humaneval"
 batch_size=32
 
 
@@ -38,6 +40,13 @@ for arg in "$@"; do
         --ds-v2)
             model_path=$v2_model_path
             tp_size=2
+            ;;
+        --ds-mxfp4)
+            model_path=$mxfp4_model_path
+            export VLLM_MXFP4_PREUNPACK_WEIGHTS=1
+            export VLLM_USE_MXFP4_CT_EMULATIONS=1
+            export VLLM_INPUT_QUICK_QDQ=1
+            export USE_CT_UNPACK=1
             ;;
         --disable_native_scaling)
             USE_NATIVE_SCALING=false
@@ -245,11 +254,13 @@ EVAL_LOG_NAME="mxfp8_${model_base_name}_lm_eval_output_${task_name}_bs${batch_si
 echo "Running lm_eval with model: ${model_path}, task: ${task_name}, batch size: ${batch_size}, num samples: ${num_samples}"
 
 start_time=$(date +%s)
+
+HF_ALLOW_CODE_EVAL=1 \
 lm_eval --model local-completions \
     --tasks "$task_name" \
     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
     --batch_size 32  \
-    --limit "$num_samples" \
+    --confirm_run_unsafe_code \
     --log_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
@@ -264,3 +275,36 @@ echo "Stopping vLLM server"
 kill ${pid}
 echo "Script execution completed"
 sleep 10
+
+# VLLM_MXFP4_PREUNPACK_WEIGHTS=1  VLLM_USE_MXFP4_CT_EMULATIONS=1 VLLM_HPU_LOG_HPU_GRAPH=0 VLLM_INPUT_QUICK_QDQ=1   USE_CT_UNPACK=1 bash start_vllm.sh --skip-warmup --ds-mxfp4
+# med-up!
+# INFO 07-07 11:14:45 [metrics.py:486] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 1.0 tokens/s, Running: 1 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.6%, CPU KV cache usage: 0.0%.
+# INFO:     127.0.0.1:54408 - "POST /v1/completions HTTP/1.1" 200 OK
+# Requesting API: 100%|██████████| 128/128 [12:24<00:00,  5.82s/it]
+# INFO:lm_eval.loggers.evaluation_tracker:Saving results aggregated
+# INFO:lm_eval.loggers.evaluation_tracker:Saving per-sample results for: gsm8k
+# local-completions (model=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1), gen_kwargs: (None), limit: 128.0, num_fewshot: None, batch_size: 32
+# |Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
+# |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
+# |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.9453|±  |0.0202|
+# |     |       |strict-match    |     5|exact_match|↑  |0.9453|±  |0.0202|
+
+
+# INFO:     127.0.0.1:47110 - "POST /v1/completions HTTP/1.1" 200 OK
+# Requesting API: 100%|██████████| 1319/1319 [1:50:37<00:00,  5.03s/it]
+# INFO:lm_eval.loggers.evaluation_tracker:Saving results aggregated
+# INFO:lm_eval.loggers.evaluation_tracker:Saving per-sample results for: gsm8k
+# INFO 07-07 13:17:12 [metrics.py:486] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.5 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.1%, CPU KV cache usage: 0.0%.
+# INFO 07-07 13:17:22 [metrics.py:486] Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Swapped: 0 reqs, Pending: 0 reqs, GPU KV cache usage: 0.1%, CPU KV cache usage: 0.0%.
+# local-completions (model=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 32
+# |Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
+# |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
+# |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.9522|±  |0.0059|
+# |     |       |strict-match    |     5|exact_match|↑  |0.9492|±  |0.0060|
+
+# INFO:lm_eval.loggers.evaluation_tracker:Saving results aggregated
+# INFO:lm_eval.loggers.evaluation_tracker:Saving per-sample results for: humaneval
+# local-completions (model=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN,base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 32
+# |  Tasks  |Version|  Filter   |n-shot|Metric|   |Value |   |Stderr|
+# |---------|------:|-----------|-----:|------|---|-----:|---|-----:|
+# |humaneval|      1|create_test|     0|pass@1|   |0.6646|±  | 0.037|
