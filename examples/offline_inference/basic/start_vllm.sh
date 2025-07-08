@@ -7,10 +7,12 @@ model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE/
 model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN
 v2_model_path=/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc
+mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
 tp_size=8
 
-num_samples=32
-task_name="gsm8k"
+num_samples=128
+task_name="mmlu_pro_math,mmlu_pro_biology"
+task_name="humaneval"
 batch_size=32
 
 
@@ -38,6 +40,13 @@ for arg in "$@"; do
         --ds-v2)
             model_path=$v2_model_path
             tp_size=2
+            ;;
+        --ds-mxfp4)
+            model_path=$mxfp4_model_path
+            export VLLM_MXFP4_PREUNPACK_WEIGHTS=1
+            export VLLM_USE_MXFP4_CT_EMULATIONS=1
+            export VLLM_INPUT_QUICK_QDQ=1
+            export USE_CT_UNPACK=1
             ;;
         --disable_native_scaling)
             USE_NATIVE_SCALING=false
@@ -245,11 +254,13 @@ EVAL_LOG_NAME="mxfp8_${model_base_name}_lm_eval_output_${task_name}_bs${batch_si
 echo "Running lm_eval with model: ${model_path}, task: ${task_name}, batch size: ${batch_size}, num samples: ${num_samples}"
 
 start_time=$(date +%s)
+
+HF_ALLOW_CODE_EVAL=1 \
 lm_eval --model local-completions \
     --tasks "$task_name" \
     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
     --batch_size 32  \
-    --limit "$num_samples" \
+    --confirm_run_unsafe_code \
     --log_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
