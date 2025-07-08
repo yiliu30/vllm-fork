@@ -429,8 +429,8 @@ class CompressedTensorsConfig(QuantizationConfig):
             if self._is_fp4a4_mxfp4(weight_quant, input_quant):
                 if envs.VLLM_USE_MXFP4_CT_EMULATIONS:
                     logger.warning_once(
-                        "Current platform does not support cutlass NVFP4."
-                        " Running CompressedTensorsW4A4MXFp4.")
+                        "Current platform does not support native MXFP4. "
+                        "Running CompressedTensorsW4A4MXFp4 via emulation.")
                     return CompressedTensorsW4A4MXFp4()
                 else:
                     raise NotImplementedError(
