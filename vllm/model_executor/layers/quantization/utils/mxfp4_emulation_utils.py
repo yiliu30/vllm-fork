@@ -11,7 +11,7 @@ from torchao.prototype.mx_formats.mx_tensor import (
 )
 from torchao.prototype.mx_formats.constants import (
     BF16_EXP_BIAS,
-    DTYPE_FP4,
+    DTYPE_FP4_E2M1,
     E8M0_EXPONENT_BIAS,
     E8M0_EXPONENT_NAN_VAL,
     F4_E2M1_MAX,
@@ -73,7 +73,7 @@ def to_mx(
     # Set X to be the largest power-of-two less than or equal to
     # max_abs(v), divided by the largest power of two representable
     # in the element data type, and get the mbits at the same time
-    if elem_dtype == DTYPE_FP4:
+    if elem_dtype == DTYPE_FP4_E2M1:
         target_max_pow2 = F4_E2M1_MAX_POW2
         mbits = MBITS_F4_E2M1
         max_pos = F4_E2M1_MAX
@@ -171,7 +171,7 @@ def to_mx(
             data_lp = torch.clamp(data_lp, min=-1 * max_pos, max=max_pos)
 
     # cast to target dtype
-    if elem_dtype == DTYPE_FP4:
+    if elem_dtype == DTYPE_FP4_E2M1:
         data_lp = data_lp.reshape(orig_shape)
         orig_shape = [*orig_shape[:-1], orig_shape[-1] // 2]
         data_lp = FP4_E2M1_DATA.cast_to_fp4(data_lp)
@@ -207,7 +207,7 @@ def to_dtype(
         assert data_lp.is_contiguous()
         orig_shape = (orig_shape[1], orig_shape[0])
 
-    if elem_dtype == DTYPE_FP4:
+    if elem_dtype == DTYPE_FP4_E2M1:
         m, n = data_lp.shape
         f4_unpacked = unpack_fp4_from_uint8(data_lp, m, n*2)
         data_hp = f4_unpacked.to(target_dtype)
