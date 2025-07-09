@@ -5,6 +5,7 @@ import os
 
 os.environ["VLLM_USE_V1"] = "0"  # Use v2 API
 os.environ["VLLM_USE_NVFP4_CT_EMULATIONS"] = "1"  # Use v2 API
+os.environ["VLLM_USE_MXFP4_CT_EMULATIONS"] = "1"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"  # Use v2 API
 
 seed = 0
@@ -50,7 +51,7 @@ model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP4"
 # model="/data5/zww/fast_config/DeepSeek-V2-Lite-w8g32/"
 # model="/data5/zww/fast_config/rtn_lite/DeepSeek-V2-Lite-w8g32/"
 # model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-R1-bf16-NVFP4"
-
+model="/data5/wzy/vLLM-mxfp4/mnt/Meta-Llama-3.1-8B-Instruct-MXFP4"
 
 # model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16-MXFP8"
 # model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16/DeepSeek-R1-bf16-mxfp8-offline"
@@ -119,6 +120,22 @@ model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP4"
 # ------------------------------------------------------------
 # Prompt:    'The future of AI is'
 # Output:    ' already here: it is already changing the way we do business and the way we live our daily lives'
+# ------------------------------------------------------------
+
+# model="/data5/wzy/vLLM-mxfp4/mnt/Meta-Llama-3.1-8B-Instruct-MXFP4"
+# Generated Outputs:
+# ------------------------------------------------------------
+# Prompt:    'Hello my name is'
+# Output:    ' doris!!! Lori is my cousin, but my name is doris, no lori. my'
+# ------------------------------------------------------------
+# Prompt:    'The president of the United States is'
+# Output:    ' not just a leader; it is a symbol of freedom, a beacon of hope and a voice for'
+# ------------------------------------------------------------
+# Prompt:    'The capital of France is'
+# Output:    " a beautiful and historic city that has something to offer for everyone. It's a city of romance,"
+# ------------------------------------------------------------
+# Prompt:    'The future of AI is'
+# Output:    ' bright, but we need to be careful about how we design and use these technologies\nbyDr.'
 # ------------------------------------------------------------
 
 # <｜begin▁of▁sentence｜>Hello my name is
