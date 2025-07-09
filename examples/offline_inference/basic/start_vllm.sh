@@ -12,7 +12,7 @@ tp_size=8
 
 num_samples=128
 task_name="mmlu_pro_math,mmlu_pro_biology"
-task_name="humaneval"
+task_name="gsm8k"
 batch_size=32
 
 
@@ -262,6 +262,7 @@ lm_eval --model local-completions \
     --batch_size 32  \
     --confirm_run_unsafe_code \
     --log_samples \
+    --limit $num_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
 
