@@ -180,7 +180,7 @@ def to_mx(
     else:
         raise AssertionError("unsupported")
 
-    scale_e8m0_biased = scale_e8m0_biased.view(torch.float8_e8m0fnu)
+    scale_e8m0_biased = scale_e8m0_biased.view(torch.uint8)
     return scale_e8m0_biased, data_lp
 
 
