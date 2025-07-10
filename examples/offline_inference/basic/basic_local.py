@@ -52,7 +52,7 @@ model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP4"
 # model="/data5/zww/fast_config/rtn_lite/DeepSeek-V2-Lite-w8g32/"
 # model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-R1-bf16-NVFP4"
 model="/data5/wzy/vLLM-mxfp4/mnt/Meta-Llama-3.1-8B-Instruct-MXFP4"
-
+model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-V2-Lite-NVFP4"
 # model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16-MXFP8"
 # model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16/DeepSeek-R1-bf16-mxfp8-offline"
 
