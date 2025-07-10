@@ -26,7 +26,7 @@ model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN"
 model_name = model_path.split("/")[-1]
 model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP4-autoround"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor/"
-model_path  = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-NVFP4-llm-compressor"
+# model_path  = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-NVFP4-llm-compressor"
 import os
 
 os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
