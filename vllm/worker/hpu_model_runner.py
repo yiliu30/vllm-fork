@@ -774,7 +774,7 @@ class CachedStepOutput:
         self.sampling_metadata = sampling_metadata
         self.is_prompt = is_prompt
 
-
+from vllm.model_executor.models.utils import set_cpu_offload_max_bytes
 class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     """
     Helper class for shared methods between GPU model runners.
@@ -795,7 +795,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         environment.set_vllm_config(vllm_config)
         self.is_driver_worker = is_driver_worker
         self.return_hidden_states = return_hidden_states
-
+        set_cpu_offload_max_bytes(
+            int(self.cache_config.cpu_offload_gb * 1024**3))
         self.sliding_window = (self.model_config.get_sliding_window()
                                if self.model_config is not None else None)
         self.device_config = (self.device_config if self.device_config

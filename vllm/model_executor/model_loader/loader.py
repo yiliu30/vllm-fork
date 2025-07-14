@@ -458,6 +458,7 @@ class DefaultModelLoader(BaseModelLoader):
 
             logger.info("Loading weights on %s...", load_device)
             weights_to_load = {name for name, _ in model.named_parameters()}
+            logger.info(f"MODEL {model}")
             loaded_weights = model.load_weights(
                 self.get_all_weights(model_config, model))
             self.counter_after_loading_weights = time.perf_counter()

@@ -90,7 +90,6 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         layer.logical_widths = output_partition_sizes
         layer.input_size_per_partition = input_size_per_partition
         layer.output_size_per_partition = output_size_per_partition
-
         # Weight
         weight = ModelWeightParameter(data=torch.empty(
             sum(output_partition_sizes),
