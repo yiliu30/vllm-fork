@@ -268,7 +268,6 @@ if __name__ == "__main__":
             model=model, 
             tokenizer=args.tokenizer,
             tensor_parallel_size=args.tp_size,
-            distributed_executor_backend='mp',
             trust_remote_code=True,
             max_model_len=args.max_model_len,
             dtype="bfloat16",
