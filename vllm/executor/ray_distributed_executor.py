@@ -154,6 +154,7 @@ class RayDistributedExecutor(DistributedExecutorBase):
             return (
             name not in excluded_envs and
             (
+                name == "QUANT_CONFIG" or
                 'HPU' in name or
                 'RAY' in name or
                 'VLLM' in name or

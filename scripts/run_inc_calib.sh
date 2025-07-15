@@ -1,7 +1,9 @@
-DEFAULT_MODEL_PATH="/mnt/disk3/DeepSeek-R1-G2-INC"
+DEFAULT_MODEL_PATH="/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207"
+DEFAULT_MODEL_PATH="/mnt/disk7/yiliu4/DeepSeek-R1-0528-G2-2nd"
+DEFAULT_MODEL_PATH=/mnt/disk9/hf_models/Kimi-K2-Instruct-G2/
 FP8_MODEL_PATH="${1:-$DEFAULT_MODEL_PATH}"
 
-QUANT_CONFIG_FILE="scripts/quant_configs/inc_measure_with_fp8kv_config.json"
+QUANT_CONFIG_FILE="/mnt/disk3/yiliu4/vllm-fork/scripts/quant_configs/inc_measure_with_fp8kv_config.json"
 timestamp=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="prepare.pile.512.${timestamp}.log"
 
@@ -20,7 +22,11 @@ echo "======================================================"
 
 echo "Start INC calibration with model ${FP8_MODEL_PATH}, log file ${LOG_FILE}"
 
+WORLD_SIZE=16
 
+export RAY_DEDUP_LOGS=0
+
+VLLM_LOGGING_LEVEL=DEBUG \
 PT_HPU_LAZY_MODE=1 \
 VLLM_MLA_PERFORM_MATRIX_ABSORPTION=0 \
 VLLM_ENABLE_RUNTIME_DEQUANT=1 \
@@ -41,4 +47,6 @@ QUANT_CONFIG=${QUANT_CONFIG_FILE} \
     --max_num_seqs 1 \
     --nprompts 512 \
     --max_model_len 2048 \
+    --tp_size $WORLD_SIZE \
+    --ep_size $WORLD_SIZE \
     --dataset pile 2>&1 | tee $LOG_FILE
