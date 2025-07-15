@@ -303,10 +303,11 @@ class Fp8LinearMethod(LinearMethodBase):
                     self.quant_config.weight_block_size)
                 if self.quant_config.enable_runtime_dequant:
                     layer.weight = torch.nn.Parameter(weight, requires_grad=False)
-                    orig_M = torch.nn.Parameter(torch.tensor(orig_M, dtype=torch.int32,device=weight.device), requires_grad=False)
+                    orig_M = torch.nn.Parameter(torch.tensor(orig_M, dtype=torch.int32, device=weight.device), requires_grad=False)
                     orig_N = torch.nn.Parameter(torch.tensor(orig_N, dtype=torch.int32, device=weight.device), requires_grad=False)
                     layer.register_parameter("orig_M", orig_M)
                     layer.register_parameter("orig_N", orig_N)
+                    logger.info(f"registered orig_M={orig_M}, orig_N={orig_N} for layer {getattr(layer, "prefix", None)}")
                 else:
                     weight, weight_scale_inv = dynamic_quant(dequant_block_fp8_weight_naive(
                         weight,

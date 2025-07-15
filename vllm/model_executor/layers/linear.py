@@ -170,6 +170,7 @@ class LinearBase(torch.nn.Module):
         self.input_size = input_size
         self.output_size = output_size
         self.skip_bias_add = skip_bias_add
+        self.prefix = prefix
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
         self.params_dtype = params_dtype
