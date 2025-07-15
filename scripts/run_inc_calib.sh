@@ -45,7 +45,7 @@ QUANT_CONFIG=${QUANT_CONFIG_FILE} \
     --tokenizer ${FP8_MODEL_PATH} \
     --osl 32 \
     --max_num_seqs 1 \
-    --nprompts 512 \
+    --nprompts 2 \
     --max_model_len 2048 \
     --tp_size $WORLD_SIZE \
     --ep_size $WORLD_SIZE \

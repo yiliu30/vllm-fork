@@ -177,7 +177,7 @@ if __name__ == "__main__":
         def get_prompt_token_ids(model_path, prompts, max_length=1024):
             from transformers import AutoTokenizer
 
-            tokenizer = AutoTokenizer.from_pretrained(model_path)
+            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
             prompt_token_ids = []
             for prompt in prompts:
                 tokens = tokenizer(
@@ -223,7 +223,7 @@ if __name__ == "__main__":
         num_samples = args.nprompts
         prompts = get_pile_prompts(args.model, num_samples)
         prompt_token_ids = get_prompt_token_ids(
-            args.model, prompts, least_tokens
+            args.model, prompts, least_tokens,
         )
         print(f"Got {len(prompts)} prompts, length of first prompt: {len(prompt_token_ids[0])}.")
         gt = None
