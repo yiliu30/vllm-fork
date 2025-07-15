@@ -24,8 +24,9 @@ Help() {
 
 #Default values for parameters
 model_path=/data/hf_models/DeepSeek-R1-Gaudi
+model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 vllm_port=8688
-warmup_cache_path=/data/warmup_cache
+# warmup_cache_path=/data/warmup_cache
 max_num_seqs=128
 host=0.0.0.0
 max_model_len=16384
