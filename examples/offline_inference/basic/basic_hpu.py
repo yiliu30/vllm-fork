@@ -26,7 +26,12 @@ model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN"
 model_name = model_path.split("/")[-1]
 model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-MXFP4-autoround"
 model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor/"
-model_path  = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-NVFP4-llm-compressor"
+model_path = "/software/users/yiliu4/HF_HOME/meta-llama/Llama-3.2-1B-Instruct-NVFP4-OFFLINE/"
+model_path = "/software/users/yiliu4/HF_HOME/deepseek-ai/DeepSeek-V2-Lite-NVFP4-OFFLINE"
+# model_path  = "/software/users/yiliu4/HF_HOME/Yi30/Llama-3.2-1B-Instruct-NVFP4-llm-compressor"
+model_path = "/software/users/yiliu4/HF_HOME/deepseek-ai/DeepSeek-V2-Lite-NVFP4-OFFLINE"
+model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE"
+
 import os
 
 os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
@@ -116,6 +121,7 @@ def main(args):
         dtype="bfloat16",
         tensor_parallel_size=tp_size,
         gpu_memory_utilization=0.65,
+        # cpu_offload_gb=20,
         **kwargs,
     )
     # Generate texts from the prompts.

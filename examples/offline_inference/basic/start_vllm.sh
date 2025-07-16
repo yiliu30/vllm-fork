@@ -2,17 +2,21 @@
 
 # VLLM_HPU_LOG_HPU_GRAPH=1 VLLM_DISABLE_INPUT_QDQ=0  bash start_vllm.sh --dummy-run
 # VLLM_HPU_LOG_HPU_GRAPH=1 VLLM_DISABLE_INPUT_QDQ=0  bash start_vllm.sh --skip-warmup
+#  bash start_vllm.sh --skip-warmup  --ds-nvfp4
 
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE/
 model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN
 v2_model_path=/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
+mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-bf16-MXFP4-autoround
+nvfp4_model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE
 tp_size=8
 
 num_samples=128
 task_name="mmlu_pro_math,mmlu_pro_biology"
 task_name="gsm8k"
+task_name="humaneval"
 batch_size=32
 
 
@@ -48,6 +52,11 @@ for arg in "$@"; do
             export VLLM_INPUT_QUICK_QDQ=1
             export USE_CT_UNPACK=1
             ;;
+        --ds-nvfp4)
+            model_path=$nvfp4_model_path
+            export VLLM_USE_STATIC_MOE_HPU=1
+            export VLLM_USE_NVFP4_CT_EMULATIONS=1
+            ;;
         --disable_native_scaling)
             USE_NATIVE_SCALING=false
             ;;
@@ -77,7 +86,7 @@ export RAY_IGNORE_UNHANDLED_ERRORS="1"
 export PT_HPU_WEIGHT_SHARING=0
 export HABANA_VISIBLE_MODULES="0,1,2,3,4,5,6,7"
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
-
+export VLLM_LOGGING_LEVEL=DEBUG
 # export VLLM_MOE_N_SLICE=8
 export VLLM_EP_SIZE=$tp_size
 
@@ -262,7 +271,6 @@ lm_eval --model local-completions \
     --batch_size 32  \
     --confirm_run_unsafe_code \
     --log_samples \
-    --limit $num_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
 

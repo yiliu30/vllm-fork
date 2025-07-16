@@ -90,7 +90,6 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         layer.logical_widths = output_partition_sizes
         layer.input_size_per_partition = input_size_per_partition
         layer.output_size_per_partition = output_size_per_partition
-
         # Weight
         weight = ModelWeightParameter(data=torch.empty(
             sum(output_partition_sizes),
@@ -148,26 +147,48 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
                 if scale_ndim == 2 else swizzled_scale.reshape(B, M, K))
 
     def process_weights_after_loading(self, layer) -> None:
+        from vllm.model_executor.layers.quantization.utils.nvfp4_qdq import (
+            unpacked_nvfp4_to_fp8,
+        )
 
+        logger.debug(
+            f"start processing weights for {getattr(layer, 'prefix', 'unknown')}"
+        )
         global_input_scale = layer.input_global_scale.max().to(torch.float32)
-        layer.input_global_scale = Parameter(global_input_scale,
-                                             requires_grad=False)
+        layer.input_global_scale = Parameter(
+            global_input_scale, requires_grad=False
+        )
 
         layer.weight_global_scale = Parameter(
             layer.weight_global_scale.max().to(torch.float32),
-            requires_grad=False)
+            requires_grad=False,
+        )
 
-        swizzled_weight_scale = self.swizzle_blockscale(layer.weight_scale)
-        layer.weight_scale_swizzled = Parameter(swizzled_weight_scale,
-                                                requires_grad=False)
+        # weight_global_scale_data = layer.weight_global_scale.data
+        weight_scale_data = layer.weight_scale.data
+        weight_packed_data = layer.weight_packed.data
+        weight_unpacked = unpacked_nvfp4_to_fp8(weight_packed_data)
+        layer.weight_scale = torch.nn.Parameter(
+            weight_scale_data, requires_grad=False
+        )
 
-        # required by cutlass kernel; need Parameter, not ModelWeightParameter
-        layer.weight = Parameter(layer.weight_packed.data, requires_grad=False)
+        layer.weight_unpacked = torch.nn.Parameter(
+            weight_unpacked, requires_grad=False
+        )
+        del layer.weight_packed
+        torch.hpu.synchronize()
+        
+        # swizzled_weight_scale = self.swizzle_blockscale(layer.weight_scale)
+        # layer.weight_scale_swizzled = Parameter(swizzled_weight_scale,
+        #                                         requires_grad=False)
 
-        if self.cutlass_nvfp4_supported:
-            layer.alpha = Parameter(layer.input_global_scale *
-                                    layer.weight_global_scale,
-                                    requires_grad=False)
+        # # required by cutlass kernel; need Parameter, not ModelWeightParameter
+        # layer.weight = Parameter(layer.weight_packed.data, requires_grad=False)
+
+        # if self.cutlass_nvfp4_supported:
+        #     layer.alpha = Parameter(layer.input_global_scale *
+        #                             layer.weight_global_scale,
+        #                             requires_grad=False)
 
     def apply_weights(self,
                       layer: torch.nn.Module,
@@ -187,4 +208,30 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
             if bias is not None:
                 out = out + bias
             return out.view(*output_shape)
-        return self.run_nvfp4_emulations(x, layer)
+        # return self.run_nvfp4_emulations(x, layer)
+        from vllm.model_executor.layers.quantization.utils.nvfp4_qdq import (
+            dequant_nvfp4,
+            qdq_nvfp4,
+        )
+
+        need_reshape = False
+        bs, seq_len = None, None
+        if len(x.shape) == 3:
+            bs, seq_len, hidden_size = x.shape
+            x = x.reshape(bs * seq_len, hidden_size)
+            need_reshape = True
+
+        hp_weight = dequant_nvfp4(
+            data_lp=layer.weight_unpacked.data,
+            out_scales=layer.weight_scale.data,
+            per_tensor_scale=layer.weight_global_scale,
+            original_dtype=x.dtype,
+            packed=False,
+        )
+
+        # breakpoint()
+        x = qdq_nvfp4(x)
+        out = x @ hp_weight.t()
+        if need_reshape:
+            out = out.reshape(bs, seq_len, -1)
+        return out
