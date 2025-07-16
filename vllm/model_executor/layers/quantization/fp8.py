@@ -295,6 +295,7 @@ class Fp8LinearMethod(LinearMethodBase):
     def process_weights_after_loading(self, layer: Module) -> None:
         # TODO(rob): refactor block quant into separate class.
         if self.block_quant:
+            logger.info(f"Processing block-wise quantized layer {getattr(layer, 'prefix', None)}")
             if current_platform.is_hpu():
                 from vllm.model_executor.layers.quantization.utils.fp8_utils import pad_block_fp8_weight_naive
                 weight, orig_M, orig_N = pad_block_fp8_weight_naive(

@@ -1,6 +1,9 @@
 DEFAULT_MODEL_PATH="/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207"
-DEFAULT_MODEL_PATH="/mnt/disk7/yiliu4/DeepSeek-R1-0528-G2-2nd"
-DEFAULT_MODEL_PATH=/mnt/disk9/hf_models/Kimi-K2-Instruct-G2/
+# DEFAULT_MODEL_PATH="/mnt/disk7/yiliu4/DeepSeek-R1-0528-G2-2nd"
+# DEFAULT_MODEL_PATH=/mnt/disk9/hf_models/Kimi-K2-Instruct-G2/
+# DEFAULT_MODEL_PATH=/mnt/disk8/yiliu7/moonshotai/Kimi-K2-Instruct
+DEFAULT_MODEL_PATH=/mnt/disk5/Kimi-K2-Instruct-G2/
+ 
 FP8_MODEL_PATH="${1:-$DEFAULT_MODEL_PATH}"
 
 QUANT_CONFIG_FILE="/mnt/disk3/yiliu4/vllm-fork/scripts/quant_configs/inc_measure_with_fp8kv_config.json"
@@ -22,7 +25,30 @@ echo "======================================================"
 
 echo "Start INC calibration with model ${FP8_MODEL_PATH}, log file ${LOG_FILE}"
 
-WORLD_SIZE=16
+# Usage of this script:
+# bash ./scripts/run_inc_calib.sh --wd 16 --prompts 512
+
+
+# Default value for WORLD_SIZE
+WORLD_SIZE=8
+NUM_PROMPTS=512
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --wd)
+            WORLD_SIZE=$2
+            shift 2
+            ;;
+        --prompts)
+            NUM_PROMPTS=$2
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
 
 export RAY_DEDUP_LOGS=0
 
@@ -47,7 +73,7 @@ QUANT_CONFIG=${QUANT_CONFIG_FILE} \
     --tokenizer ${FP8_MODEL_PATH} \
     --osl 32 \
     --max_num_seqs 1 \
-    --nprompts 2 \
+    --nprompts $NUM_PROMPTS \
     --max_model_len 2048 \
     --tp_size $WORLD_SIZE \
     --ep_size $WORLD_SIZE \
