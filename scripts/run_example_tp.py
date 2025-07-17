@@ -35,7 +35,7 @@ args = parser.parse_args()
 os.environ["VLLM_SKIP_WARMUP"] = "true"
 os.environ["HABANA_VISIBLE_DEVICES"] = "ALL"
 os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
-os.environ["VLLM_MOE_N_SLICE"] = "1" if args.ep_size > 1 else "4"
+# os.environ["VLLM_MOE_N_SLICE"] = "1" if args.ep_size > 1 else "4"
 os.environ["VLLM_EP_SIZE"] = f"{args.ep_size}"
 os.environ["VLLM_MLA_DISABLE_REQUANTIZATION"] = "1"
 os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
@@ -288,14 +288,22 @@ if __name__ == "__main__":
     end = time.perf_counter()
     # Print the outputs.
     print(f"e2e took {end - start} seconds")
+    if args.dataset == "pile":
+        tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+        prompt_token_ids_decode_lst = []
+        for token_ids in prompt_token_ids:
+            prompt_token_ids_decode_lst.append(tokenizer.decode(token_ids[-50:], skip_special_tokens=True))
+    
     for output_i in range(len(outputs)):
         output = outputs[output_i]
         gt_i = None if gt is None else gt[output_i]
         prompt = output.prompt
         generated_text = output.outputs[0].text
         gen_token_id = output.outputs[0].token_ids
+        prompt_decode = prompt_token_ids_decode_lst[output_i] if args.dataset == "pile" else prompt
         print("====================================")
         print(f"Prompt: {prompt!r}")
+        print(f"prompt_decode: {prompt_decode!r}")
         print(f"Generated text: {generated_text!r}")
         print(f"Generated token: {gen_token_id!r}")
         print(f"Ground truth: {gt_i!r}")
