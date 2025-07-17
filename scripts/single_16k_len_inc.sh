@@ -20,7 +20,7 @@ done
 BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
 # source "$BASH_DIR"/utils.sh
 
-ray stop --force
+# ray stop --force
 
 
 # DO NOT change unless you fully undersand its purpose
@@ -61,11 +61,12 @@ unset VLLM_DECODE_BS_BUCKET_MIN VLLM_DECODE_BS_BUCKET_STEP VLLM_DECODE_BS_BUCKET
 unset VLLM_DECODE_BLOCK_BUCKET_MIN VLLM_DECODE_BLOCK_BUCKET_STEP VLLM_DECODE_BLOCK_BUCKET_MAX
 
 export VLLM_SKIP_WARMUP=True
-export PT_HPU_RECIPE_CACHE_CONFIG=/data/16k_cache,false,16384
+# export PT_HPU_RECIPE_CACHE_CONFIG=/data/16k_cache,false,16384
 #set_bucketing
 
 ####### INC WOQ ReQuant Start #######
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
+# model_path=/mnt/disk5/Kimi-K2-Instruct-G2/
 unset PT_HPU_RECIPE_CACHE_CONFIG
 export VLLM_MOE_N_SLICE=1
 export VLLM_MLA_DISABLE_REQUANTIZATION=1
