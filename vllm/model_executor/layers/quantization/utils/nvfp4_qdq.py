@@ -2,9 +2,9 @@ import os
 import gc
 import functools
 import habana_frameworks.torch.internal.bridge_config as bc
-
-os.environ["PT_HPU_LAZY_MODE"] = "1"
-os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "1"
+import vllm.envs as envs
+# os.environ["PT_HPU_LAZY_MODE"] = "1"
+# os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "1"
 
 # os.environ['HABANA_PROFILE'] = '1'
 # os.environ['GRAPH_VISUALIZATION'] = '1'
@@ -17,13 +17,10 @@ import habana_frameworks.torch.internal.bridge_config as bc
 # from vllm_hpu_extension.profiler import (HabanaMemoryProfiler, format_bytes)
 
 
-from habana_frameworks.torch.distributed.hccl import initialize_distributed_hpu
-
 from habana_frameworks.torch.hpu import wrap_in_hpu_graph
 
 import os
 
-os.environ["PT_HPU_LAZY_MODE"] = "1"
 
 import torch
 import torch.nn as nn
@@ -31,12 +28,6 @@ import torch.nn.functional as F
 import habana_frameworks.torch as ht
 from habana_frameworks.torch.hpu import wrap_in_hpu_graph
 import time
-import argparse
-import torch.nn.functional as F
-from vllm.model_executor.layers.quantization.compressed_tensors.schemes.compressed_tensors_w8a8_mxfp8 import (
-    dequant_mx_fp8,
-    quant_mx_fp8,
-)
 
 
 kE2M1ToFloat = torch.tensor(
@@ -112,6 +103,14 @@ from torchao.prototype.mx_formats.constants import (
 )
 
 
+def get_reciprocal(x):
+    if isinstance(x, torch.Tensor):
+        return torch.where(x == 0, torch.tensor(0.0, dtype=x.dtype), 1.0 / x)
+    elif isinstance(x, (float, int)):
+        return 0.0 if x == 0 else 1.0 / x
+    else:
+        raise TypeError("Input must be a float, int, or a torch.Tensor.")
+
 def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
     """Convert per-tensor amax to per-tensor scale.
     Used to scale fp32 scales down to fp8 scales
@@ -122,9 +121,32 @@ def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
     Returns:
         torch.Tensor: Per-tensor scale tensor
     """
-    return torch.clamp(amax / F8E4M3_MAX, min=E4M3_EPS, max=F8E4M3_MAX).to(
-        torch.float32
-    )
+    # return torch.clamp(amax / F8E4M3_MAX, min=E4M3_EPS, max=F8E4M3_MAX).to(
+    #     torch.float32
+    # )
+    gs = F8E4M3_MAX * F4_E2M1_MAX * get_reciprocal(amax)
+    gs =  gs.to(torch.float32)
+    return gs
+    
+
+
+def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
+    """Convert per-tensor amax to per-tensor scale.
+    Used to scale fp32 scales down to fp8 scales
+
+    Args:
+        amax: Per-tensor amax tensor
+
+    Returns:
+        torch.Tensor: Per-tensor scale tensor
+    """
+    # return torch.clamp(amax / F8E4M3_MAX, min=E4M3_EPS, max=F8E4M3_MAX).to(
+    #     torch.float32
+    # )
+    gs = F8E4M3_MAX * F4_E2M1_MAX * get_reciprocal(amax)
+    gs =  gs.to(torch.float32)
+    return gs
+    
 
 
 E4M3_EPS = torch.finfo(torch.float8_e4m3fn).tiny
@@ -231,15 +253,17 @@ def nvfp4_quantize(
         # we want the per_tensor_scale ~= amax of the block_scale_fp32
         block_scale_fp32 = block_scale.to(torch.float32)
         # Quantize the blockwise scales w/ the per_tensor_scale
-        scaled_block_scales = block_scale_fp32 / per_tensor_scale
+        scaled_block_scales = block_scale_fp32 * per_tensor_scale
         scaled_block_scales_fp8 = torch.clamp(
             scaled_block_scales, min=E4M3_EPS, max=F8E4M3_MAX
         ).to(torch.float8_e4m3fn)
         scaled_block_scales_fp32 = scaled_block_scales_fp8.to(torch.float32)
         # We "temporarily" dequant the scaled_block_scales_fp32 to get the per_tensor_scale
         # To apply to data
-        total_scale = per_tensor_scale * scaled_block_scales_fp32
-        data_scaled = data_hp / total_scale.unsqueeze(-1)
+        # total_scale =  scaled_block_scales_fp32 / per_tensor_scale 
+        # data_scaled = data_hp / total_scale.unsqueeze(-1)
+        data_scaled = data_hp * get_reciprocal(scaled_block_scales_fp32.unsqueeze(-1))
+        data_scaled = data_scaled * per_tensor_scale.to(torch.float32)
         out_scales = scaled_block_scales_fp8
 
     data_scaled = torch.clamp(data_scaled, -F4_E2M1_MAX, F4_E2M1_MAX)
@@ -265,7 +289,7 @@ def to_nvfp4(x, do_pack=True):
         per_tensor_scale=per_tensor_scale,
         do_pack=do_pack,
     )
-    return data_lp, out_scales, 1.0/per_tensor_scale
+    return data_lp, out_scales, per_tensor_scale
 
 
 def dequant_nvfp4(
@@ -275,9 +299,10 @@ def dequant_nvfp4(
     original_dtype=torch.bfloat16,
     packed=True,
 ):
-    scale_fp = out_scales.to(original_dtype) / per_tensor_scale.to(
-        original_dtype
-    )
+    # scale_fp = out_scales.to(original_dtype) / per_tensor_scale.to(
+    #     original_dtype
+    # )
+    scale_fp = out_scales.to(original_dtype) 
     if packed:
         m, half_n = data_lp.shape
         n = half_n * 2
@@ -291,6 +316,7 @@ def dequant_nvfp4(
     data_hp = data_hp.reshape(m, -1, 16)
     scale_fp = scale_fp.reshape(m, -1, 1)
     data_hp = data_hp * scale_fp
+    data_hp = data_hp * get_reciprocal(per_tensor_scale.to(original_dtype))
     data_hp = data_hp.reshape(m, n)
     return data_hp
 
@@ -302,8 +328,14 @@ def unpacked_nvfp4_to_fp8(data_lp):
     data_hp = unpack_fp4_from_uint8(data_lp, m, n, dtype=torch.float8_e4m3fn)
     return data_hp
 
+def check_nan(x):
+    return torch.isnan(x).any() or torch.isinf(x).any()
+
 
 def qdq_nvfp4(x):
+    if envs.VLLM_DISABLE_INPUT_QDQ:
+        return x
+
     data_lp, x_scale, x_global_scale = to_nvfp4(x, do_pack=False)
     x_dq = dequant_nvfp4(
         data_lp,

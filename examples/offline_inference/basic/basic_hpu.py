@@ -32,6 +32,13 @@ model_path = "/software/users/yiliu4/HF_HOME/deepseek-ai/DeepSeek-V2-Lite-NVFP4-
 model_path = "/software/users/yiliu4/HF_HOME/deepseek-ai/DeepSeek-V2-Lite-NVFP4-OFFLINE"
 model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE"
 
+# model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround/"
+# model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
+# model_path = "/software/users/yiliu4/HF_HOME/deepseek-ai/DeepSeek-V2-Lite-NVFP4-OFFLINE"
+model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-compressor/"
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
+# model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-NVFP4-autoround"
+model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE"
 import os
 
 os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
@@ -104,9 +111,9 @@ def main(args):
     # Sample prompts.
     prompts = [
         "Hello, my name is",
-        # "The president of the United States is",
-        # "The capital of France is",
-        # "The future of AI is",
+        "The president of the United States is",
+        "The capital of France is",
+        "The future of AI is",
     ] * args.batch_size
     # Create a sampling params object.
     max_model_len = 2048
@@ -116,7 +123,7 @@ def main(args):
         #   quantization="inc",
         max_model_len=max_model_len,
         max_num_batched_tokens=max_model_len,
-        enforce_eager=True,
+        # enforce_eager=True,
         trust_remote_code=True,
         dtype="bfloat16",
         tensor_parallel_size=tp_size,
