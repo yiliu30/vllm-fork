@@ -91,6 +91,8 @@ class CompressedTensorsW4A4MXFP4MoeMethod(CompressedTensorsMoEMethod):
             {"quant_method": FusedMoeWeightScaleSupported.GROUP.value})
         set_weight_attrs(w2_weight_scale, extra_weight_attrs)
 
+        self.mask_weights_buffer = None
+        self.bt_threshold = 4096
 
     def swizzle_blockscale(self, scale: torch.tensor):
         assert (scale.dtype == torch.float8_e4m3fn)
