@@ -308,7 +308,7 @@ class Fp8LinearMethod(LinearMethodBase):
                     orig_N = torch.nn.Parameter(torch.tensor(orig_N, dtype=torch.int32, device=weight.device), requires_grad=False)
                     layer.register_parameter("orig_M", orig_M)
                     layer.register_parameter("orig_N", orig_N)
-                    logger.info(f"registered orig_M={orig_M}, orig_N={orig_N} for layer {getattr(layer, "prefix", None)}")
+                    logger.info(f"registered orig_M={orig_M}, orig_N={orig_N} for layer {getattr(layer, 'prefix', None)}")
                 else:
                     weight, weight_scale_inv = dynamic_quant(dequant_block_fp8_weight_naive(
                         weight,

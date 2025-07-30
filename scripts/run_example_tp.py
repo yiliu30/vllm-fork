@@ -271,7 +271,7 @@ if __name__ == "__main__":
             trust_remote_code=True,
             max_model_len=args.max_model_len,
             dtype="bfloat16",
-            gpu_memory_utilization=0.8,
+            gpu_memory_utilization=0.75,
             enable_expert_parallel=True,
             **param
         )

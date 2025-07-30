@@ -3,9 +3,9 @@
 # set -x
 # parameters to be changed
 # set IP address of header node
-export VLLM_HOST_IP=10.239.128.244
+export VLLM_HOST_IP=10.239.129.40
 # set NIC interface name of worker IP address
-export GLOO_SOCKET_IFNAME=enx6c1ff7012f87
+export GLOO_SOCKET_IFNAME=enx6c1ff7012f4d
 
 # warmup cache folder
 export PT_HPU_RECIPE_CACHE_CONFIG=/data/cache/cache_32k_1k_20k_16k,false,32768
