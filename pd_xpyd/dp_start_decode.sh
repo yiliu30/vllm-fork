@@ -55,6 +55,7 @@ do
     --use-padding-aware-scheduling
     --use-v2-block-manager
     --distributed_executor_backend mp
+    --kv-cache-dtype fp8_inc
     --kv-transfer-config '{"kv_connector":"MooncakeStoreConnector","kv_role":"kv_consumer"}'
   )
 

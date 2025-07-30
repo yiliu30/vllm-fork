@@ -1,0 +1,18 @@
+{
+    "mode": "QUANTIZE",
+    "observer": "maxabs",
+    "scale_method": "ACT_MAXABS_HW_WEIGHTS_PCS_MAXABS_POW2",
+    "scale_format": "const",
+    "allowlist": {
+        "types": [],
+        "names": []
+    },
+    "blocklist": {
+        "types": [],
+        "names": [
+            "lm_head",
+            "mlp\\.gate\\b"
+        ]
+    },
+    "dump_stats_path": "./pd_xpyd/Inc_fp8_tp1ep16/inc_measure_output"
+}

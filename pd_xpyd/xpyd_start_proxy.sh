@@ -1,5 +1,5 @@
 #set +x
-export MODEL_PATH=/mnt/disk2/hf_models/DeepSeek-R1-BF16-w8afp8-static-no-ste-G2/
+export MODEL_PATH=/mnt/disk2/hf_models/DeepSeek-R1-G2/
 
 if [ -z "$1" ]; then
     echo "please input P instance number, D instance number, TP size of D instance, true or false (true for first token from P, default from D"
