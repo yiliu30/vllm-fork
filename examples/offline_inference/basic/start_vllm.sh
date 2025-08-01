@@ -305,14 +305,14 @@ lm_eval --model local-completions \
 
 
 
-# end_time=$(date +%s)
-# echo "Benchmark completed in $((end_time - start_time)) seconds"
+end_time=$(date +%s)
+echo "Benchmark completed in $((end_time - start_time)) seconds"
 
-# # Clean up
-# echo "Stopping vLLM server"
-# kill ${pid}
-# echo "Script execution completed"
-# sleep 10
+# Clean up
+echo "Stopping vLLM server"
+kill ${pid}
+echo "Script execution completed"
+sleep 10
 
 
 
