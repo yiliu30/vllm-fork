@@ -88,13 +88,19 @@ class CompressedTensorsMoEMethod(FusedMoEMethodBase):
 
 
 def nvfp4_unpacked_weight_gemm(
-    x, weight_unpacked, weight_scale, weight_global_scale
+    x,
+    weight,
+    weight_scale,
+    weight_global_scale,
+    input_global_scale=None,
 ):
+    weight_unpacked = weight
     # return self.run_nvfp4_emulations(x, layer)
     from vllm.model_executor.layers.quantization.utils.nvfp4_qdq import (
         unpacked_nvfp4_to_fp8,
         dequant_nvfp4,
         qdq_nvfp4,
+        qdq_nvfp4_with_gs,
     )
 
     # bs, seq_len, hidden_size = x.shape
@@ -107,8 +113,7 @@ def nvfp4_unpacked_weight_gemm(
         packed=False,
     )
 
-    # breakpoint()
-    x = qdq_nvfp4(x)
+    x = qdq_nvfp4_with_gs(x, input_global_scale)
     out = x @ hp_weight.t()
     # out = out.reshape(bs, seq_len, -1)
     return out
@@ -285,7 +290,7 @@ class CompressedTensorsW4A4MoeMethod(CompressedTensorsMoEMethod):
                               layer.w13_weight_global_scale[:, 1]):
             logger.warning_once(
                 "w1_weight_global_scale must match w3_weight_global_scale. "
-                "Accuracy may be affected.")
+                f"Accuracy may be affected. {getattr(layer, 'layer_name', '')}")
 
         # Take inverse of global scale saved to disk
         layer.w13_weight_scale_2 = torch.nn.Parameter(
@@ -475,16 +480,19 @@ class CompressedTensorsW4A4MoeMethod(CompressedTensorsMoEMethod):
                 ]
                 local_w3_global_scale = local_w13_global_scale[1]
                 local_w3_input_global_scale = local_w13_input_global_scale[1]
-
+      
+                # breakpoint()
                 local_w1_out = nvfp4_unpacked_weight_gemm(
                     x=current_state_static,
-                    weight_unpacked=local_w1_unpacked,
+                    input_global_scale=local_w1_input_global_scale,
+                    weight=local_w1_unpacked,
                     weight_scale=local_w1_scale,
                     weight_global_scale=local_w1_global_scale,
                 )
                 local_w3_out = nvfp4_unpacked_weight_gemm(
                     x=current_state_static,
-                    weight_unpacked=local_w3_unpacked,
+                    input_global_scale=local_w3_input_global_scale,
+                    weight=local_w3_unpacked,
                     weight_scale=local_w3_scale,
                     weight_global_scale=local_w3_global_scale,
                 )
@@ -493,10 +501,12 @@ class CompressedTensorsW4A4MoeMethod(CompressedTensorsMoEMethod):
 
                 local_w2_out = nvfp4_unpacked_weight_gemm(
                     x=w13_out,
-                    weight_unpacked=local_w2_unpacked,
+                    input_global_scale=local_w2_input_global_scale,
+                    weight=local_w2_unpacked,
                     weight_scale=local_w2_scale,
                     weight_global_scale=local_w2_global_scale,
                 )
+
                 padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
                     1
                 )
