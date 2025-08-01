@@ -2,7 +2,8 @@
 
 # VLLM_HPU_LOG_HPU_GRAPH=1 VLLM_DISABLE_INPUT_QDQ=0  bash start_vllm.sh --dummy-run
 # VLLM_HPU_LOG_HPU_GRAPH=1 VLLM_DISABLE_INPUT_QDQ=0  bash start_vllm.sh --skip-warmup
-#  bash start_vllm.sh --skip-warmup  --ds-nvfp4
+#  bash start_vllm.sh --skip-warmup  --ds-nvfp4 
+#  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --dummy-run
 
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE/
@@ -11,12 +12,14 @@ v2_model_path=/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-ll
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-bf16-MXFP4-autoround
 nvfp4_model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE
+nvfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround/
 tp_size=8
 
 num_samples=128
 task_name="mmlu_pro_math,mmlu_pro_biology"
-task_name="gsm8k"
 task_name="humaneval"
+task_name="gsm8k"
+
 batch_size=32
 
 
@@ -270,6 +273,7 @@ lm_eval --model local-completions \
     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
     --batch_size 32  \
     --confirm_run_unsafe_code \
+    --limit $num_samples \
     --log_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
