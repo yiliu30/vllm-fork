@@ -212,6 +212,7 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         from vllm.model_executor.layers.quantization.utils.nvfp4_qdq import (
             dequant_nvfp4,
             qdq_nvfp4,
+            qdq_nvfp4_with_gs
         )
 
         need_reshape = False
@@ -229,8 +230,7 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
             packed=False,
         )
 
-        # breakpoint()
-        x = qdq_nvfp4(x)
+        x = qdq_nvfp4_with_gs(x, layer.input_global_scale)
         out = x @ hp_weight.t()
         if need_reshape:
             out = out.reshape(bs, seq_len, -1)
