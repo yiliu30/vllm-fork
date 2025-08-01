@@ -4,6 +4,8 @@
 # VLLM_HPU_LOG_HPU_GRAPH=1 VLLM_DISABLE_INPUT_QDQ=0  bash start_vllm.sh --skip-warmup
 #  bash start_vllm.sh --skip-warmup  --ds-nvfp4 
 #  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --dummy-run
+#  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --dummy-run --skip-warmup --next_token
+#  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --skip-warmup --next_token
 
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE/
@@ -13,6 +15,7 @@ mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-bf16-MXFP4-autoround
 nvfp4_model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE
 nvfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround/
+nvfp4_model_path="/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
 tp_size=8
 
 num_samples=128
@@ -31,6 +34,7 @@ USE_NATIVE_SCALING=true
 # Default value for dummy run
 USE_DUMMY_RUN=false
 SKIP_WARMUP=false
+NEXT_TOKEN=false
 
 # Parse arguments
 for arg in "$@"; do
@@ -63,6 +67,9 @@ for arg in "$@"; do
         --disable_native_scaling)
             USE_NATIVE_SCALING=false
             ;;
+        --next_token)
+            NEXT_TOKEN=true
+            ;;
         *)
             echo "Unknown argument: $arg"
             echo "Usage: $0 [--fp8_kv] [--disable_native_scaling]"
@@ -74,6 +81,8 @@ done
 # Debugging: Print the values of the variables
 echo "USE_FP8_KV=$USE_FP8_KV"
 echo "USE_NATIVE_SCALING=$USE_NATIVE_SCALING"
+echo "NEXT_TOKEN=$NEXT_TOKEN"
+
 
 BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
 # source "$BASH_DIR"/utils.sh
@@ -102,6 +111,14 @@ export VLLM_GRAPH_RESERVED_MEM=0.4
 export VLLM_GRAPH_PROMPT_RATIO=0
 export VLLM_MLA_DISABLE_REQUANTIZATION=0
 export VLLM_DELAYED_SAMPLING="true"
+
+if [ "$NEXT_TOKEN" = true ]; then
+    echo "Enabling next token prediction"
+    export VLLM_DELAYED_SAMPLING="false"
+else
+    echo "Disabling next token prediction"
+    export VLLM_DELAYED_SAMPLING="true"
+fi
 #export VLLM_MOE_SLICE_LENGTH=20480
 
 # params
@@ -232,7 +249,13 @@ CMD="python3 -m vllm.entrypoints.openai.api_server --host 0.0.0.0 --port 8688 \
 if [ "$USE_DUMMY_RUN" = true ]; then
     CMD="$CMD --load-format dummy"
 fi
-
+# add --max-num-prefill-seqs for next token prediction
+if [ "$NEXT_TOKEN" = true ]; then
+    echo "Enabling next token prediction"
+    CMD="$CMD --max-num-prefill-seqs 1"
+else
+    echo "Disabling next token prediction"
+fi
 # Execute the command and log output
 $CMD 2>&1 | tee benchmark_logs/${LOG_FILE}_serving.log &
     pid=$(($!-1))
@@ -280,6 +303,8 @@ lm_eval --model local-completions \
 
 
 
+
+
 end_time=$(date +%s)
 echo "Benchmark completed in $((end_time - start_time)) seconds"
 
@@ -288,3 +313,13 @@ echo "Stopping vLLM server"
 kill ${pid}
 echo "Script execution completed"
 sleep 10
+
+
+
+# lm_eval --model local-completions \
+#     --tasks "$task_name" \
+#     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
+#     --batch_size 32  \
+#     --confirm_run_unsafe_code \
+#     --limit $num_samples \
+#     --log_samples 

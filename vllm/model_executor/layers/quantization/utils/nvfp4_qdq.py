@@ -112,7 +112,7 @@ def get_reciprocal(x):
         raise TypeError("Input must be a float, int, or a torch.Tensor.")
 
 
-    
+
 
 
 def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
