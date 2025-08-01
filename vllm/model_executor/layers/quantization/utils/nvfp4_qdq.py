@@ -111,6 +111,10 @@ def get_reciprocal(x):
     else:
         raise TypeError("Input must be a float, int, or a torch.Tensor.")
 
+
+
+
+
 def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
     """Convert per-tensor amax to per-tensor scale.
     Used to scale fp32 scales down to fp8 scales
@@ -128,8 +132,6 @@ def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
     gs =  gs.to(torch.float32)
     return gs
     
-
-
 
 
 E4M3_EPS = torch.finfo(torch.float8_e4m3fn).tiny
