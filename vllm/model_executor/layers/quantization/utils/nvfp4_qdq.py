@@ -130,23 +130,6 @@ def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
     
 
 
-def per_tensor_amax_to_scale(amax: torch.Tensor) -> torch.Tensor:
-    """Convert per-tensor amax to per-tensor scale.
-    Used to scale fp32 scales down to fp8 scales
-
-    Args:
-        amax: Per-tensor amax tensor
-
-    Returns:
-        torch.Tensor: Per-tensor scale tensor
-    """
-    # return torch.clamp(amax / F8E4M3_MAX, min=E4M3_EPS, max=F8E4M3_MAX).to(
-    #     torch.float32
-    # )
-    gs = F8E4M3_MAX * F4_E2M1_MAX * get_reciprocal(amax)
-    gs =  gs.to(torch.float32)
-    return gs
-    
 
 
 E4M3_EPS = torch.finfo(torch.float8_e4m3fn).tiny
