@@ -265,15 +265,13 @@ def nvfp4_quantize(
     return out_scales, data_lp
 
 
-def to_nvfp4(x, x_global_scale=None, do_pack=True):
-    if x_global_scale is None:
-        tensor_amax = torch.max(torch.abs(x))
-        per_tensor_scale = per_tensor_amax_to_scale(tensor_amax)
-        x_global_scale = per_tensor_scale
+def to_nvfp4(x, do_pack=True):
+    tensor_amax = torch.max(torch.abs(x))
+    per_tensor_scale = per_tensor_amax_to_scale(tensor_amax)
     out_scales, data_lp = nvfp4_quantize(
         data_hp=x,
         block_size=16,
-        per_tensor_scale=x_global_scale,
+        per_tensor_scale=per_tensor_scale,
         do_pack=do_pack,
     )
     return data_lp, out_scales, per_tensor_scale
@@ -344,11 +342,11 @@ def qdq_nvfp4(x, x_global_scale=None):
     return x_dq
 
 
-def qdq_nvfp4(x, x_global_scale=None):
+def qdq_nvfp4(x):
     if envs.VLLM_DISABLE_INPUT_QDQ:
         return x
 
-    data_lp, x_scale = to_nvfp4_with_gs(x, x_global_scale, do_pack=False)
+    data_lp, x_scale, _ = to_nvfp4(x, do_pack=False)
     x_dq = dequant_nvfp4(
         data_lp,
         x_scale,
