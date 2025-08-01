@@ -40,6 +40,7 @@ model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-com
 model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-NVFP4-autoround"
 # model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE"
 model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
+# model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-W4A4-RTN-GLOBAL-SCALE-WW"
 
 import os
 
@@ -120,6 +121,7 @@ def main(args):
     # Create a sampling params object.
     max_model_len = 2048
     model_path = args.model_path
+    print(f"model_path: {model_path}")
     llm = LLM(
         model=model_path,
         #   quantization="inc",
