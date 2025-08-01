@@ -331,7 +331,7 @@ def qdq_nvfp4(x, x_global_scale=None):
     if envs.VLLM_DISABLE_INPUT_QDQ:
         return x
 
-    data_lp, x_scale = to_nvfp4(x, x_global_scale, do_pack=False)
+    data_lp, x_scale, _ = to_nvfp4(x, x_global_scale, do_pack=False)
     x_dq = dequant_nvfp4(
         data_lp,
         x_scale,
