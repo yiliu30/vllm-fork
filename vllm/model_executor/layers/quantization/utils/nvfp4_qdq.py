@@ -327,20 +327,6 @@ def check_nan(x):
     return torch.isnan(x).any() or torch.isinf(x).any()
 
 
-def qdq_nvfp4(x, x_global_scale=None):
-    if envs.VLLM_DISABLE_INPUT_QDQ:
-        return x
-
-    data_lp, x_scale, _ = to_nvfp4(x, x_global_scale, do_pack=False)
-    x_dq = dequant_nvfp4(
-        data_lp,
-        x_scale,
-        x_global_scale,
-        original_dtype=x.dtype,
-        packed=False,
-    )
-    return x_dq
-
 
 def qdq_nvfp4(x):
     if envs.VLLM_DISABLE_INPUT_QDQ:
