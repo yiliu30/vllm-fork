@@ -257,50 +257,49 @@ else
     echo "Disabling next token prediction"
 fi
 # Execute the command and log output
-$CMD
-# $CMD 2>&1 | tee benchmark_logs/${LOG_FILE}_serving.log &
-#     pid=$(($!-1))
+$CMD 2>&1 | tee benchmark_logs/${LOG_FILE}_serving.log &
+    pid=$(($!-1))
     
 
-# # Wait for server to start
-# n=0
-# ready=false
-# until [[ "$n" -ge 1000 ]] || [[ $ready == true ]]; do
-#     n=$((n+1))
-#     if grep -q "Started server process" benchmark_logs/${LOG_FILE}_serving.log; then
-#         break
-#     fi
-#     sleep 6s
-# done
-# sleep 10s
-# echo "Server started with PID: ${pid}"
+# Wait for server to start
+n=0
+ready=false
+until [[ "$n" -ge 1000 ]] || [[ $ready == true ]]; do
+    n=$((n+1))
+    if grep -q "Started server process" benchmark_logs/${LOG_FILE}_serving.log; then
+        break
+    fi
+    sleep 6s
+done
+sleep 10s
+echo "Server started with PID: ${pid}"
 
 
 
-# #===========================================================
-# # RUN BENCHMARK
-# #===========================================================
-# export no_proxy=localhost,127.0.0.1
+#===========================================================
+# RUN BENCHMARK
+#===========================================================
+export no_proxy=localhost,127.0.0.1
 
 
-# model_base_name=$(basename $model_path)
+model_base_name=$(basename $model_path)
 
-# EVAL_LOG_NAME="mxfp8_${model_base_name}_lm_eval_output_${task_name}_bs${batch_size}__${timestamp}"
+EVAL_LOG_NAME="mxfp8_${model_base_name}_lm_eval_output_${task_name}_bs${batch_size}__${timestamp}"
 
-# echo "Running lm_eval with model: ${model_path}, task: ${task_name}, batch size: ${batch_size}, num samples: ${num_samples}"
+echo "Running lm_eval with model: ${model_path}, task: ${task_name}, batch size: ${batch_size}, num samples: ${num_samples}"
 
-# start_time=$(date +%s)
+start_time=$(date +%s)
 
-# HF_ALLOW_CODE_EVAL=1 \
-# lm_eval --model local-completions \
-#     --tasks "$task_name" \
-#     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
-#     --batch_size 32  \
-#     --confirm_run_unsafe_code \
-#     --limit $num_samples \
-#     --log_samples \
-#     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
-#     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
+HF_ALLOW_CODE_EVAL=1 \
+lm_eval --model local-completions \
+    --tasks "$task_name" \
+    --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
+    --batch_size 32  \
+    --confirm_run_unsafe_code \
+    --limit $num_samples \
+    --log_samples \
+    --output_path "benchmark_logs/$EVAL_LOG_NAME" \
+    2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
 
 
 
