@@ -37,8 +37,7 @@ export VLLM_MOE_N_SLICE=8
 export VLLM_EP_SIZE=16
 
 
-export QUANT_CONFIG="./scripts/quant_configs/inc_quant_per_channel_bf16kv_skip_sdpa.json"
-export INC_FORCE_SCALE_FP32=1
+
 
 block_size=128
 # DO NOT change ends...
@@ -101,6 +100,13 @@ else
     export QUANT_CONFIG="./scripts/quant_configs/inc_quant_per_channel_bf16kv.json"
     KV_CACHE_DTYPE="auto"
 fi
+
+
+export QUANT_CONFIG="./scripts/quant_configs/inc_quant_per_channel_bf16kv_skip_sdpa.json"
+export INC_FORCE_SCALE_FP32=1
+
+echo "Model path $model_path"
+echo "quant config $QUANT_CONFIG"
 ####### INC WOQ ReQuant End   #######
 
 # !!!!!!!!!!!!!!!!!!!! set bucketing !!!!!!!!!!!!!
