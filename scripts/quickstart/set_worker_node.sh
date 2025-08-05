@@ -2,12 +2,12 @@
 
 # set -x
 # set IP address of worker node
-export VLLM_HOST_IP=10.239.129.40
+export VLLM_HOST_IP=10.239.129.70
 # set NIC interface name of worker IP address
-export GLOO_SOCKET_IFNAME=enx6c1ff7012f4d
+export GLOO_SOCKET_IFNAME=enx6c1ff701568e
 
 #warmup cache folder
-export PT_HPU_RECIPE_CACHE_CONFIG=/data/cache/cache_32k_1k_20k_16k,false,32768
+# export PT_HPU_RECIPE_CACHE_CONFIG=/data/cache/cache_32k_1k_20k_16k,false,32768
 
 # vLLM parameters
 max_num_batched_tokens=32768
