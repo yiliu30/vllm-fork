@@ -113,6 +113,31 @@ class GptOssExperts(nn.Module):
                 next_states.index_add_(0, token_idx, weighted_output.to(hidden_states.dtype))
             next_states = next_states.view(batch_size, -1, self.hidden_size)
         else:
+            # if STATIC_MOE:
+            #     num_experts, intermediate_size, hidden_dim = self.gate_up_proj.shape
+            #     routing_weights = routing_weights.transpose(0, 1).view(num_experts, batch_size, -1)
+            #     for expert_idx in range(num_experts):
+            #         local_gate_up_proj = self.gate_up_proj[expert_idx]
+            #         local_gate_up_proj_bias = self.gate_up_proj_bias[expert_idx]
+            #         local_down_proj = self.down_proj[expert_idx]
+            #         local_down_proj_bias = self.down_proj_bias[expert_idx]
+            #         local_gate_up = hidden_states @ local_gate_up_proj + local_gate_up_proj_bias
+            #         local_gate, local_up = local_gate_up[..., ::2], local_gate_up[..., 1::2]
+            #         local_gate = local_gate.clamp(min=None, max=self.limit)
+            #         local_up = local_up.clamp(min=-self.limit, max=self.limit)
+            #         local_glu = local_gate * torch.sigmoid(local_gate * self.alpha)
+            #         local_up_glu = (local_up + 1) * local_glu
+            #         local_next_states = local_up_glu @ local_down_proj + local_down_proj_bias
+            #         local_next_states = local_next_states.view(batch_size, -1, self.hidden_size)
+            #         local_routing_weights = routing_weights[expert_idx][..., None]
+            #         local_next_states = local_next_states * local_routing_weights
+            #         if expert_idx == 0:
+            #             final_next_states = local_next_states
+            #         else:
+            #             final_next_states += local_next_states
+            #     return final_next_states
+                    
+                
             hidden_states = hidden_states.repeat(num_experts, 1)
             hidden_states = hidden_states.view(num_experts, -1, self.hidden_size)
             gate_up = torch.bmm(hidden_states, self.gate_up_proj) + self.gate_up_proj_bias[..., None, :]
@@ -145,8 +170,9 @@ class GptOssTopKRouter(nn.Module):
         router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
         return router_scores, router_indices
 
+from loguru import logger
 
-@use_kernel_forward_from_hub("MegaBlocksMoeMLP")
+# @use_kernel_forward_from_hub("MegaBlocksMoeMLP")
 class GptOssMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -154,6 +180,7 @@ class GptOssMLP(nn.Module):
         self.experts = GptOssExperts(config)
 
     def forward(self, hidden_states):
+        logger.trace(f"Running GptOssMLP with hidden_states shape: {hidden_states.shape}")
         router_scores, router_indices = self.router(hidden_states)  # (num_experts, seq_len)
         routed_out = self.experts(hidden_states, router_indices=router_indices, routing_weights=router_scores)
         return routed_out, router_scores
@@ -430,6 +457,7 @@ class GptOssModel(GptOssPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        config.num_hidden_layers = 2
         self.layers = nn.ModuleList(
             [GptOssDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
