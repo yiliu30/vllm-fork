@@ -402,9 +402,7 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # avoid import error when triton_kernel is not installed
-        from vllm.model_executor.layers.fused_moe.triton_kernels_moe import (
-            triton_kernel_moe_forward)
+
 
         if enable_eplb:
             raise NotImplementedError("EPLB is not supported for mxfp4")
@@ -490,6 +488,9 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
                     w2_bias=layer.w2_bias,
                 )
             else:
+                # avoid import error when triton_kernel is not installed
+                from vllm.model_executor.layers.fused_moe.triton_kernels_moe import (
+                    triton_kernel_moe_forward)
                 return triton_kernel_moe_forward(
                     hidden_states=x,
                     w1=self.w13_weight_triton_tensor,
