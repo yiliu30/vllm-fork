@@ -41,8 +41,9 @@ def main():
     # Create an LLM.
     model_name = "/home/yiliu7/models/deepseek-ai/DeepSeek-R1"
     llm = LLM(
+        # gpu_memory_utilization=0.3,  # Set the GPU memory utilization.
         max_model_len = 1024,  # Set the maximum model length.
-        # enforce_eager=True,  # Enable eager mode for faster inference.
+        enforce_eager=True,  # Enable eager mode for faster inference.
         trust_remote_code=True,
         # model = "/home/yiliu7/models/weiweiz1/DeepSeek-V2-Lite-NVFP4-W4A4-RTN",
         # model = "/home/yiliu7/models/Yi30/DeepSeek-V2-Lite-NVFP4-llmc"
@@ -126,3 +127,37 @@ if __name__ == "__main__":
 #             --log_samples --output_path lmeval.ds.gsm8k.out \
 #                 --limit 128 \
 #                     --show_config 2>&1 | tee lmeval.log.ds.gsm8k.txt
+
+
+# /home/yiliu7/models/weiweiz1/DeepSeek-V2-Lite-NVFP4-W4A4-RTN"
+# Static global scale
+# Generated Outputs:
+# ------------------------------------------------------------
+# Prompt:    'Hello, my name is'
+# Output:    ' Erika. I am a 59 year old Female.\nMy主人希望我做一个乐观'
+# ------------------------------------------------------------
+# Prompt:    'The president of the United States is'
+# Output:    ' not only the leader of the free world but also the commander-in-chief of the country’'
+# ------------------------------------------------------------
+# Prompt:    'The capital of France is'
+# Output:    ' the city of Paris, and its modern skyline is dominated by the Eiffel Tower. Paris is the'
+# ------------------------------------------------------------
+# Prompt:    'The future of AI is'
+# Output:    ' here!\nThe future of AI is here!\nWe are an AI enabled digital talent company with'
+# ------------------------------------------------------------
+
+# Dynamic global scale
+# Generated Outputs:
+# ------------------------------------------------------------
+# Prompt:    'Hello, my name is'
+# Output:    ' Mr. Jacobson, and I teach 10th grade English at Hillside High School.'
+# ------------------------------------------------------------
+# Prompt:    'The president of the United States is'
+# Output:    ' being investigated for obstruction of justice, and the president of Russia is now claiming that the Obama administration had'
+# ------------------------------------------------------------
+# Prompt:    'The capital of France is'
+# Output:    ' a city of the world’s most visited, so everyone feels quite familiar with Paris. The French'
+# ------------------------------------------------------------
+# Prompt:    'The future of AI is'
+# Output:    ' here!\nThe future of AI is here!\nWe’re not just talking about the cool'
+# ------------------------------------------------------------
