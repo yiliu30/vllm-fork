@@ -11,7 +11,10 @@ from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsScheme)
 from vllm.model_executor.layers.quantization.utils.nvfp4_emulation_utils import (  # noqa: E501
-    run_nvfp4_emulations)
+    run_nvfp4_emulations,
+    get_global_scale,
+    scaled_fp4_mm_alpha,
+)
 from vllm.model_executor.parameter import (GroupQuantScaleParameter,
                                            ModelWeightParameter,
                                            PerTensorScaleParameter)
@@ -95,7 +98,7 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
                                             cols // 4, 4)
         swizzled_scale = padded_scale.permute((0, 1, 4, 3, 2, 5))
         swizzled_scale = swizzled_scale.contiguous().cuda()
-        return (swizzled_scale.reshape(M, K)
+        return (swizzled_scale.reshape(M_padded, K_padded)
                 if scale_ndim == 2 else swizzled_scale.reshape(B, M, K))
 
     def process_weights_after_loading(self, layer) -> None:
@@ -139,11 +142,17 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         output_shape = [x.shape[0], layer.weight.shape[0]]
 
         # quantize BF16 or FP16 to (FP4 and interleaved block scale)
-        x_fp4, x_blockscale = scaled_fp4_quant(x, layer.input_global_scale)
+        if envs.VLLM_NVFP4_DYNAMIC_GLOBAL_SCALE:
+            input_global_scale = get_global_scale(x)
+            scaled_mm_alpha = scaled_fp4_mm_alpha(input_global_scale, layer.weight_global_scale.data)
+        else:
+            input_global_scale = layer.input_global_scale
+            scaled_mm_alpha = layer.alpha
+        x_fp4, x_blockscale = scaled_fp4_quant(x, input_global_scale)
 
         out = cutlass_scaled_fp4_mm(x_fp4, layer.weight, x_blockscale,
                                     layer.weight_scale_swizzled,
-                                    1 / layer.alpha, output_dtype)
+                                    1 / scaled_mm_alpha, output_dtype)
         if bias is not None:
             out = out + bias
         return out.view(*output_shape)

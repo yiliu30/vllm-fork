@@ -17,6 +17,12 @@ from vllm.model_executor.layers.fused_moe.utils import (_fp8_quantize,
                                                         _resize_cache,
                                                         extract_required_args)
 from vllm.scalar_type import scalar_types
+import vllm.envs as envs
+from vllm.model_executor.layers.quantization.utils.nvfp4_emulation_utils import (
+    run_nvfp4_emulations,
+    get_global_scale,
+    scaled_fp4_mm_alpha,
+)
 
 logger = init_logger(__name__)
 
@@ -545,6 +551,21 @@ def run_cutlass_moe_fp4(
                            expert_offsets[:-1], blockscale_offsets[:-1])
     del rep_a_fp4, rep_a_blockscale
     torch.ops._C.silu_and_mul(c2, c1)
+
+    if envs.VLLM_NVFP4_DYNAMIC_GLOBAL_SCALE:
+        # new_a2_scale = torch.zeros_like(a2_gscale).to(a2_gscale.device)
+        a2_gscale.fill_(0.0)
+        new_a2_scale =a2_gscale
+        num_experts = len(expert_offsets) - 1
+        for i in range(num_experts):
+            expert_start, expert_end = expert_offsets[i], expert_offsets[i + 1]
+            if expert_start == expert_end:
+                # No tokens for this expert, skip it
+                continue
+            local_expert_c2 = c2[expert_start:expert_end, ...]
+            new_a2_scale[i] = get_global_scale(local_expert_c2)
+        a2_gscale = new_a2_scale
+        w2_alphas = 1.0 / (new_a2_scale * w2_alphas)
     int_fp4, int_blockscale = ops.scaled_fp4_experts_quant(
         c2, a2_gscale, expert_offsets, blockscale_offsets, num_topk)
 

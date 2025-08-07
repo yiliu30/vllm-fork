@@ -8,7 +8,9 @@ from vllm.scalar_type import scalar_types
 
 __all__ = [
     "break_fp4_bytes", "dequantize_to_dtype", "ref_nvfp4_quant",
-    "cutlass_fp4_supported"
+    "cutlass_fp4_supported",
+    "get_global_scale",
+    "scaled_fp4_mm_alpha"
 ]
 
 FLOAT4_E2M1_MAX = scalar_types.float4_e2m1f.max()
@@ -144,3 +146,17 @@ def run_nvfp4_emulations(x: torch.Tensor, input_global_scale: torch.Tensor,
     out = torch.matmul(x_dq, w_dq.t())
     del w_dq, x_dq
     return out
+
+
+FLOAT8_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
+
+
+def get_global_scale(x: torch.Tensor):
+    global_scale = (
+        (FLOAT8_E4M3_MAX * FLOAT4_E2M1_MAX) / torch.amax(torch.abs(x))
+    ).to(torch.float32)
+    return global_scale
+
+
+def scaled_fp4_mm_alpha(input_global_scale, weight_global_scale):
+    return input_global_scale * weight_global_scale

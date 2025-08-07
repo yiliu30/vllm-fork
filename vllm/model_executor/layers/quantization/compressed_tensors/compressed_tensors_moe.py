@@ -336,6 +336,10 @@ class CompressedTensorsW4A4MoeMethod(CompressedTensorsMoEMethod):
 
         # Cutlass moe takes in activations in BF16/Half precision
         # and fp4 quantized weights loaded from the checkpoint
+        if envs.VLLM_NVFP4_DYNAMIC_GLOBAL_SCALE:
+            g2_alphas = layer.w2_weight_global_scale.data
+        else:
+            g2_alphas = layer.g2_alphas
         return cutlass_moe_fp4(
             a=x,
             w1_fp4=layer.w13_weight,
@@ -343,7 +347,7 @@ class CompressedTensorsW4A4MoeMethod(CompressedTensorsMoEMethod):
             w1_blockscale=layer.w13_blockscale_swizzled,
             w2_blockscale=layer.w2_blockscale_swizzled,
             g1_alphas=layer.g1_alphas,
-            g2_alphas=layer.g2_alphas,
+            g2_alphas=g2_alphas,
             a1_gscale=layer.w13_input_scale_quant,
             a2_gscale=layer.w2_input_scale_quant,
             topk_weights=topk_weights,
