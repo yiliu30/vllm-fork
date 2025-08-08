@@ -2,9 +2,7 @@
 
 # VLLM_HPU_LOG_HPU_GRAPH=1 VLLM_DISABLE_INPUT_QDQ=0  bash start_vllm.sh --dummy-run
 # VLLM_HPU_LOG_HPU_GRAPH=1 VLLM_DISABLE_INPUT_QDQ=0  bash start_vllm.sh --skip-warmup
-#  bash start_vllm.sh --skip-warmup  --ds-nvfp4 
-#  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --dummy-run
-#  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --dummy-run --skip-warmup --next_token
+#  bash start_vllm.sh --skip-warmup  --ds-nvfp4
 #  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --skip-warmup --next_token
 
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
@@ -13,9 +11,14 @@ model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN
 v2_model_path=/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-bf16-MXFP4-autoround
-nvfp4_model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE
+
 nvfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround/
+nvfp4_model_path="/software/users/yiliu4/deepseek-ai/DeepSeek-R1-nvfp4-fix-723"
+nvfp4_model_path="/software/users/yiliu4/deepseek-ai/DeepSeek-R1-nvfp4-fix-723-skip-atten"
+nvfp4_model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE
 nvfp4_model_path="/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
+nvfp4_model_path="/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
+nvfp4_model_path="/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround"
 tp_size=8
 
 num_samples=128
@@ -81,6 +84,7 @@ done
 # Debugging: Print the values of the variables
 echo "USE_FP8_KV=$USE_FP8_KV"
 echo "USE_NATIVE_SCALING=$USE_NATIVE_SCALING"
+echo "model_path=$model_path"
 echo "NEXT_TOKEN=$NEXT_TOKEN"
 
 
@@ -106,15 +110,18 @@ block_size=128
 # DO NOT change ends...
 
 # memory footprint tunning params
-export VLLM_GPU_MEMORY_UTILIZATION=0.65
+export VLLM_GPU_MEMORY_UTILIZATION=0.45
 export VLLM_GRAPH_RESERVED_MEM=0.4
 export VLLM_GRAPH_PROMPT_RATIO=0
 export VLLM_MLA_DISABLE_REQUANTIZATION=0
 export VLLM_DELAYED_SAMPLING="true"
+#export VLLM_MOE_SLICE_LENGTH=20480
+
 
 if [ "$NEXT_TOKEN" = true ]; then
     echo "Enabling next token prediction"
     export VLLM_DELAYED_SAMPLING="false"
+    task_name="mmlu"
 else
     echo "Disabling next token prediction"
     export VLLM_DELAYED_SAMPLING="true"
@@ -122,7 +129,7 @@ fi
 #export VLLM_MOE_SLICE_LENGTH=20480
 
 # params
-CONST_LEN=4096
+CONST_LEN=16384
 max_model_len=$CONST_LEN
 max_num_batched_tokens=$CONST_LEN
 max_num_seqs=32
@@ -252,7 +259,8 @@ fi
 # add --max-num-prefill-seqs for next token prediction
 if [ "$NEXT_TOKEN" = true ]; then
     echo "Enabling next token prediction"
-    CMD="$CMD --max-num-prefill-seqs 1"
+    #CMD="$CMD --max-num-prefill-seqs 2"
+    CMD="$CMD --enforce-eager "
 else
     echo "Disabling next token prediction"
 fi
@@ -278,13 +286,13 @@ echo "Server started with PID: ${pid}"
 
 #===========================================================
 # RUN BENCHMARK
-#===========================================================
+#===============================a============================
 export no_proxy=localhost,127.0.0.1
 
 
 model_base_name=$(basename $model_path)
 
-EVAL_LOG_NAME="mxfp8_${model_base_name}_lm_eval_output_${task_name}_bs${batch_size}__${timestamp}"
+EVAL_LOG_NAME="mxfp8_${model_base_name}_lm_eval_output__bs${batch_size}__${timestamp}"
 
 echo "Running lm_eval with model: ${model_path}, task: ${task_name}, batch size: ${batch_size}, num samples: ${num_samples}"
 
@@ -296,12 +304,9 @@ lm_eval --model local-completions \
     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
     --batch_size 32  \
     --confirm_run_unsafe_code \
-    --limit $num_samples \
     --log_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
-
-
 
 
 
@@ -309,17 +314,7 @@ end_time=$(date +%s)
 echo "Benchmark completed in $((end_time - start_time)) seconds"
 
 # Clean up
-echo "Stopping vLLM server"
-kill ${pid}
-echo "Script execution completed"
-sleep 10
-
-
-
-# lm_eval --model local-completions \
-#     --tasks "$task_name" \
-#     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
-#     --batch_size 32  \
-#     --confirm_run_unsafe_code \
-#     --limit $num_samples \
-#     --log_samples 
+# echo "Stopping vLLM server"
+#kill ${pid}
+#echo "Script execution completed"
+#sleep 10

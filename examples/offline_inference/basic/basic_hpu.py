@@ -40,6 +40,7 @@ model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-llm-com
 model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-V2-Lite-NVFP4-autoround"
 # model_path = "/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE"
 model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
+model_path = "/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround"
 
 # model_path = "/software/users/yiliu4/HF_HOME/Yi30/DeepSeek-V2-Lite-NVFP4-W4A4-RTN-GLOBAL-SCALE-WW"
 
