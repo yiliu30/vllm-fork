@@ -14,9 +14,37 @@ prompts = [
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
 
+
+from vllm import LLM, SamplingParams
+
+import argparse
+
+# Parse the command-line arguments.
+model_path = "/software/users/yiliu4/HF_HOME/lmsys/gpt-oss-20b-bf16"
+parser = argparse.ArgumentParser()
+parser.add_argument("--model", type=str, default=model_path, help="The model path.")
+parser.add_argument("--tokenizer", type=str, default=model_path, help="The model path.")
+parser.add_argument("--tp_size", type=int, default=8, help="The number of threads.")
+parser.add_argument("--ep_size", type=int, default=8, help="The number of threads.")
+parser.add_argument("--inc", action="store_true", help="Use inc.")
+args = parser.parse_args()
+
+
+
+
 def main():
     # Create an LLM.
-    llm = LLM(model="facebook/opt-125m")
+    param = {}
+    if args.inc:
+        param["quantization"] = "inc"
+
+    llm = LLM(
+        # model="facebook/opt-125m"
+        model="/mnt/disk5/lmsys/gpt-oss-20b-bf16",
+        max_model_len=1024,
+        max_num_seqs=32,
+        **param
+        )
     # Generate texts from the prompts.
     # The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.
