@@ -36,19 +36,21 @@ sampling_params = SamplingParams(temperature=0.8,
 
 # CUDA_LAUNlCH_BLOCKING=1  VLLM_USE_NVFP4_CT_EMULATIONS=1   python basic.py 
 
-
+# VLLM_USE_STANDALONE_COMPILE=0  VLLM_USE_STATIC_MOE_HPU=1  CUDA_VISIBLE_DEVICES=4,5,6,7 VLLM_LOGGING_LEVEL=DEBUG  VLLM_WORKER_MULTIPROC_METHOD=spawn   python basic.py 
 def main():
     # Create an LLM.
     model_name = "/home/yiliu7/models/deepseek-ai/DeepSeek-R1"
     llm = LLM(
         # gpu_memory_utilization=0.3,  # Set the GPU memory utilization.
         max_model_len = 1024,  # Set the maximum model length.
-        enforce_eager=True,  # Enable eager mode for faster inference.
+        # enforce_eager=True,
         trust_remote_code=True,
         # model = "/home/yiliu7/models/weiweiz1/DeepSeek-V2-Lite-NVFP4-W4A4-RTN",
         # model = "/home/yiliu7/models/Yi30/DeepSeek-V2-Lite-NVFP4-llmc"
-        model = "/home/yiliu7/models/weiweiz1/DeepSeek-V2-Lite-NVFP4-W4A4-RTN"
-        
+        # model = "/home/yiliu7/models/weiweiz1/DeepSeek-V2-Lite-NVFP4-W4A4-RTN"
+        model = "/home/yiliu7/tmps/DeepSeek-R1-BF16-w4g16",
+        tensor_parallel_size=4,
+        enable_expert_parallel=True,
         # model = "/home/yiliu7/models/deepseek-ai/DeepSeek-R1",
         # model="facebook/opt-125m",
         # model="/home/yiliu7/models/RedHatAI/Llama-3.1-70B-Instruct-NVFP4",
