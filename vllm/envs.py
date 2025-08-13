@@ -770,6 +770,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Q-DQ input without packing
     "VLLM_INPUT_QUICK_QDQ":
     lambda: bool(int(os.getenv("VLLM_INPUT_QUICK_QDQ", "0"))),
+
+    # MXFP4_EVEN_ROUNDING
+    "VLLM_MXFP4_EVEN_ROUNDING":
+    lambda: bool(int(os.getenv("VLLM_MXFP4_EVEN_ROUNDING", "0"))),
     
     # Whether to log HPU graph information.
     "VLLM_HPU_LOG_HPU_GRAPH":
