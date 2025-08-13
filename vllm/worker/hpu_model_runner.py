@@ -489,10 +489,10 @@ class HpuModelAdapter(torch.nn.Module):
     def _set_attn_bias_for_sliding_window(self, attn_metadata, batch_size,
                                           seq_len, window_size, device, dtype):
 
-        '''if (seq_len <= window_size) or (not attn_metadata.is_prompt) or (
+        if (seq_len <= window_size) or (not attn_metadata.is_prompt) or (
                 attn_metadata.use_window_sdpa):
             # no need to set sliding window mask, just use built-in sdpa
-            return attn_metadata'''
+            return attn_metadata
 
         prefill_metadata = attn_metadata
         shift = 0
