@@ -6,13 +6,16 @@
 #  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --dummy-run
 #  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --dummy-run --skip-warmup --next_token
 #  bash start_vllm.sh --skip-warmup  --ds-nvfp4 --skip-warmup --next_token
+#  bash start_vllm.sh --skip-warmup  --ds-mxfp4 --skip-warmup --next_token
 
 model_path=/mnt/disk3/yiliu4/DeepSeek-R1-G2-INC-424-Converter207/
 model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-MXFP8-OFFLINE/
 model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN
 v2_model_path=/software/users/yiliu4/HF_HOME/Yi30/Yi30/DeepSeek-V2-Lite-MXFP8-llmc
-mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-bf16-MXFP4-autoround
+
+mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN-RCEIL
+mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
 nvfp4_model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE
 nvfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround/
 nvfp4_model_path="/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
@@ -23,7 +26,7 @@ task_name="mmlu_pro_math,mmlu_pro_biology"
 task_name="humaneval"
 task_name="gsm8k"
 
-batch_size=32
+batch_size=64
 
 
 # set -x
@@ -58,6 +61,7 @@ for arg in "$@"; do
             export VLLM_USE_MXFP4_CT_EMULATIONS=1
             export VLLM_INPUT_QUICK_QDQ=1
             export USE_CT_UNPACK=1
+            export VLLM_MXFP4_EVEN_ROUNDING=1
             ;;
         --ds-nvfp4)
             model_path=$nvfp4_model_path
@@ -82,7 +86,7 @@ done
 echo "USE_FP8_KV=$USE_FP8_KV"
 echo "USE_NATIVE_SCALING=$USE_NATIVE_SCALING"
 echo "NEXT_TOKEN=$NEXT_TOKEN"
-
+echo "model_path=$model_path"
 
 BASH_DIR=$(dirname "${BASH_SOURCE[0]}")
 # source "$BASH_DIR"/utils.sh
@@ -102,19 +106,28 @@ export VLLM_LOGGING_LEVEL=DEBUG
 # export VLLM_MOE_N_SLICE=8
 export VLLM_EP_SIZE=$tp_size
 
+
 block_size=128
 # DO NOT change ends...
 
 # memory footprint tunning params
-export VLLM_GPU_MEMORY_UTILIZATION=0.65
+export VLLM_GPU_MEMORY_UTILIZATION=0.25
 export VLLM_GRAPH_RESERVED_MEM=0.4
 export VLLM_GRAPH_PROMPT_RATIO=0
 export VLLM_MLA_DISABLE_REQUANTIZATION=0
 export VLLM_DELAYED_SAMPLING="true"
 
+export VLLM_PROMPT_BS_BUCKET_STEP=512
+export VLLM_PROMPT_SEQ_BUCKET_MIN=512
+export VLLM_PROMPT_SEQ_BUCKET_STEP=512
+
 if [ "$NEXT_TOKEN" = true ]; then
     echo "Enabling next token prediction"
     export VLLM_DELAYED_SAMPLING="false"
+    export VLLM_EXPONENTIAL_BUCKETING=false
+    export VLLM_PROMPT_BS_BUCKET_STEP=1
+    export VLLM_PROMPT_SEQ_BUCKET_MIN=512
+    export VLLM_PROMPT_SEQ_BUCKET_STEP=512
 else
     echo "Disabling next token prediction"
     export VLLM_DELAYED_SAMPLING="true"
@@ -122,7 +135,7 @@ fi
 #export VLLM_MOE_SLICE_LENGTH=20480
 
 # params
-CONST_LEN=4096
+CONST_LEN=8192
 max_model_len=$CONST_LEN
 max_num_batched_tokens=$CONST_LEN
 max_num_seqs=32
@@ -130,10 +143,12 @@ input_min=1
 input_max=$CONST_LEN
 output_max=$CONST_LEN
 
-unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX
-unset VLLM_PROMPT_SEQ_BUCKET_MIN VLLM_PROMPT_SEQ_BUCKET_STEP VLLM_PROMPT_SEQ_BUCKET_MAX
-unset VLLM_DECODE_BS_BUCKET_MIN VLLM_DECODE_BS_BUCKET_STEP VLLM_DECODE_BS_BUCKET_MAX
-unset VLLM_DECODE_BLOCK_BUCKET_MIN VLLM_DECODE_BLOCK_BUCKET_STEP VLLM_DECODE_BLOCK_BUCKET_MAX
+#unset VLLM_PROMPT_BS_BUCKET_MIN VLLM_PROMPT_BS_BUCKET_STEP VLLM_PROMPT_BS_BUCKET_MAX
+#unset VLLM_PROMPT_SEQ_BUCKET_MIN VLLM_PROMPT_SEQ_BUCKET_STEP VLLM_PROMPT_SEQ_BUCKET_MAX
+#unset VLLM_DECODE_BS_BUCKET_MIN VLLM_DECODE_BS_BUCKET_STEP VLLM_DECODE_BS_BUCKET_MAX
+#unset VLLM_DECODE_BLOCK_BUCKET_MIN VLLM_DECODE_BLOCK_BUCKET_STEP VLLM_DECODE_BLOCK_BUCKET_MAX
+
+
 
 
 # export PT_HPU_RECIPE_CACHE_CONFIG=/data/16k_cache,false,16384
@@ -252,7 +267,8 @@ fi
 # add --max-num-prefill-seqs for next token prediction
 if [ "$NEXT_TOKEN" = true ]; then
     echo "Enabling next token prediction"
-    CMD="$CMD --max-num-prefill-seqs 1"
+    CMD="$CMD --max-num-prefill-seqs ${batch_size}"
+    CMD="$CMD --enforce-eager "
 else
     echo "Disabling next token prediction"
 fi
@@ -284,19 +300,53 @@ export no_proxy=localhost,127.0.0.1
 
 model_base_name=$(basename $model_path)
 
-EVAL_LOG_NAME="mxfp8_${model_base_name}_lm_eval_output_${task_name}_bs${batch_size}__${timestamp}"
 
 echo "Running lm_eval with model: ${model_path}, task: ${task_name}, batch size: ${batch_size}, num samples: ${num_samples}"
 
 start_time=$(date +%s)
 
+task_name="piqa"
+EVAL_LOG_NAME="mxfp4_${model_base_name}_lm_eval_output_${task_name}_bs${batch_size}__${timestamp}"
+
 HF_ALLOW_CODE_EVAL=1 \
 lm_eval --model local-completions \
-    --tasks "$task_name" \
+    --tasks $task_name \
+    --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
+    --batch_size ${batch_size}  \
+    --confirm_run_unsafe_code \
+    --log_samples \
+    --output_path "benchmark_logs/$EVAL_LOG_NAME" \
+    2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
+
+
+
+sleep 10
+echo "hellaswag evaluation starts"
+task_name="hellaswag"
+
+EVAL_LOG_NAME="mxfp4_${model_base_name}_lm_eval_output_${task_name}_bs${batch_size}__${timestamp}"
+HF_ALLOW_CODE_EVAL=1 \
+lm_eval --model local-completions \
+    --tasks $task_name \
     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
     --batch_size 32  \
     --confirm_run_unsafe_code \
-    --limit $num_samples \
+    --log_samples \
+    --output_path "benchmark_logs/$EVAL_LOG_NAME" \
+    2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
+
+
+sleep 10
+echo "mmlu evaluation starts"
+task_name="mmlu"
+EVAL_LOG_NAME="mxfp4_${model_base_name}_lm_eval_output_${task_name}_bs${batch_size}__${timestamp}"
+
+HF_ALLOW_CODE_EVAL=1 \
+lm_eval --model local-completions \
+    --tasks $task_name \
+    --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
+    --batch_size ${batch_size}  \
+    --confirm_run_unsafe_code \
     --log_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
@@ -305,21 +355,12 @@ lm_eval --model local-completions \
 
 
 
-end_time=$(date +%s)
-echo "Benchmark completed in $((end_time - start_time)) seconds"
+# end_time=$(date +%s)
+# echo "Benchmark completed in $((end_time - start_time)) seconds"
 
-# Clean up
-echo "Stopping vLLM server"
-kill ${pid}
-echo "Script execution completed"
-sleep 10
+# # Clean up
+# echo "Stopping vLLM server"
+# kill ${pid}
+# echo "Script execution completed"
+# sleep 10
 
-
-
-# lm_eval --model local-completions \
-#     --tasks "$task_name" \
-#     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
-#     --batch_size 32  \
-#     --confirm_run_unsafe_code \
-#     --limit $num_samples \
-#     --log_samples 
