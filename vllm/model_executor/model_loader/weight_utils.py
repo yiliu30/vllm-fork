@@ -12,7 +12,8 @@ from collections import defaultdict
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
-
+import os
+from functools import wraps
 import filelock
 import gguf
 import huggingface_hub.constants
@@ -29,7 +30,7 @@ from vllm.model_executor.layers.quantization import (QuantizationConfig,
                                                      get_quantization_config)
 from vllm.platforms import current_platform
 from vllm.utils import PlaceholderModule
-
+import vllm.envs as envs
 try:
     from runai_model_streamer import SafetensorsStreamer
 except (ImportError, OSError):
@@ -788,3 +789,44 @@ def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> Optional[str]:
 
     # If there were no matches, return the untouched param name
     return name
+
+
+def with_thread_limits(div_omp: int = 4, div_torch: int = 8):
+    """
+    Decorator to temporarily set OMP_NUM_THREADS and PyTorch threads,
+    and restore them after the function call.
+    
+    Args:
+        div_omp: divide CPU cores by this for OMP_NUM_THREADS
+        div_torch: divide CPU cores by this for torch.set_num_threads
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not (
+                current_platform.is_hpu() and envs.VLLM_HPU_CONVERT_TO_FP8UZ
+            ):
+                return func(*args, **kwargs)
+
+            # Save original settings
+            old_omp = os.environ.get("OMP_NUM_THREADS", None)
+            old_torch = torch.get_num_threads()
+            num_cores = os.cpu_count()
+
+            # Set new limits
+            os.environ["OMP_NUM_THREADS"] = str(max(1, num_cores // div_omp))
+            torch.set_num_threads(max(1, num_cores // div_torch))
+
+            try:
+                # Call the actual function
+                return func(*args, **kwargs)
+            finally:
+                # Restore original settings
+                if old_omp is None:
+                    os.environ.pop("OMP_NUM_THREADS", None)
+                else:
+                    os.environ["OMP_NUM_THREADS"] = old_omp
+                torch.set_num_threads(old_torch)
+
+        return wrapper
+    return decorator
