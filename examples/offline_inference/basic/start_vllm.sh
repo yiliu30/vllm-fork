@@ -16,6 +16,7 @@ mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-bf16-MXFP4-
 
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP8-RTN-RCEIL
 mxfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-MXFP4-RTN
+mxfp4_model_path=/software/users/yiliu4/HF_HOME/Yi30/Qwen3-235B-A22B-MXFP8-RTN-AR-LLMC
 nvfp4_model_path=/software/users/yiliu4/deepseek-ai/DeepSeek-R1-NVFP4-OFFLINE
 nvfp4_model_path=/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-autoround/
 nvfp4_model_path="/software/users/yiliu4/HF_HOME/weiweiz1/DeepSeek-R1-NVFP4-RTN"
