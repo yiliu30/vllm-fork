@@ -329,7 +329,7 @@ HF_ALLOW_CODE_EVAL=1 \
 lm_eval --model local-completions \
     --tasks $task_name \
     --model_args model=${model_path},base_url=http://127.0.0.1:8688/v1/completions,max_concurrent=1 \
-    --batch_size 32  \
+    --batch_size ${batch_size}   \
     --confirm_run_unsafe_code \
     --log_samples \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
