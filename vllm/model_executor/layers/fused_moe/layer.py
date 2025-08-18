@@ -852,6 +852,17 @@ class FusedMoE(torch.nn.Module):
                        e_score_correction_bias: Optional[torch.Tensor] = None):
         from vllm.model_executor.layers.fused_moe.fused_moe import (
             fused_topk, grouped_topk)
+            
+        if is_hpu:
+            import torch.nn.functional as F
+            topk_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
+            topk_weights, topk_ids = torch.topk(topk_weights, top_k, dim=-1)
+            topk_weights /= topk_weights.sum(dim=-1, keepdim=True)
+            topk_ids = topk_ids.to(torch.int64)
+            topk_weights = topk_weights.to(hidden_states.dtype)
+            topk_ids = topk_ids.view(*hidden_states.shape[:-1], -1)
+            topk_weights = topk_weights.view(*hidden_states.shape[:-1], -1)
+            return topk_weights, topk_ids
 
         # DeekSeekv2 uses grouped_top_k
         if use_grouped_topk:
