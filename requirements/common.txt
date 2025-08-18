@@ -6,6 +6,7 @@ requests >= 2.26.0
 tqdm
 blake3
 py-cpuinfo
+datasets == 3.6.0
 transformers == 4.53.2
 huggingface-hub[hf_xet] >= 0.30.0  # Required for Xet downloads.
 tokenizers >= 0.21.1  # Required for fast incremental detokenization.
@@ -48,3 +49,4 @@ opentelemetry-sdk>=1.26.0,<1.27.0  # vllm.tracing
 opentelemetry-api>=1.26.0,<1.27.0  # vllm.tracing
 opentelemetry-exporter-otlp>=1.26.0,<1.27.0  # vllm.tracing
 opentelemetry-semantic-conventions-ai>=0.4.1,<0.5.0  # vllm.tracing
+torchao @ git+https://github.com/yiliu30/torchao-fork.git@mxfp8

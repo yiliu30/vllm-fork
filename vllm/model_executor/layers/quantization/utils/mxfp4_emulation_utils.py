@@ -44,7 +44,7 @@ def ue5m3(x:torch.Tensor) -> torch.Tensor:
 
 FP8_E4M3_MAX = 240.0
 FP8_E4M3_MAX = 448.0
-def fp4_121_scaled(x:torch.Tensor, 
+def fp4_121_scaled_old(x:torch.Tensor, 
                    stochastic_rounding:bool=False, 
                    scale_format:str='e8m0') -> torch.Tensor:
     fp4_121_max = 6.0
@@ -94,6 +94,29 @@ def fp4_121_scaled(x:torch.Tensor,
     
     x_fp4_abs = fp4_121_positive(x_abs * scale, stochastic_rounding) / scale
     return sign * x_fp4_abs
+
+def fp4_121_scaled_even_rounding(x:torch.Tensor, 
+                   stochastic_rounding:bool=False, 
+                   scale_format:str='e8m0') -> torch.Tensor:
+    fp4_121_max = 6.0
+    sign = x.sign()
+    x_abs = x.abs()
+    assert scale_format == 'e8m0', f"Unsupported scale format: {scale_format}"
+    if scale_format == 'e8m0':
+        fp4_max_exp = 2
+        scale = torch.pow(2.0, torch.floor(torch.log2(x_abs.max(dim=-1, keepdim=True)[0]) - fp4_max_exp))
+
+
+    scale = torch.where((0 < scale) * (scale < torch.inf), scale, 1.0)
+    
+    x_fp4_abs = fp4_121_positive(x_abs / scale, stochastic_rounding) * scale
+    return sign * x_fp4_abs
+
+if envs.VLLM_MXFP4_EVEN_ROUNDING:
+    fp4_121_scaled = fp4_121_scaled_even_rounding
+else:
+    fp4_121_scaled = fp4_121_scaled_old
+
 
 
 # https://github.com/Anonymous1252022/fp4-all-the-way/blob/main/experimental/fp4.py
