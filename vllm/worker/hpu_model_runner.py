@@ -522,6 +522,8 @@ class HpuModelAdapter(torch.nn.Module):
                             self.block_size,
                             device=device,
                             dtype=torch.int32).unsqueeze(0)
+        if is_window_block:
+            block_usage = block_usage.reshape(block_usage.shape[0])
         mask = mask >= block_usage.unsqueeze(-1)
         attn_bias = (torch.zeros_like(mask, dtype=dtype).masked_fill_(
             mask, -math.inf))
