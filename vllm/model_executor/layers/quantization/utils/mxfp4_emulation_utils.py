@@ -103,9 +103,11 @@ def fp4_121_scaled_even_rounding(x:torch.Tensor,
     x_abs = x.abs()
     assert scale_format == 'e8m0', f"Unsupported scale format: {scale_format}"
     if scale_format == 'e8m0':
-        fp4_max_exp = 2
-        scale = torch.pow(2.0, torch.floor(torch.log2(x_abs.max(dim=-1, keepdim=True)[0]) - fp4_max_exp))
-
+        # scale = torch.pow(2.0, torch.floor(torch.log2(fp4_121_max / x_abs.max(dim=-1, keepdim=True)[0])))
+        amax_x = x_abs.max(dim=-1, keepdim=True)[0]
+        scale_tmp = torch.floor(torch.log2(amax_x)) - 2.0
+        scale_clamp = torch.clamp(scale_tmp, min=-127, max=127)
+        scale = torch.pow(2.0, scale_clamp)
 
     scale = torch.where((0 < scale) * (scale < torch.inf), scale, 1.0)
     
