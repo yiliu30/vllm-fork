@@ -29,7 +29,8 @@ from vllm.model_executor.layers.quantization.utils.w8a8_utils import (
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
-from vllm.model_executor.layers.quantization.compressed_tensors.utils import gaudi_weight_wrapper
+from vllm.model_executor.model_loader.weight_utils import gaudi_weight_wrapper
+
 logger = init_logger(__name__)
 
 
