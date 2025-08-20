@@ -522,6 +522,8 @@ class HpuModelAdapter(torch.nn.Module):
                             self.block_size,
                             device=device,
                             dtype=torch.int32).unsqueeze(0)
+        if is_window_block:
+            block_usage = block_usage.reshape(block_usage.shape[0])
         mask = mask >= block_usage.unsqueeze(-1)
         attn_bias = (torch.zeros_like(mask, dtype=dtype).masked_fill_(
             mask, -math.inf))
@@ -976,8 +978,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.is_driver_worker = is_driver_worker
         self.return_hidden_states = return_hidden_states
 
-        self.sliding_window = (self.model_config.get_sliding_window()
-                               if self.model_config is not None else None)
+        self.sliding_window = None
 
         self.interleaved_sliding_window = getattr(
             self.model_config.hf_text_config, "interleaved_sliding_window",
@@ -1965,7 +1966,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
 
                 if self.interleaved_sliding_window is not None:
                     sliding_window_blocks = (self.interleaved_sliding_window //
-                                             self.block_size)
+                                             self.block_size) + 1
                     window_block_table = block_table[-sliding_window_blocks:]
                     window_block_tables.append(window_block_table)
 
