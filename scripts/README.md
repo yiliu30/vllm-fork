@@ -24,13 +24,13 @@ sudo echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_
         -e HABANA_VISIBLE_DEVICES=all \
         -e OMPI_MCA_btl_vader_single_copy_mechanism=none \
         --cap-add=sys_nice --net=host --ipc=host \
-        vault.habana.ai/gaudi-docker/1.21.1/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest
+        vault.habana.ai/gaudi-docker/1.22.0/ubuntu22.04/habanalabs/pytorch-installer-2.7.1:latest
     ```
 
 2. Install vLLM：
 
     ``` bash
-    git clone -b aice/v1.21.0 https://github.com/HabanaAI/vllm-fork
+    git clone -b aice/v1.22.0 https://github.com/HabanaAI/vllm-fork
     VLLM_TARGET_DEVICE=hpu pip install -e vllm-fork
     ```
 
