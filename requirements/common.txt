@@ -6,7 +6,8 @@ requests >= 2.26.0
 tqdm
 blake3
 py-cpuinfo
-transformers >= 4.51.1
+datasets == 3.6.0
+transformers == 4.53.2
 huggingface-hub[hf_xet] >= 0.30.0  # Required for Xet downloads.
 tokenizers >= 0.21.1  # Required for fast incremental detokenization.
 protobuf # Required by LlamaTokenizer.
@@ -36,7 +37,8 @@ pyyaml
 six>=1.16.0; python_version > '3.11' # transitive dependency of pandas that needs to be the latest version for python 3.12
 setuptools>=77.0.3,<80; python_version > '3.11' # Setuptools is used by triton, we need to ensure a modern version is installed for 3.12+ so that it does not try to import distutils, which was removed in 3.12
 einops # Required for Qwen2-VL.
-compressed-tensors == 0.9.4 # required for compressed-tensors
+# compressed-tensors == 0.10.2 # required for compressed-tensors
+compressed-tensors @ git+https://github.com/yiliu30/compressed-tensors-fork.git@mxfp4
 depyf==0.18.0 # required for profiling and debugging with compilation config
 cloudpickle # allows pickling lambda functions in model_executor/models/registry.py
 watchfiles # required for http server to monitor the updates of TLS files
@@ -47,3 +49,4 @@ opentelemetry-sdk>=1.26.0,<1.27.0  # vllm.tracing
 opentelemetry-api>=1.26.0,<1.27.0  # vllm.tracing
 opentelemetry-exporter-otlp>=1.26.0,<1.27.0  # vllm.tracing
 opentelemetry-semantic-conventions-ai>=0.4.1,<0.5.0  # vllm.tracing
+torchao @ git+https://github.com/yiliu30/torchao-fork.git@mxfp8

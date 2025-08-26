@@ -774,7 +774,7 @@ class CachedStepOutput:
         self.sampling_metadata = sampling_metadata
         self.is_prompt = is_prompt
 
-
+from vllm.model_executor.models.utils import set_cpu_offload_max_bytes
 class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     """
     Helper class for shared methods between GPU model runners.
@@ -795,7 +795,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         environment.set_vllm_config(vllm_config)
         self.is_driver_worker = is_driver_worker
         self.return_hidden_states = return_hidden_states
-
+        set_cpu_offload_max_bytes(
+            int(self.cache_config.cpu_offload_gb * 1024**3))
         self.sliding_window = (self.model_config.get_sliding_window()
                                if self.model_config is not None else None)
         self.device_config = (self.device_config if self.device_config
@@ -1131,10 +1132,17 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         return seq_group_metadata_list, real_batch_size, batch_size_padded
 
     def _maybe_wrap_in_hpu_graph(self, *args, **kwargs):
+        log_frequency = envs.VLLM_HPU_LOG_HPU_GRAPH
+        graph_kwargs = {}
+        if log_frequency > 0:
+            graph_kwargs = {"verbose": True, "log_frequency": log_frequency}
         if htorch.utils.internal.is_lazy():
-            return htorch.hpu.wrap_in_hpu_graph(HpuModelAdapter(
-                *args, **kwargs),
-                                                disable_tensor_cache=True)
+            return htorch.hpu.wrap_in_hpu_graph(
+                HpuModelAdapter(*args, **kwargs),
+                disable_tensor_cache=True,
+                free_inplace=True,
+                **graph_kwargs,
+            )
         else:
             return HpuModelAdapter(*args, **kwargs)
 
@@ -2458,6 +2466,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                              self.max_num_batched_tokens // max_seq_len)
         # Using batch_size 1 is profile multimodal models
         max_batch_size = max_batch_size if not self.model_is_mrope else 1
+        logger.info(f"profile_run: batch_size={max_batch_size}, seq_len={max_seq_len}")
         self.warmup_scenario(
             batch_size=max_batch_size,
             seq_len=max_seq_len,

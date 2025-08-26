@@ -247,6 +247,7 @@ class LinearBase(torch.nn.Module):
             self.quant_method = quant_config.get_quant_method(self,
                                                               prefix=prefix)
         self.return_bias = return_bias
+        self.prefix = prefix
 
     def forward(
         self, x: torch.Tensor

@@ -442,7 +442,7 @@ class FusedMoE(torch.nn.Module):
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
         self.params_dtype = params_dtype
-
+        self.prefix = prefix
         # Note: here we guard against accessing the TP and DP groups when
         # uninitialized (this happens when testing)
         self.tp_size = (tp_size if tp_size is not None else
@@ -867,6 +867,18 @@ class FusedMoE(torch.nn.Module):
                 scoring_func=scoring_func,
                 e_score_correction_bias=e_score_correction_bias)
         elif custom_routing_function is None:
+            
+            if is_hpu:
+                import torch.nn.functional as F
+                topk_weights = F.softmax(router_logits, dim=1, dtype=torch.float32)
+                topk_weights, topk_ids = torch.topk(topk_weights, top_k, dim=-1)
+                topk_weights /= topk_weights.sum(dim=-1, keepdim=True)
+                topk_ids = topk_ids.to(torch.int64)
+                topk_weights = topk_weights.to(hidden_states.dtype)
+                topk_ids = topk_ids.view(*hidden_states.shape[:-1], -1)
+                topk_weights = topk_weights.view(*hidden_states.shape[:-1], -1)
+                return topk_weights, topk_ids
+
             topk_weights, topk_ids, token_expert_indices = fused_topk(
                 hidden_states=hidden_states,
                 gating_output=router_logits,
