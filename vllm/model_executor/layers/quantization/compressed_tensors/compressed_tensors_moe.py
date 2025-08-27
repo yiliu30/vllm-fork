@@ -498,7 +498,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 f"{self.weight_quant}, {self.input_quant}")
 
         self.static_input_scales = not self.input_quant.dynamic
-        if self.static_input_scales and per_channel:
+        if self.static_input_scales and per_channel and not envs.VLLM_W8A8_STATIC_MOE:
             raise ValueError(
                 "For FP8 Fused MoE layer, we require either per tensor or "
                 "channelwise, dynamic per token quantization.")
@@ -602,6 +602,8 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             layer.w2_input_scale = None
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        if envs.VLLM_W8A8_STATIC_MOE:
+            return
         # Fp8 moe kernels require a single activation scale.
         # We take the max of all the scales in case they differ.
         if self.static_input_scales:
@@ -722,7 +724,115 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias)
+        
+        if envs.VLLM_W8A8_STATIC_MOE:
+            num_experts, intermediate_size_per_partition, _ = layer.w13_weight.shape
+            # intermediate_size_per_partition = intermediate_size_per_partition_x2 // 2
+            # FIXME: Handle mask
+            act_fn = F.silu
+            num_all_tokens, hidden_dim = x.shape
+            num_experts = layer.local_num_experts
+            total_num_experts = router_logits.size(-1)
+            experts_mask = torch.zeros((x.size(0), total_num_experts), dtype=x.dtype, device=x.device)
+            topk_ids = topk_ids.to(torch.int64)
+            topk_weights = topk_weights.to(x.dtype)
+            experts_mask.scatter_(-1, topk_ids, topk_weights)
+            experts_mask = experts_mask.transpose(0, 1)
 
+            mask_weights = torch.zeros((num_all_tokens, total_num_experts), dtype=x.dtype, device=x.device)
+            mask_weights.scatter_(-1, topk_ids, 1)
+            mask_weights = mask_weights.transpose(0, 1)
+            # Note: ep_size equal tp_size
+            ep_rank = get_tensor_model_parallel_rank()
+            ep_shift = ep_rank * num_experts
+
+            for expert_index in range(num_experts):
+                mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
+                current_state_static = x * mask_weight
+
+                local_w13 = layer.w13_weight[expert_index]
+                local_w13_scale = layer.w13_weight_scale[expert_index]
+                # local_w13_global_scale = layer.w13_weight_global_scale[expert_index]
+                local_w13_input_scale = layer.w13_input_scale[
+                    expert_index
+                ]
+                local_w2 = layer.w2_weight[expert_index]
+                local_w2_scale = layer.w2_weight_scale[expert_index]
+                # local_w2_global_scale = layer.w2_weight_global_scale[expert_index]
+                local_w2_input_scale = layer.w2_input_scale[expert_index]
+
+                local_w1 = local_w13[
+                    :intermediate_size_per_partition, ...
+                ]
+                local_w1_scale = local_w13_scale[:intermediate_size_per_partition, ...]
+                # local_w1_global_scale = local_w13_scale[0]
+                local_w1_input_scale = local_w13_input_scale[0]
+
+                local_w3 = local_w13[
+                    intermediate_size_per_partition:, ...
+                ]
+                local_w3_scale = local_w13_scale[intermediate_size_per_partition:, ...]
+                # local_w3_global_scale = local_w13_global_scale[1]
+                local_w3_input_scale = local_w13_input_scale[1]
+
+                # from vllm.model_executor.layers.quantization.utils.nvfp4_emulation_utils import (
+                #     run_nvfp4_emulations_no_swizzle,
+                # )
+                
+                def fp8_qdq(x, scale):
+                    qx = x / scale
+                    qx_fp8 = qx.to(torch.float8_e4m3fn)
+                    dq_x = qx_fp8.to(scale.dtype) * scale
+                    return dq_x
+
+            
+                def dq_weight(qweight, scale):
+                    dq_w = qweight.to(scale.dtype) * scale
+                    return dq_w
+                    
+                
+                def qdq_fp8_gemm(x, x_scale, qweight, w_scale):
+                    qdq_x = fp8_qdq(x, x_scale)
+                    dq_w = dq_weight(qweight, w_scale)
+                    res = torch.matmul(qdq_x, dq_w)
+                    return res
+                    # return q_x
+
+                # local_w13_input_global_scale_max = local_w13_input_global_scale.max()
+
+                local_w1_out = qdq_fp8_gemm(
+                    x=current_state_static,
+                    x_scale=local_w1_input_scale,
+                    qweight=local_w1,
+                    w_scale=local_w1_scale,
+                )
+                local_w3_out = qdq_fp8_gemm(
+                    x=current_state_static,
+                    x_scale=local_w3_input_scale,
+                    qweight=local_w3,
+                    w_scale=local_w3_scale,
+                    
+                )
+
+                w13_out = act_fn(local_w1_out) * local_w3_out
+
+                local_w2_out = qdq_fp8_gemm(
+                    x=w13_out,
+                    x_scale=local_w2_input_scale,
+                    qweight=local_w2,
+                    w_scale=local_w2_scale,
+                )
+                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(1)
+                local_w2_out = local_w2_out * padded_weight
+                if expert_index == 0:
+                    final_hidden_states = local_w2_out
+                else:
+                    final_hidden_states += local_w2_out
+            return final_hidden_states
+
+
+        
+        
         if self.rocm_aiter_moe_enabled:
             return self.rocm_aiter_fused_experts_func(
                 hidden_states=x,

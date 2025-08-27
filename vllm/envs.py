@@ -135,7 +135,7 @@ if TYPE_CHECKING:
     VLLM_USE_NVFP4_CT_EMULATIONS: bool = False
     VLLM_USE_MXFP4_CT_EMULATIONS: bool = False
     VLLM_COMPUTE_NANS_IN_LOGITS: bool = False
-
+    VLLM_W8A8_STATIC_MOE: bool = False
 
 def get_default_cache_root():
     return os.getenv(
@@ -944,6 +944,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Disable QDQ nvfp4 emulations
     "VLLM_DISABLE_INPUT_QDQ":
     lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
+
+    # Disable W8A8 STATIC MOE
+    "VLLM_W8A8_STATIC_MOE":
+    lambda: bool(int(os.getenv("VLLM_W8A8_STATIC_MOE", "0"))),
 
 }
 
