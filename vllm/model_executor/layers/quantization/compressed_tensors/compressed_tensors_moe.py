@@ -99,6 +99,8 @@ class CompressedTensorsMoEMethod(FusedMoEMethodBase):
             return CompressedTensorsW8A8MXFp8MoEMethod(quant_config)
         elif quant_config._is_dynamic_token_w8a8(weight_quant, input_quant):
             return CompressedTensorsW8A8Int8MoEMethod(quant_config)
+        elif quant_config._is_static_w8a8(weight_quant, input_quant):
+            return CompressedTensorsW8A8Fp8MoEMethod(quant_config)
         else:
             raise RuntimeError(
                 f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}")
@@ -491,7 +493,8 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
         per_channel = (
             self.weight_quant.strategy == QuantizationStrategy.CHANNEL
             and self.input_quant.strategy == QuantizationStrategy.TOKEN)
-        if not (per_tensor or per_channel):
+        if not (per_tensor or per_channel) and not envs.VLLM_W8A8_STATIC_MOE:
+            # breakpoint()
             raise ValueError(
                 "For FP8 Fused MoE layers, we require per tensor "
                 "or channelwise, dynamic per token quantization. Found "
@@ -600,6 +603,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
         else:
             layer.w13_input_scale = None
             layer.w2_input_scale = None
+
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if envs.VLLM_W8A8_STATIC_MOE:
@@ -726,8 +730,8 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             e_score_correction_bias=e_score_correction_bias)
         
         if envs.VLLM_W8A8_STATIC_MOE:
-            num_experts, intermediate_size_per_partition, _ = layer.w13_weight.shape
-            # intermediate_size_per_partition = intermediate_size_per_partition_x2 // 2
+            num_experts, intermediate_size_per_partition_x2, _ = layer.w13_weight.shape
+            intermediate_size_per_partition = intermediate_size_per_partition_x2 // 2
             # FIXME: Handle mask
             act_fn = F.silu
             num_all_tokens, hidden_dim = x.shape
@@ -745,7 +749,10 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             # Note: ep_size equal tp_size
             ep_rank = get_tensor_model_parallel_rank()
             ep_shift = ep_rank * num_experts
-
+            
+            def check_nan(tensor):
+                return torch.isnan(tensor).any().item()
+            
             for expert_index in range(num_experts):
                 mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
                 current_state_static = x * mask_weight
@@ -766,14 +773,15 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 ]
                 local_w1_scale = local_w13_scale[:intermediate_size_per_partition, ...]
                 # local_w1_global_scale = local_w13_scale[0]
-                local_w1_input_scale = local_w13_input_scale[0]
+                # breakpoint()
+                local_w1_input_scale = local_w13_input_scale
 
                 local_w3 = local_w13[
                     intermediate_size_per_partition:, ...
                 ]
                 local_w3_scale = local_w13_scale[intermediate_size_per_partition:, ...]
                 # local_w3_global_scale = local_w13_global_scale[1]
-                local_w3_input_scale = local_w13_input_scale[1]
+                local_w3_input_scale = local_w13_input_scale
 
                 # from vllm.model_executor.layers.quantization.utils.nvfp4_emulation_utils import (
                 #     run_nvfp4_emulations_no_swizzle,
@@ -794,10 +802,10 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 def qdq_fp8_gemm(x, x_scale, qweight, w_scale):
                     qdq_x = fp8_qdq(x, x_scale)
                     dq_w = dq_weight(qweight, w_scale)
-                    res = torch.matmul(qdq_x, dq_w)
-                    return res
+                    res = torch.matmul(qdq_x, dq_w.t())
+                    return res.to(torch.bfloat16)
                     # return q_x
-
+                
                 # local_w13_input_global_scale_max = local_w13_input_global_scale.max()
 
                 local_w1_out = qdq_fp8_gemm(
@@ -813,7 +821,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                     w_scale=local_w3_scale,
                     
                 )
-
+                # breakpoint()
                 w13_out = act_fn(local_w1_out) * local_w3_out
 
                 local_w2_out = qdq_fp8_gemm(
@@ -822,6 +830,9 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                     qweight=local_w2,
                     w_scale=local_w2_scale,
                 )
+                if check_nan(local_w2_out):
+                    breakpoint()
+                
                 padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(1)
                 local_w2_out = local_w2_out * padded_weight
                 if expert_index == 0:

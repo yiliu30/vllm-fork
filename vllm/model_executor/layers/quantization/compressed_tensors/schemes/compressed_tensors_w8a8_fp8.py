@@ -19,7 +19,7 @@ from vllm.platforms import current_platform
 
 __all__ = ["CompressedTensorsW8A8Fp8"]
 
-
+import vllm.envs as envs
 class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
 
     def __init__(self, strategy: str, is_static_input_scheme: bool):
@@ -31,6 +31,8 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
     @classmethod
     def get_min_capability(cls) -> int:
         # lovelace and up
+        if envs.VLLM_W8A8_QDQ:
+            return 80
         return 89
 
     def process_weights_after_loading(self, layer) -> None:
@@ -78,7 +80,10 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
 
             layer.weight = Parameter(weight.t(), requires_grad=False)
             # required by torch.compile to be torch.nn.Parameter
+            if envs.VLLM_W8A8_QDQ:
+                weight_scale = weight_scale.t()
             layer.weight_scale = Parameter(weight_scale, requires_grad=False)
+            
 
         else:
             raise ValueError(f"Unknown quantization strategy {self.strategy}")
@@ -142,6 +147,29 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
                       x: torch.Tensor,
                       bias: Optional[torch.Tensor] = None) -> torch.Tensor:
 
+        def fp8_qdq(x, scale):
+            qx = x / scale
+            qx_fp8 = qx.to(torch.float8_e4m3fn)
+            dq_x = qx_fp8.to(scale.dtype) * scale
+            return dq_x
+
+    
+        def dq_weight(qweight, scale):
+            
+            dq_w = qweight.to(scale.dtype) * scale
+            return dq_w
+            
+        
+        def qdq_fp8_gemm(x, x_scale, qweight, w_scale):
+            qdq_x = fp8_qdq(x, x_scale)
+            dq_w = dq_weight(qweight, w_scale)
+            res = torch.matmul(qdq_x, dq_w)
+            return res.to(torch.bfloat16)
+        
+        if envs.VLLM_W8A8_QDQ:
+            res = qdq_fp8_gemm(x, layer.input_scale, layer.weight, layer.weight_scale)
+            return res
+        
         return self.fp8_linear.apply(input=x,
                                      weight=layer.weight,
                                      weight_scale=layer.weight_scale,
