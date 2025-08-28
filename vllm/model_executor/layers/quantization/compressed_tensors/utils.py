@@ -14,13 +14,45 @@ import torch
 
 def clip_to_safe_scale_inplace(
     scale: Union[torch.nn.Parameter, torch.Tensor],
-    eps=torch.finfo(torch.bfloat16).eps,
 ):
-    scale.clamp_(min=eps)
+    # FIXME: the scale is FP32, but we use the eps of BF16 here to be consistent x
+    eps = torch.finfo(torch.bfloat16).eps
+    safe_scale = torch.maximum(scale, torch.tensor(eps, device=scale.device, dtype=scale.dtype))
+    scale.copy_(safe_scale)
 
 
-def fp8_qdq(x, scale, eps=torch.finfo(torch.bfloat16).eps):
-    safe_scale = scale.to(x.dtype)
+def fp8_qdq(x, scale, eps=1e-10):
+    # Ensure scale isn't too small to avoid extreme values
+    scale = scale.to(x.dtype)
+    safe_scale = scale
+    # Compute quantized values
+    qx = x / scale
+
+    # # Clamp values to FP8 E4M3 representable range (approximately ±448)
+    # !!!! `to` will convert ? to NaN
+    max_fp8_value = 448.0
+    qx = torch.clamp(qx, -max_fp8_value, max_fp8_value)
+
+    # Convert to FP8, it will do clamp
+    qx_fp8 = qx.to(torch.float8_e4m3fn)
+
+    # Convert back and rescale
+    dq_x = qx_fp8.to(scale.dtype) * safe_scale
+
+    return dq_x
+
+
+def fp8_qdq__(x, scale, eps=torch.finfo(torch.bfloat16).eps):
+    # return x
+    # scale = scale.to(x.dtype)
+    # eps = torch.finfo(scale.dtype).eps
+    eps = torch.finfo(torch.bfloat16).eps
+    safe_scale = torch.maximum(
+        scale.data, torch.tensor(eps, device=scale.device, dtype=scale.dtype)
+    )
+    # scale.copy_(new_val)
+
+    # safe_scale = scale.to(x.dtype)
 
     # Compute quantized values
     qx = x / safe_scale

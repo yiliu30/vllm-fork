@@ -589,8 +589,8 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 {"quant_method": FusedMoeWeightScaleSupported.CHANNEL.value})
             set_weight_attrs(w13_weight_scale, extra_weight_attrs)
             set_weight_attrs(w2_weight_scale, extra_weight_attrs)
-            clip_to_safe_scale_inplace(w13_weight_scale)
-            clip_to_safe_scale_inplace(w2_weight_scale)
+            # clip_to_safe_scale_inplace(w13_weight_scale)
+            # clip_to_safe_scale_inplace(w2_weight_scale)
 
         # INPUT_SCALES
         if self.static_input_scales:
