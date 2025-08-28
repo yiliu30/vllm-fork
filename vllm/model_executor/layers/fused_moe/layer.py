@@ -862,6 +862,7 @@ class FusedMoE(torch.nn.Module):
 
         # For smuggling this layer into the fused moe custom op
         self.use_direct_call = self.dp_size == 1
+        self.layer_name = prefix
         if not self.use_direct_call:
             compilation_config = vllm_config.compilation_config
             if prefix in compilation_config.static_forward_context:

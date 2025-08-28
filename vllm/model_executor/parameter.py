@@ -65,6 +65,9 @@ class BasevLLMParameter(Parameter):
         return (cond1 and cond2)
 
     def _assert_and_load(self, loaded_weight: torch.Tensor):
+        # FIXME: REMOVE SUCH HACK
+        if self.data.numel() == 1 and loaded_weight.numel() == 1:
+            loaded_weight = loaded_weight.reshape(self.data.shape)
         assert (self.data.shape == loaded_weight.shape
                 or self._is_1d_and_scalar(loaded_weight))
         self.data.copy_(loaded_weight)
@@ -268,7 +271,10 @@ class PerTensorScaleParameter(BasevLLMParameter):
             loaded_weight = loaded_weight[0]
 
         param_data = param_data[shard_id]
-        assert param_data.shape == loaded_weight.shape
+        # FIXME: REMOVE SUCH HACK
+        if param_data.numel() == loaded_weight.numel() == 1:
+            loaded_weight = loaded_weight.reshape(param_data.shape)
+        assert param_data.shape == loaded_weight.shape, f"But got {param_data.shape} and {loaded_weight.shape}"
         param_data.copy_(loaded_weight)
 
 
