@@ -9,6 +9,54 @@ import regex as re
 from compressed_tensors import CompressionFormat
 from torch.nn import Module
 
+from typing import Union
+import torch
+
+def clip_to_safe_scale_inplace(
+    scale: Union[torch.nn.Parameter, torch.Tensor],
+    eps=torch.finfo(torch.bfloat16).eps,
+):
+    scale.clamp_(min=eps)
+
+
+def fp8_qdq(x, scale, eps=torch.finfo(torch.bfloat16).eps):
+    safe_scale = scale.to(x.dtype)
+
+    # Compute quantized values
+    qx = x / safe_scale
+
+    # Clamp values to FP8 E4M3 representable range (approximately ±448)
+    # max_fp8_value = 448.0
+    # qx = torch.clamp(qx, -max_fp8_value, max_fp8_value)
+
+    # Convert to FP8
+    qx_fp8 = qx.to(torch.float8_e4m3fn)
+
+    # Convert back and rescale
+    dq_x = qx_fp8.to(x.dtype) * safe_scale
+
+    return dq_x
+
+
+def fp8_qdq_(x, scale):
+    # return x
+    scale = scale.to(x.dtype)
+    qx = x / scale
+    qx_fp8 = qx.to(torch.float8_e4m3fn)
+    dq_x = qx_fp8.to(x.dtype) * scale
+    return dq_x.to(x.dtype)
+
+
+def dq_weight(qweight, scale):
+    dq_w = qweight.to(scale.dtype) * scale
+    return dq_w
+
+
+def qdq_fp8_gemm(x, x_scale, qweight, w_scale):
+    qdq_x = fp8_qdq(x, x_scale)
+    dq_w = dq_weight(qweight, w_scale).to(x.dtype)
+    res = torch.matmul(qdq_x, dq_w.t())
+    return res.to(x.dtype)
 
 def is_activation_quantization_format(format: str) -> bool:
     _ACTIVATION_QUANTIZATION_FORMATS = [

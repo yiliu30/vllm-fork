@@ -16,7 +16,10 @@ from vllm.model_executor.parameter import (ChannelQuantScaleParameter,
                                            ModelWeightParameter,
                                            PerTensorScaleParameter)
 from vllm.platforms import current_platform
-
+from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
+    qdq_fp8_gemm,
+    clip_to_safe_scale_inplace,
+)
 __all__ = ["CompressedTensorsW8A8Fp8"]
 
 import vllm.envs as envs
@@ -78,12 +81,13 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
             else:
                 weight_scale = layer.weight_scale.data
 
-            layer.weight = Parameter(weight.t(), requires_grad=False)
-            # required by torch.compile to be torch.nn.Parameter
             if envs.VLLM_W8A8_QDQ:
-                weight_scale = weight_scale.t()
+                layer.weight = Parameter(weight.data, requires_grad=False)
+            else:
+                layer.weight = Parameter(weight.t(), requires_grad=False)
+            # required by torch.compile to be torch.nn.Parameter
             layer.weight_scale = Parameter(weight_scale, requires_grad=False)
-            
+            clip_to_safe_scale_inplace(layer.weight_scale)
 
         else:
             raise ValueError(f"Unknown quantization strategy {self.strategy}")
@@ -92,8 +96,11 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
         if self.is_static_input_scheme and hasattr(layer, 'input_scale'):
             layer.input_scale = Parameter(layer.input_scale.max(),
                                           requires_grad=False)
+            clip_to_safe_scale_inplace(layer.weight_scale)
         else:
             layer.input_scale = None
+
+        
 
     def create_weights(self, layer: torch.nn.Module,
                        output_partition_sizes: list[int],
@@ -147,24 +154,6 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
                       x: torch.Tensor,
                       bias: Optional[torch.Tensor] = None) -> torch.Tensor:
 
-        def fp8_qdq(x, scale):
-            qx = x / scale
-            qx_fp8 = qx.to(torch.float8_e4m3fn)
-            dq_x = qx_fp8.to(scale.dtype) * scale
-            return dq_x
-
-    
-        def dq_weight(qweight, scale):
-            
-            dq_w = qweight.to(scale.dtype) * scale
-            return dq_w
-            
-        
-        def qdq_fp8_gemm(x, x_scale, qweight, w_scale):
-            qdq_x = fp8_qdq(x, x_scale)
-            dq_w = dq_weight(qweight, w_scale)
-            res = torch.matmul(qdq_x, dq_w)
-            return res.to(torch.bfloat16)
         
         if envs.VLLM_W8A8_QDQ:
             res = qdq_fp8_gemm(x, layer.input_scale, layer.weight, layer.weight_scale)
