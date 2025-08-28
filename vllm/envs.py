@@ -946,11 +946,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_DISABLE_INPUT_QDQ":
     lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
 
-    # Disable W8A8 STATIC MOE
+    # Enable W8A8 STATIC MOE
     "VLLM_W8A8_STATIC_MOE":
     lambda: bool(int(os.getenv("VLLM_W8A8_STATIC_MOE", "0"))),
 
-    #  W8A8 QDQ
+    # Enable W8A8 QDQ
     "VLLM_W8A8_QDQ":
     lambda: bool(int(os.getenv("VLLM_W8A8_QDQ", "0"))),
 
