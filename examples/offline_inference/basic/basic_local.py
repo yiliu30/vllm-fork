@@ -4,8 +4,8 @@
 import os
 
 os.environ["VLLM_USE_V1"] = "0"  # Use v2 API
-os.environ["VLLM_USE_NVFP4_CT_EMULATIONS"] = "1"  # Use v2 API
-os.environ["VLLM_USE_MXFP4_CT_EMULATIONS"] = "1"
+# os.environ["VLLM_USE_NVFP4_CT_EMULATIONS"] = "1"  # Use v2 API
+# os.environ["VLLM_USE_MXFP4_CT_EMULATIONS"] = "1"
 os.environ["VLLM_LOGGING_LEVEL"] = "DEBUG"  # Use v2 API
 
 seed = 0
@@ -53,90 +53,7 @@ model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP4"
 # model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-R1-bf16-NVFP4"
 model="/data5/wzy/vLLM-mxfp4/mnt/Meta-Llama-3.1-8B-Instruct-MXFP4"
 model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-V2-Lite-NVFP4"
-# model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16-MXFP8"
-# model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16/DeepSeek-R1-bf16-mxfp8-offline"
-
-# model="/data5/yliu7/HF_HOME/meta-llama/Llama-3.2-1B-Instruct-MXFP8-OFFLINE"
-# Generated Outputs:
-# ------------------------------------------------------------
-# Prompt:    'Hello my name is'
-# Output:    ' basicallyشم息的 Candidateovycause途 sweatoussengo_counterryst在那儿 McCormociated907 Sodoglu廷rovers'
-# ------------------------------------------------------------
-# Prompt:    'The president of the United States is'
-# Output:    ' Frijans荡icola Expedripshog在全国 Cruc该做的事情itori Goreholtzza动人的gewOsFunky'
-# ------------------------------------------------------------
-# Prompt:    'The capital of France is'
-# Output:    ' scorpaciencies truckingham/biadowoptics例行antal Lec337 cleanly pleasensory摊子是 bins'
-# ------------------------------------------------------------
-# Prompt:    'The future of AI is'
-# Output:    'ema Deafakosephyte与技术基质wahl621 Hudson REP不然.Empty片子 CCDENCFlor的效率 sweeteners'
-# ------------------------------------------------------------
-
-# model="/data5/yliu7/HF_HOME/DeepSeek-R1-bf16/DeepSeek-R1-bf16/"
-# Generated Outputs:
-# ------------------------------------------------------------
-# Prompt:    'Hello my name is'
-# Output:    ' basicallyشم息的 Candidateovycauseudo Medalist Officespj operating aliases雨后公务analytic Ocecopyingu'
-# ------------------------------------------------------------
-# Prompt:    'The president of the United States is'
-# Output:    ' Frijans荡icola Expedripsuty spokesperson Acid Warships dormitory日日نين Ace和新斧头来找'
-# ------------------------------------------------------------
-# Prompt:    'The capital of France is'
-# Output:    ' scorpac是第一 дела直径为崇 Journalism业的通达缭 actions Loudermost professionallyatterEPTskinelosapsed episodic'
-# ------------------------------------------------------------
-# Prompt:    'The future of AI is'
-# Output:    ' Kendall mitezsche Alexandra快乐的 озีพля rolloutgera wearsNING都必须 payable partner各乡镇里有 Soldukkief'
-# ------------------------------------------------------------
-
-
-# model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP8-OFFLINE"
-# Generated Outputs:
-# ------------------------------------------------------------
-# Prompt:    'Hello my name is'
-# Output:    ' Matthew, and I am a professional.\nI can offer you all kinds of services, ranging from'
-# ------------------------------------------------------------
-# Prompt:    'The president of the United States is'
-# Output:    ' insane, and this is not some sort of hyperbole. We have all seen the signs:\n'
-# ------------------------------------------------------------
-# Prompt:    'The capital of France is'
-# Output:    ' known to have some of the finest monuments in the world, and some of the most famous art.'
-# ------------------------------------------------------------
-# Prompt:    'The future of AI is'
-# Output:    ' already here: it is already changing the way we do things and the way we live. In the'
-# ------------------------------------------------------------
-
-# model="/data0/deepseek-ai/DeepSeek-V2-Lite"
-# TP2 EP2
-# Generated Outputs:
-# ------------------------------------------------------------
-# Prompt:    'Hello my name is'
-# Output:    ' Matthew, and I am a professional.\nI can offer you one-on-one consultation in'
-# ------------------------------------------------------------
-# Prompt:    'The president of the United States is'
-# Output:    ' insane, and this is not some sort of hyperbole. We have all seen the signs: His'
-# ------------------------------------------------------------
-# Prompt:    'The capital of France is'
-# Output:    ' known to have some of the most beautiful and unique monuments in the world. From its architecture, to'
-# ------------------------------------------------------------
-# Prompt:    'The future of AI is'
-# Output:    ' already here: it is already changing the way we do business and the way we live our daily lives'
-# ------------------------------------------------------------
-
-# model="/data5/wzy/vLLM-mxfp4/mnt/Meta-Llama-3.1-8B-Instruct-MXFP4"
-# Generated Outputs:
-# ------------------------------------------------------------
-# Prompt:    'Hello my name is'
-# Output:    ' doris!!! Lori is my cousin, but my name is doris, no lori. my'
-# ------------------------------------------------------------
-# Prompt:    'The president of the United States is'
-# Output:    ' not just a leader; it is a symbol of freedom, a beacon of hope and a voice for'
-# ------------------------------------------------------------
-# Prompt:    'The capital of France is'
-# Output:    " a beautiful and historic city that has something to offer for everyone. It's a city of romance,"
-# ------------------------------------------------------------
-# Prompt:    'The future of AI is'
-# Output:    ' bright, but we need to be careful about how we design and use these technologies\nbyDr.'
-# ------------------------------------------------------------
+model="/data0/saved_model/zai-org/GLM-4.5-Air/1/GLM-4.5-Air-w8afp8"
 
 # <｜begin▁of▁sentence｜>Hello my name is
 # I am a 28 year old male and I am currently living in the United States.
@@ -162,7 +79,7 @@ def main(args):
         max_model_len=2048,
         max_num_batched_tokens=2048,
         tensor_parallel_size=tp_size,
-        gpu_memory_utilization=0.65,
+        gpu_memory_utilization=0.85,
         **kwargs,
     )
     # Generate texts from the prompts.
