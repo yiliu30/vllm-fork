@@ -480,23 +480,6 @@ class CompressedTensorsW4A4MoeMethod(CompressedTensorsMoEMethod):
                 x.dtype)
 
 
-
-import sys
-import pdb
-
-class ForkedPdb(pdb.Pdb):
-    """A Pdb subclass that may be used
-    from a forked multiprocessing child
-
-    """
-    def interaction(self, *args, **kwargs):
-        _stdin = sys.stdin
-        try:
-            sys.stdin = open('/dev/stdin')
-            pdb.Pdb.interaction(self, *args, **kwargs)
-        finally:
-            sys.stdin = _stdin
-
 class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
 
     def __init__(
@@ -864,7 +847,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             e_score_correction_bias=e_score_correction_bias,
             indices_type=self.topk_indices_dtype,
         )
-        # ForkedPdb().set_trace()
+
         if envs.VLLM_W8A8_STATIC_MOE:
 
             num_experts, intermediate_size_per_partition_x2, _ = (
@@ -900,12 +883,8 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 ep_rank = 0
             else:
                 ep_group = get_ep_group()
-                # ForkedPdb().set_trace()
-                # ep_rank = get_tensor_model_parallel_rank()
                 ep_rank = ep_group.rank
-            # ep_rank = 0
             ep_shift = ep_rank * num_experts
-            # ForkedPdb().set_trace()
             for expert_index in range(num_experts):
                 mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
                 current_state_static = x * mask_weight
@@ -924,7 +903,6 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                     :intermediate_size_per_partition, ...
                 ]
                 # local_w1_global_scale = local_w13_scale[0]
-                # breakpoint()
                 local_w1_input_scale = local_w13_input_scale
 
                 local_w3 = local_w13[intermediate_size_per_partition:, ...]

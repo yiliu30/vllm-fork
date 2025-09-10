@@ -282,6 +282,7 @@ class PerTensorScaleParameter(BasevLLMParameter):
             loaded_weight = loaded_weight[0]
 
         param_data = param_data[shard_id]
+        loaded_weight = update_tensor_shape(param_data, loaded_weight)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 

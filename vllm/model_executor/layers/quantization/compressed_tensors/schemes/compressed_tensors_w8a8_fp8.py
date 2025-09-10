@@ -160,7 +160,11 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
 
         
         if envs.VLLM_W8A8_QDQ:
-            res = qdq_fp8_gemm(x, layer.input_scale, layer.weight, layer.weight_scale)
+            bias = None
+            if hasattr(layer, "bias") and layer.bias is not None:
+                bias = layer.bias
+            res = qdq_fp8_gemm(x, layer.input_scale, layer.weight, layer.weight_scale, bias)
+            
             return res
 
         return self.fp8_linear.apply(input=x,

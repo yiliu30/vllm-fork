@@ -83,11 +83,13 @@ def dq_weight(qweight, scale):
     dq_w = qweight.to(scale.dtype) * scale
     return dq_w
 
-
-def qdq_fp8_gemm(x, x_scale, qweight, w_scale):
+def qdq_fp8_gemm(x, x_scale, qweight, w_scale, bias=None):
     qdq_x = fp8_qdq(x, x_scale)
+
     dq_w = dq_weight(qweight, w_scale).to(x.dtype)
     res = torch.matmul(qdq_x, dq_w.t())
+    if bias is not None:
+        res += bias
     return res.to(x.dtype)
 
 def is_activation_quantization_format(format: str) -> bool:
@@ -139,7 +141,10 @@ def should_ignore_layer(
             elif should_ignore_shard != should_ignore_layer:
                 raise ValueError(f"Found a different quantization schemes for "
                                  f"{shard_proj_names} in {layer_name}. vLLM "
-                                 "requires all to use the same scheme.")
+                                 "requires all to use the same scheme."
+                                 f"should_ignore_shard: {should_ignore_shard}, should_ignore_layer: {should_ignore_layer}"
+                                 
+                                 )
 
     # Unfused layers like down_proj and o_proj will match
     # the safetensors checkpoint already.
