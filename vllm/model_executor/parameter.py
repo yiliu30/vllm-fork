@@ -24,7 +24,7 @@ logger = init_logger(__name__)
 
 def update_tensor_shape(dst_tensor, src_tensor):
     # if the number of elements is the same, we can reshape
-    if dst_tensor.numel() == src_tensor.numel():
+    if dst_tensor.numel() == src_tensor.numel() and dst_tensor.shape != src_tensor.shape:
         logger.warning_once(f"Reshaping tensor from {src_tensor.shape} to {dst_tensor.shape}")
         return src_tensor.reshape(dst_tensor.shape)
     return src_tensor
@@ -103,12 +103,7 @@ class BasevLLMParameter(Parameter):
         return qkv_idxs[shard_id]
 
 
-def update_tensor_shape(dst_tensor, src_tensor):
-    # if the number of elements is the same, we can reshape
-    if dst_tensor.numel() == src_tensor.numel():
-        logger.warning_once(f"Reshaping tensor from {src_tensor.shape} to {dst_tensor.shape}")
-        return src_tensor.reshape(dst_tensor.shape)
-    return src_tensor
+
 class _ColumnvLLMParameter(BasevLLMParameter):
     """
     Private class defining weight loading functionality 

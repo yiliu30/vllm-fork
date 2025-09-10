@@ -514,8 +514,8 @@ class Glm4MoeModel(nn.Module):
                     continue
                 if is_pp_missing_parameter(name, self):
                     continue
-                if name not in params_dict:
-                    continue
+                # if name not in params_dict:
+                #     continue
                 param = params_dict[name]
                 weight_loader = param.weight_loader
                 weight_loader(param, loaded_weight, shard_id)
@@ -537,8 +537,8 @@ class Glm4MoeModel(nn.Module):
 
                     if is_pp_missing_parameter(name_mapped, self):
                         continue
-                    if name not in params_dict:
-                        continue
+                    # if name not in params_dict:
+                    #     continue
                     param = params_dict[name_mapped]
                     # We should ask the weight loader to return success or not
                     # here since otherwise we may skip experts with other
@@ -572,8 +572,8 @@ class Glm4MoeModel(nn.Module):
 
                     if is_pp_missing_parameter(name, self):
                         continue
-                    if name not in params_dict:
-                        continue
+                    # if name not in params_dict:
+                    #     continue
                     param = params_dict[name]
                     weight_loader = getattr(param, "weight_loader",
                                             default_weight_loader)
