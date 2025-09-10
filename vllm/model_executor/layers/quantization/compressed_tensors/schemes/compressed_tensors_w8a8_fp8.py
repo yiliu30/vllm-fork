@@ -18,7 +18,11 @@ from vllm.model_executor.parameter import (ChannelQuantScaleParameter,
                                            ModelWeightParameter,
                                            PerTensorScaleParameter)
 from vllm.platforms import current_platform
-
+import vllm.envs as envs
+from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
+    qdq_fp8_gemm,
+    clip_to_safe_scale_inplace,
+)
 __all__ = ["CompressedTensorsW8A8Fp8"]
 
 
@@ -37,6 +41,8 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
     @classmethod
     def get_min_capability(cls) -> int:
         # lovelace and up
+        if envs.VLLM_W8A8_QDQ:
+            return 80
         return 89
 
     def process_weights_after_loading(self, layer) -> None:
@@ -82,7 +88,10 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
             else:
                 weight_scale = layer.weight_scale.data
 
-            layer.weight = Parameter(weight.t(), requires_grad=False)
+            if envs.VLLM_W8A8_QDQ:
+                layer.weight = Parameter(weight.data, requires_grad=False)
+            else:
+                layer.weight = Parameter(weight.t(), requires_grad=False)
             # required by torch.compile to be torch.nn.Parameter
             layer.weight_scale = Parameter(weight_scale, requires_grad=False)
 
@@ -93,6 +102,7 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
         if self.is_static_input_scheme and hasattr(layer, 'input_scale'):
             layer.input_scale = Parameter(layer.input_scale.max(),
                                           requires_grad=False)
+            clip_to_safe_scale_inplace(layer.input_scale)
         else:
             layer.input_scale = None
 
@@ -147,6 +157,11 @@ class CompressedTensorsW8A8Fp8(CompressedTensorsScheme):
                       layer: torch.nn.Module,
                       x: torch.Tensor,
                       bias: Optional[torch.Tensor] = None) -> torch.Tensor:
+
+        
+        if envs.VLLM_W8A8_QDQ:
+            res = qdq_fp8_gemm(x, layer.input_scale, layer.weight, layer.weight_scale)
+            return res
 
         return self.fp8_linear.apply(input=x,
                                      weight=layer.weight,
