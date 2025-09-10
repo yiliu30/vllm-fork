@@ -137,7 +137,9 @@ class CompressedTensorsConfig(QuantizationConfig):
         if isinstance(layer, Attention):
             return CompressedTensorsKVCacheMethod(self)
         if isinstance(layer, FusedMoE):
-            return CompressedTensorsMoEMethod.get_moe_method(self, layer)
+            moe_method = CompressedTensorsMoEMethod.get_moe_method(self, layer)
+            logger.debug(f"Using MoE method: {moe_method} for layer {prefix}")
+            return moe_method
         return None
 
     @classmethod
@@ -494,7 +496,7 @@ class CompressedTensorsConfig(QuantizationConfig):
             if self._is_fp8_w8a8(weight_quant, input_quant):
                 is_fp8_w8a8_supported = self._check_scheme_supported(
                     CompressedTensorsW8A8Fp8.get_min_capability(), error=False)
-                if is_fp8_w8a8_supported:
+                if is_fp8_w8a8_supported or envs.VLLM_W8A8_QDQ:
                     return CompressedTensorsW8A8Fp8(
                         strategy=weight_quant.strategy,
                         is_static_input_scheme=(input_quant

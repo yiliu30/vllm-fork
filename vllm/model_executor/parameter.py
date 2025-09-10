@@ -22,6 +22,12 @@ __all__ = [
 
 logger = init_logger(__name__)
 
+def update_tensor_shape(dst_tensor, src_tensor):
+    # if the number of elements is the same, we can reshape
+    if dst_tensor.numel() == src_tensor.numel() and dst_tensor.shape != src_tensor.shape:
+        logger.warning_once(f"Reshaping tensor from {src_tensor.shape} to {dst_tensor.shape}")
+        return src_tensor.reshape(dst_tensor.shape)
+    return src_tensor
 
 class BasevLLMParameter(Parameter):
     """
@@ -68,6 +74,7 @@ class BasevLLMParameter(Parameter):
         return (cond1 and cond2)
 
     def _assert_and_load(self, loaded_weight: torch.Tensor):
+        loaded_weight = update_tensor_shape(self.data, loaded_weight)
         assert (self.data.shape == loaded_weight.shape
                 or self._is_1d_and_scalar(loaded_weight))
         self.data.copy_(loaded_weight)
@@ -94,6 +101,7 @@ class BasevLLMParameter(Parameter):
         assert isinstance(shard_id, str)
         assert shard_id in qkv_idxs
         return qkv_idxs[shard_id]
+
 
 
 class _ColumnvLLMParameter(BasevLLMParameter):
@@ -142,7 +150,8 @@ class _ColumnvLLMParameter(BasevLLMParameter):
                                        shard_size)
         loaded_weight = loaded_weight.narrow(self.output_dim,
                                              tp_rank * shard_size, shard_size)
-        assert param_data.shape == loaded_weight.shape
+        loaded_weight = update_tensor_shape(param_data, loaded_weight)
+        assert param_data.shape == loaded_weight.shape, f"Expected {param_data.shape}, got {loaded_weight.shape}"
         param_data.copy_(loaded_weight)
 
     def load_qkv_weight(self, loaded_weight: torch.Tensor, **kwargs):
@@ -167,7 +176,7 @@ class _ColumnvLLMParameter(BasevLLMParameter):
                                        shard_size)
         loaded_weight = loaded_weight.narrow(self.output_dim,
                                              shard_id * shard_size, shard_size)
-
+        loaded_weight = update_tensor_shape(param_data, loaded_weight)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
@@ -273,6 +282,7 @@ class PerTensorScaleParameter(BasevLLMParameter):
             loaded_weight = loaded_weight[0]
 
         param_data = param_data[shard_id]
+        loaded_weight = update_tensor_shape(param_data, loaded_weight)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 
