@@ -18,7 +18,7 @@ def is_activation_quantization_format(format: str) -> bool:
         CompressionFormat.nvfp4_pack_quantized.value,
         CompressionFormat.mxfp4_pack_quantized.value
     ]
-    return format in _ACTIVATION_QUANTIZATION_FORMATS
+    return format in _ACTIVATION_QUANTIZATION_FORMATS or "nvfpp" in format
 
 
 def should_ignore_layer(
@@ -151,6 +151,21 @@ def _find_first_match(value: str,
             return target
     return None
 
+import sys
+import pdb
+
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
 
 def _is_equal_or_regex_match(value: str,
                              target: str,
@@ -160,7 +175,7 @@ def _is_equal_or_regex_match(value: str,
     if target starts with 're:'. If check_contains is set to True,
     additionally checks if the target string is contained within the value.
     """
-
+    # ForkedPdb().set_trace()
     if target.startswith("re:"):
         pattern = target[3:]
         if re.match(pattern, value):

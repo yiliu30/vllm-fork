@@ -137,7 +137,10 @@ model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_mo
 # Prompt:    'The future of AI is'
 # Output:    ' bright, but we need to be careful about how we design and use these technologies\nbyDr.'
 # ------------------------------------------------------------
-
+model="/data2/yiliu4/Qwen3-30B-A3B-MXFP4/Qwen3-30B-A3B-w4g32/"
+model="/data2/yiliu4/Qwen3-235B-A22B-MXFP4/Qwen3-235B-A22B-w4g32/"
+model="/data2/yiliu4/Llama-3.2-1B-Instruct-MXFP4/Llama-3.2-1B-Instruct-w4g32/"
+model="/data5/yliu7/HF_HOME/Llama-3.2-1B-Instruct-NVFPP_B16/"
 # <｜begin▁of▁sentence｜>Hello my name is
 # I am a 28 year old male and I am currently living in the United States.
 if "deepseek" in model.lower():

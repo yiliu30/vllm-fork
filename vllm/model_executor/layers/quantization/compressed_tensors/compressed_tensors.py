@@ -35,7 +35,7 @@ from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
     should_ignore_layer)
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.platforms import current_platform
-
+from vllm.model_executor.layers.quantization.compressed_tensors.schemes import CompressedTensorsW4A4NVFPP4
 logger = init_logger(__name__)
 
 __all__ = ["CompressedTensorsLinearMethod"]
@@ -257,6 +257,24 @@ class CompressedTensorsConfig(QuantizationConfig):
         return (is_tensor_group_quant and is_float_type and is_4_bits
                 and is_group_size_32 and is_symmetric)
 
+    def _is_fp4a4_nvfpp(self, weight_quant: BaseModel, input_quant: BaseModel):
+        if weight_quant is None or input_quant is None:
+            return False
+        return weight_quant.is_nvfpp
+        # is_tensor_group_quant = (weight_quant.strategy
+        #                          == QuantizationStrategy.TENSOR_GROUP.value
+        #                          and input_quant.strategy
+        #                          == QuantizationStrategy.TENSOR_GROUP.value)
+        # is_symmetric = weight_quant.symmetric and input_quant.symmetric
+        # is_group_size_32 = (weight_quant.group_size == 32
+        #                     and input_quant.group_size == 32)
+        # is_float_type = (weight_quant.type == QuantizationType.FLOAT.value
+        #                  and input_quant.type == QuantizationType.FLOAT.value)
+        # is_4_bits = weight_quant.num_bits == 4 and input_quant.num_bits == 4
+
+        # return (is_tensor_group_quant and is_float_type and is_4_bits
+        #         and is_group_size_32 and is_symmetric)
+
     def _is_fp4a16_nvfp4(self, weight_quant: BaseModel,
                          input_quant: BaseModel):
 
@@ -405,6 +423,10 @@ class CompressedTensorsConfig(QuantizationConfig):
             input_quant: BaseModel) -> "CompressedTensorsScheme":
         # breakpoint()
         # Detect If Mixed Precision
+        # FIXME: fix the priority order
+        if self._is_fp4a4_nvfpp(weight_quant, input_quant):
+            return CompressedTensorsW4A4NVFPP4(weight_quant.group_size)
+    
         if self._is_fp4a16_nvfp4(weight_quant, input_quant):
             return CompressedTensorsW4A16Fp4()
 
