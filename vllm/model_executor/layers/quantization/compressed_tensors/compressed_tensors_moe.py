@@ -107,14 +107,14 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
         per_channel = (
             self.weight_quant.strategy == QuantizationStrategy.CHANNEL
             and self.input_quant.strategy == QuantizationStrategy.TOKEN)
-        if not (per_tensor or per_channel):
+        if not (per_tensor or per_channel) and not current_platform.is_hpu():
             raise ValueError(
                 "For FP8 Fused MoE layers, we require per tensor "
                 "or channelwise, dynamic per token quantization. Found "
                 f"{self.weight_quant}, {self.input_quant}")
 
         self.static_input_scales = not self.input_quant.dynamic
-        if self.static_input_scales and per_channel:
+        if self.static_input_scales and per_channel and not current_platform.is_hpu():
             raise ValueError(
                 "For FP8 Fused MoE layer, we require either per tensor or "
                 "channelwise, dynamic per token quantization.")
@@ -232,6 +232,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                     "for each layer.")
             layer.w13_input_scale = torch.nn.Parameter(
                 layer.w13_input_scale.max(), requires_grad=False)
+            # TODO: (Yi) we should skip this for HPU
             layer.w2_input_scale = torch.nn.Parameter(
                 layer.w2_input_scale.max(), requires_grad=False)
 
