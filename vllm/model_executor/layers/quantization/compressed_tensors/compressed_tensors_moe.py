@@ -233,8 +233,9 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             layer.w13_input_scale = torch.nn.Parameter(
                 layer.w13_input_scale.max(), requires_grad=False)
             # TODO: (Yi) we should skip this for HPU
-            layer.w2_input_scale = torch.nn.Parameter(
-                layer.w2_input_scale.max(), requires_grad=False)
+            if not current_platform.is_hpu():
+                layer.w2_input_scale = torch.nn.Parameter(
+                    layer.w2_input_scale.max(), requires_grad=False)
 
         if current_platform.is_hpu():
             import vllm_hpu_extension.ops as hpu_ops
