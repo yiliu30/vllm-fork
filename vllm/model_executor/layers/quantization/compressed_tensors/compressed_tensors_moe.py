@@ -232,7 +232,7 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                     "for each layer.")
             layer.w13_input_scale = torch.nn.Parameter(
                 layer.w13_input_scale.max(), requires_grad=False)
-            # TODO: (Yi) we should skip this for HPU
+            # Note(Yi): on HPU, we can pass per-expert input scales
             if not current_platform.is_hpu():
                 layer.w2_input_scale = torch.nn.Parameter(
                     layer.w2_input_scale.max(), requires_grad=False)

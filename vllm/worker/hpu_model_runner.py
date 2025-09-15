@@ -2788,21 +2788,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         return (self.is_mm_optimized or self.model_is_mrope) and \
             (self.multimodal_buckets is not None)
 
-    def move_model_to_hpu(self) -> None:
-        self.model = self.model.to('hpu')
-        # attrs = ['weight
-        for name, module in self.model.named_modules():
-            # move module weight to hpu
-            if hasattr(module, 'weight') and module.weight is not None:
-                module.weight = module.weight.to('hpu')
-                torch.hpu.synchronize()
-            if hasattr(module, 'scale_inv_fp8') and module.scale_inv_fp8 is not None:
-                module.scale_inv_fp8 = module.scale_inv_fp8.to('hpu')
-                torch.hpu.synchronize()
-
     def profile_run(self) -> None:
-        # FIXME: (Yi) remove it after fixing the loading on hpu directly
-        self.move_model_to_hpu()
         # Skip profile run on decode instances
         if self.vllm_config.kv_transfer_config is not None and\
             self.vllm_config.kv_transfer_config.is_kv_consumer:
