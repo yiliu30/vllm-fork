@@ -170,6 +170,7 @@ if TYPE_CHECKING:
     VLLM_DISABLE_PAD_FOR_CUDAGRAPH: bool = False
     VLLM_W8A8_STATIC_MOE: bool = False
     VLLM_W8A8_QDQ: bool = False
+    VLLM_W8A8_BATCHED_MOE: bool = False
 
 def get_default_cache_root():
     return os.getenv(
@@ -1203,6 +1204,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Enable W8A8 STATIC MOE
     "VLLM_W8A8_STATIC_MOE":
     lambda: bool(int(os.getenv("VLLM_W8A8_STATIC_MOE", "0"))),
+
+    # Enable W8A8 BATCHED MOE
+    "VLLM_W8A8_BATCHED_MOE":
+    lambda: bool(int(os.getenv("VLLM_W8A8_BATCHED_MOE", "0"))),
 
     # Enable W8A8 QDQ
     "VLLM_W8A8_QDQ":

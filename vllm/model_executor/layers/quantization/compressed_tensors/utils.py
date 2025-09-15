@@ -23,6 +23,11 @@ def clip_to_safe_scale_inplace(
 
 def fp8_qdq(x, scale, eps=1e-10):
     # Ensure scale isn't too small to avoid extreme values
+    if len(x.shape) > 2:
+        # FIXME: (Yi) double check
+        # x: [num_experts, num_tokens, H] 
+        # scale: [num_experts]
+        scale = scale.view( -1, *((1,) * (len(x.shape) - 1)))
     scale = scale.to(x.dtype)
     safe_scale = scale
     # Compute quantized values
@@ -82,6 +87,18 @@ def fp8_qdq_(x, scale):
 def dq_weight(qweight, scale):
     dq_w = qweight.to(scale.dtype) * scale
     return dq_w
+
+# @torch.compiler.disable
+# @torch._dynamo.disallow_in_graph
+
+def qdq_fp8_bmm(x, x_scale, qweight, w_scale, bias=None):
+    qdq_x = fp8_qdq(x, x_scale)
+    # qdq_x = x
+    dq_w = dq_weight(qweight, w_scale).to(x.dtype)
+    res = torch.bmm(qdq_x, dq_w.transpose(-1, -2))
+    if bias is not None:
+        res += bias
+    return res.to(x.dtype)
 
 def qdq_fp8_gemm(x, x_scale, qweight, w_scale, bias=None):
     qdq_x = fp8_qdq(x, x_scale)
