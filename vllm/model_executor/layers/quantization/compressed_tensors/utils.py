@@ -9,6 +9,105 @@ import regex as re
 from compressed_tensors import CompressionFormat
 from torch.nn import Module
 
+from typing import Union
+import torch
+
+def clip_to_safe_scale_inplace(
+    scale: Union[torch.nn.Parameter, torch.Tensor],
+):
+    # FIXME: the scale is FP32, but we use the eps of BF16 here to be consistent x
+    eps = torch.finfo(torch.bfloat16).eps
+    safe_scale = torch.maximum(scale, torch.tensor(eps, device=scale.device, dtype=scale.dtype))
+    scale.copy_(safe_scale)
+
+
+def fp8_qdq(x, scale, eps=1e-10):
+    # Ensure scale isn't too small to avoid extreme values
+    if len(x.shape) > 2:
+        # FIXME: (Yi) double check
+        # x: [num_experts, num_tokens, H] 
+        # scale: [num_experts]
+        scale = scale.view( -1, *((1,) * (len(x.shape) - 1)))
+    scale = scale.to(x.dtype)
+    safe_scale = scale
+    # Compute quantized values
+    qx = x / scale
+
+    # # Clamp values to FP8 E4M3 representable range (approximately ±448)
+    # !!!! `to` will convert ? to NaN
+    max_fp8_value = 448.0
+    qx = torch.clamp(qx, -max_fp8_value, max_fp8_value)
+
+    # Convert to FP8, it will do clamp
+    qx_fp8 = qx.to(torch.float8_e4m3fn)
+
+    # Convert back and rescale
+    dq_x = qx_fp8.to(scale.dtype) * safe_scale
+
+    return dq_x
+
+
+def fp8_qdq__(x, scale, eps=torch.finfo(torch.bfloat16).eps):
+    # return x
+    # scale = scale.to(x.dtype)
+    # eps = torch.finfo(scale.dtype).eps
+    eps = torch.finfo(torch.bfloat16).eps
+    safe_scale = torch.maximum(
+        scale.data, torch.tensor(eps, device=scale.device, dtype=scale.dtype)
+    )
+    # scale.copy_(new_val)
+
+    # safe_scale = scale.to(x.dtype)
+
+    # Compute quantized values
+    qx = x / safe_scale
+
+    # Clamp values to FP8 E4M3 representable range (approximately ±448)
+    # max_fp8_value = 448.0
+    # qx = torch.clamp(qx, -max_fp8_value, max_fp8_value)
+
+    # Convert to FP8
+    qx_fp8 = qx.to(torch.float8_e4m3fn)
+
+    # Convert back and rescale
+    dq_x = qx_fp8.to(x.dtype) * safe_scale
+
+    return dq_x
+
+
+def fp8_qdq_(x, scale):
+    # return x
+    scale = scale.to(x.dtype)
+    qx = x / scale
+    qx_fp8 = qx.to(torch.float8_e4m3fn)
+    dq_x = qx_fp8.to(x.dtype) * scale
+    return dq_x.to(x.dtype)
+
+
+def dq_weight(qweight, scale):
+    dq_w = qweight.to(scale.dtype) * scale
+    return dq_w
+
+# @torch.compiler.disable
+# @torch._dynamo.disallow_in_graph
+
+def qdq_fp8_bmm(x, x_scale, qweight, w_scale, bias=None):
+    qdq_x = fp8_qdq(x, x_scale)
+    # qdq_x = x
+    dq_w = dq_weight(qweight, w_scale).to(x.dtype)
+    res = torch.bmm(qdq_x, dq_w.transpose(-1, -2))
+    if bias is not None:
+        res += bias
+    return res.to(x.dtype)
+
+def qdq_fp8_gemm(x, x_scale, qweight, w_scale, bias=None):
+    qdq_x = fp8_qdq(x, x_scale)
+
+    dq_w = dq_weight(qweight, w_scale).to(x.dtype)
+    res = torch.matmul(qdq_x, dq_w.t())
+    if bias is not None:
+        res += bias
+    return res.to(x.dtype)
 
 def is_activation_quantization_format(format: str) -> bool:
     _ACTIVATION_QUANTIZATION_FORMATS = [
@@ -59,7 +158,10 @@ def should_ignore_layer(
             elif should_ignore_shard != should_ignore_layer:
                 raise ValueError(f"Found a different quantization schemes for "
                                  f"{shard_proj_names} in {layer_name}. vLLM "
-                                 "requires all to use the same scheme.")
+                                 "requires all to use the same scheme."
+                                 f"should_ignore_shard: {should_ignore_shard}, should_ignore_layer: {should_ignore_layer}"
+                                 
+                                 )
 
     # Unfused layers like down_proj and o_proj will match
     # the safetensors checkpoint already.

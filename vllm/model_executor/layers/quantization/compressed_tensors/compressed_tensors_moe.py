@@ -45,6 +45,11 @@ from vllm.scalar_type import scalar_types
 
 logger = init_logger(__name__)
 
+from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
+    qdq_fp8_gemm,
+    qdq_fp8_bmm,
+    clip_to_safe_scale_inplace,
+)
 
 class GPTQMarlinState(Enum):
     REPACK = enum.auto()
@@ -496,14 +501,14 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
         per_channel = (
             self.weight_quant.strategy == QuantizationStrategy.CHANNEL
             and self.input_quant.strategy == QuantizationStrategy.TOKEN)
-        if not (per_tensor or per_channel):
+        if not (per_tensor or per_channel) and not envs.VLLM_W8A8_STATIC_MOE:
             raise ValueError(
                 "For FP8 Fused MoE layers, we require per tensor "
                 "or channelwise, dynamic per token quantization. Found "
                 f"{self.weight_quant}, {self.input_quant}")
 
         self.static_input_scales = not self.input_quant.dynamic
-        if self.static_input_scales and per_channel:
+        if self.static_input_scales and per_channel and not envs.VLLM_W8A8_STATIC_MOE:
             raise ValueError(
                 "For FP8 Fused MoE layer, we require either per tensor or "
                 "channelwise, dynamic per token quantization.")
@@ -607,11 +612,15 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                                                 requires_grad=False)
             layer.register_parameter("w2_input_scale", w2_input_scale)
             set_weight_attrs(w2_input_scale, extra_weight_attrs)
+            clip_to_safe_scale_inplace(w13_input_scale)
+            clip_to_safe_scale_inplace(w2_input_scale)
         else:
             layer.w13_input_scale = None
             layer.w2_input_scale = None
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        if envs.VLLM_W8A8_STATIC_MOE:
+            return
         # Fp8 moe kernels require a single activation scale.
         # We take the max of all the scales in case they differ.
         if self.static_input_scales:
@@ -839,6 +848,210 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
             e_score_correction_bias=e_score_correction_bias,
             indices_type=self.topk_indices_dtype,
         )
+
+        num_tokens, _hidden_dim = x.shape
+        
+        # FIXME: replace 1024 with ...
+        if envs.VLLM_W8A8_BATCHED_MOE and envs.VLLM_W8A8_STATIC_MOE and num_tokens < 1024:
+            
+            num_experts, intermediate_size_per_partition_x2, _ = (
+                layer.w13_weight.shape
+            )
+            intermediate_size_per_partition = (
+                intermediate_size_per_partition_x2 // 2
+            )
+            # FIXME: Handle mask
+            import torch.nn.functional as F
+            act_fn = F.silu
+            num_all_tokens, hidden_dim = x.shape
+            num_experts = layer.local_num_experts
+            total_num_experts = router_logits.size(-1)
+            experts_mask = torch.zeros(
+                (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
+            )
+            topk_ids = topk_ids.to(torch.int64)
+            topk_weights = topk_weights.to(x.dtype)
+            experts_mask.scatter_(-1, topk_ids, topk_weights)
+            experts_mask = experts_mask.transpose(0, 1)
+
+            # mask_weights = torch.zeros(
+            #     (num_all_tokens, total_num_experts),
+            #     dtype=x.dtype,
+            #     device=x.device,
+            # )
+            # mask_weights.scatter_(-1, topk_ids, 1)
+            # mask_weights = mask_weights.transpose(0, 1)
+            # Note: ep_size equal tp_size
+            from vllm.distributed import get_tensor_model_parallel_rank, get_ep_group
+            if expert_map is None:
+                ep_rank = 0
+            else:
+                ep_group = get_ep_group()
+                ep_rank = ep_group.rank
+            ep_shift = ep_rank * num_experts
+            # breakpoint()
+            # batch_size, seq_len = x.shape
+            def batched_moe(x, num_experts, ep_shift, experts_mask):
+                # x: [num_tokens, H]
+                x_all_experts = x.repeat(num_experts, 1, 1)  # [num_experts, num_tokens, H]
+                # # [num_tokens, 1]
+                # cur_ep_rank_mask = mask_weights[expert_index + ep_shift].unsqueeze(1)
+                # # cur_ep_rank_mask_expanded = cur_ep_rank_mask.re
+                w13 = layer.w13_weight.data
+                w13_scale = layer.w13_weight_scale.data
+                w13_input_scale = layer.w13_input_scale
+                w2 = layer.w2_weight.data
+                w2_scale = layer.w2_weight_scale.data
+                w2_input_scale = layer.w2_input_scale
+                
+                w1 = w13[:, :intermediate_size_per_partition, :]  # [num_experts, intermediate_size, H]
+                w1_scale = w13_scale[:, :intermediate_size_per_partition, :]  # [num_experts, intermediate_size, 1]
+                w1_input_scale = w13_input_scale  # [num_experts] or []
+                w3 = w13[:, intermediate_size_per_partition:, :]  # [num_experts, intermediate_size, H]
+                w3_scale = w13_scale[:, intermediate_size_per_partition:, :]  # [num_experts, intermediate_size, 1]
+                w3_input_scale = w13_input_scale  # [num_experts] or []
+                
+                w1_out = qdq_fp8_bmm(
+                    x=x_all_experts,
+                    x_scale=w1_input_scale,
+                    qweight=w1,
+                    w_scale=w1_scale)
+                
+                w3_out = qdq_fp8_bmm(
+                    x=x_all_experts,
+                    x_scale=w3_input_scale,
+                    qweight=w3,
+                    w_scale=w3_scale)
+                w13_out = act_fn(w1_out) * w3_out  # [num_experts, num_tokens, intermediate_size]
+                w2_out = qdq_fp8_bmm(
+                    x=w13_out,
+                    x_scale=w2_input_scale,
+                    qweight=w2,
+                    w_scale=w2_scale)  # [num_experts, num_tokens, H]
+                # breakpoint()
+                final_out = w2_out * experts_mask[ep_shift:ep_shift+num_experts].unsqueeze(-1)
+                final_out = final_out.sum(dim=0)
+                return final_out
+            return batched_moe(x, num_experts, ep_shift, experts_mask)
+
+        if envs.VLLM_W8A8_STATIC_MOE:
+
+            num_experts, intermediate_size_per_partition_x2, _ = (
+                layer.w13_weight.shape
+            )
+            intermediate_size_per_partition = (
+                intermediate_size_per_partition_x2 // 2
+            )
+            # FIXME: Handle mask
+            import torch.nn.functional as F
+            act_fn = F.silu
+            num_all_tokens, hidden_dim = x.shape
+            num_experts = layer.local_num_experts
+            total_num_experts = router_logits.size(-1)
+            experts_mask = torch.zeros(
+                (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
+            )
+            topk_ids = topk_ids.to(torch.int64)
+            topk_weights = topk_weights.to(x.dtype)
+            experts_mask.scatter_(-1, topk_ids, topk_weights)
+            experts_mask = experts_mask.transpose(0, 1)
+
+            mask_weights = torch.zeros(
+                (num_all_tokens, total_num_experts),
+                dtype=x.dtype,
+                device=x.device,
+            )
+            mask_weights.scatter_(-1, topk_ids, 1)
+            mask_weights = mask_weights.transpose(0, 1)
+            # Note: ep_size equal tp_size
+            from vllm.distributed import get_tensor_model_parallel_rank, get_ep_group
+            if expert_map is None:
+                ep_rank = 0
+            else:
+                ep_group = get_ep_group()
+                ep_rank = ep_group.rank
+            ep_shift = ep_rank * num_experts
+            # breakpoint()
+
+            for expert_index in range(num_experts):
+                # [num_tokens, 1]
+                mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
+                # [num_tokens, H] * [num_tokens, 1] -> [num_tokens, H]
+                current_state_static = x * mask_weight
+                # [moe_intermediate_x2, H]
+                local_w13 = layer.w13_weight[expert_index]
+                # [moe_intermediate_x2, 1]
+                local_w13_scale = layer.w13_weight_scale[expert_index]
+                # local_w13_global_scale = layer.w13_weight_global_scale[expert_index]
+                # [1] or []
+                local_w13_input_scale = layer.w13_input_scale[expert_index]
+                # [H, moe_intermediate]
+                local_w2 = layer.w2_weight[expert_index]
+                # [H, 1]
+                local_w2_scale = layer.w2_weight_scale[expert_index]
+                # local_w2_global_scale = layer.w2_weight_global_scale[expert_index]
+                # [1] or []
+                local_w2_input_scale = layer.w2_input_scale[expert_index]
+                # [intermediate_size, H]
+                local_w1 = local_w13[:intermediate_size_per_partition, ...]
+                # [intermediate_size, 1]
+                local_w1_scale = local_w13_scale[
+                    :intermediate_size_per_partition, ...
+                ]
+                # local_w1_global_scale = local_w13_scale[0]
+                # [1] or []
+                local_w1_input_scale = local_w13_input_scale
+                # [intermediate_size, H]
+                local_w3 = local_w13[intermediate_size_per_partition:, ...]
+                # [intermediate_size, 1]
+                local_w3_scale = local_w13_scale[
+                    intermediate_size_per_partition:, ...
+                ]
+                # local_w3_global_scale = local_w13_global_scale[1]
+                # [1] or []
+                local_w3_input_scale = local_w13_input_scale
+
+                # from vllm.model_executor.layers.quantization.utils.nvfp4_emulation_utils import (
+                #     run_nvfp4_emulations_no_swizzle,
+                # )
+
+                # local_w13_input_global_scale_max = local_w13_input_global_scale.max()
+                # [num_tokens, intermediate_size]
+                local_w1_out = qdq_fp8_gemm(
+                    x=current_state_static,
+                    x_scale=local_w1_input_scale,
+                    qweight=local_w1,
+                    w_scale=local_w1_scale,
+                )
+                # [num_tokens, intermediate_size]
+                local_w3_out = qdq_fp8_gemm(
+                    x=current_state_static,
+                    x_scale=local_w3_input_scale,
+                    qweight=local_w3,
+                    w_scale=local_w3_scale,
+                )
+                # [num_tokens, intermediate_size]
+                w13_out = act_fn(local_w1_out) * local_w3_out
+                # [num_tokens, hidden_dim]
+                local_w2_out = qdq_fp8_gemm(
+                    x=w13_out,
+                    x_scale=local_w2_input_scale,
+                    qweight=local_w2,
+                    w_scale=local_w2_scale,
+                )
+                # experts_mask: [num_experts, num_tokens]
+                # [num_tokens, 1]
+                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
+                    1
+                )
+                # [num_tokens, hidden_dim] * [num_tokens, 1] -> [num_tokens, hidden_dim]
+                local_w2_out = local_w2_out * padded_weight
+                if expert_index == 0:
+                    final_hidden_states = local_w2_out
+                else:
+                    final_hidden_states += local_w2_out
+            return final_hidden_states
+        
 
         # cutlass path
         if self.use_cutlass:

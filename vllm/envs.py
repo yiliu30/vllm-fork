@@ -168,7 +168,9 @@ if TYPE_CHECKING:
     VLLM_ALLREDUCE_USE_SYMM_MEM: bool = False
     VLLM_TUNED_CONFIG_FOLDER: Optional[str] = None
     VLLM_DISABLE_PAD_FOR_CUDAGRAPH: bool = False
-
+    VLLM_W8A8_STATIC_MOE: bool = False
+    VLLM_W8A8_QDQ: bool = False
+    VLLM_W8A8_BATCHED_MOE: bool = False
 
 def get_default_cache_root():
     return os.getenv(
@@ -1198,6 +1200,18 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Allows vllm to find tuned config under customized folder
     "VLLM_TUNED_CONFIG_FOLDER":
     lambda: os.getenv("VLLM_TUNED_CONFIG_FOLDER", None),
+
+    # Enable W8A8 STATIC MOE
+    "VLLM_W8A8_STATIC_MOE":
+    lambda: bool(int(os.getenv("VLLM_W8A8_STATIC_MOE", "0"))),
+
+    # Enable W8A8 BATCHED MOE
+    "VLLM_W8A8_BATCHED_MOE":
+    lambda: bool(int(os.getenv("VLLM_W8A8_BATCHED_MOE", "0"))),
+
+    # Enable W8A8 QDQ
+    "VLLM_W8A8_QDQ":
+    lambda: bool(int(os.getenv("VLLM_W8A8_QDQ", "0"))),
 
 }
 

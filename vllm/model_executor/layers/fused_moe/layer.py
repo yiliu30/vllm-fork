@@ -735,7 +735,28 @@ def get_compressed_expert_map(expert_map: torch.Tensor) -> str:
         f"{local_index.item()}->{global_index.item()}"
         for local_index, global_index in zip(local_indices, global_indices))
 
+import sys
+import pdb
 
+class ForkedPdb(pdb.Pdb):
+    """A Pdb subclass that may be used
+    from a forked multiprocessing child
+
+    """
+    def interaction(self, *args, **kwargs):
+        _stdin = sys.stdin
+        try:
+            sys.stdin = open('/dev/stdin')
+            pdb.Pdb.interaction(self, *args, **kwargs)
+        finally:
+            sys.stdin = _stdin
+            
+def update_tensor_shape(dst_tensor, src_tensor):
+    # if the number of elements is the same, we can reshape
+    if dst_tensor.numel() == src_tensor.numel() and dst_tensor.shape != src_tensor.shape:
+        logger.warning_once(f"Reshaping tensor from {src_tensor.shape} to {dst_tensor.shape}")
+        return src_tensor.reshape(dst_tensor.shape)
+    return src_tensor
 @CustomOp.register("fused_moe")
 class FusedMoE(CustomOp):
     """FusedMoE layer for MoE models.
@@ -1065,6 +1086,9 @@ class FusedMoE(CustomOp):
                                        tp_rank: int):
         # for per channel weight quantization
         if shard_id == "w2":
+            # if loaded_weight.shape != expert_data.shape:
+            #     ForkedPdb().set_trace()
+            loaded_weight = update_tensor_shape(expert_data, loaded_weight)
             expert_data.copy_(loaded_weight)
         elif shard_id in ("w1", "w3"):
             self._load_w13(shard_id=shard_id,
@@ -1096,6 +1120,7 @@ class FusedMoE(CustomOp):
         else:
             assert shard_id == "w3"
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
+        loaded_weight = update_tensor_shape(expert_data, loaded_weight)
         expert_data.copy_(loaded_weight)
 
     def _load_w2(self,
@@ -1336,6 +1361,9 @@ class FusedMoE(CustomOp):
             # specific to each case
             quant_method = getattr(param, "quant_method", None)
             if quant_method == FusedMoeWeightScaleSupported.CHANNEL.value:
+                # breakpoint()
+                # if expert_data.numel() != loaded_weight.numel():
+                #     ForkedPdb().set_trace()
                 self._load_per_channel_weight_scale(
                     shard_id=shard_id,
                     shard_dim=shard_dim,
