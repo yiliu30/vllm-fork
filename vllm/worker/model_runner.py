@@ -1531,6 +1531,45 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         return self.model_config.get_vocab_size()
 
 
+def update_mem(shape=None):
+    import torch
+
+    # import habana_frameworks.torch as htorch 
+    # from vllm_hpu_extension.profiler import HabanaMemoryProfiler, format_bytes
+    # memory_stats = torch.hpu.memory.memory_stats()
+    local_rank = torch.distributed.get_rank()
+    csv_file = f"vllm_memory_stats_pp_rank_{local_rank}.csv"
+    memory_stats = {}
+    # Define the field names (header)
+    fieldnames = [
+        "Timestamp", "Shape",
+        # "Limit", "InUse", "MaxInUse", "NumAllocs", "NumFrees",
+        # "ActiveAllocs", "MaxAllocSize", "TotalSystemAllocs",
+        # "TotalSystemFrees", "TotalActiveAllocs",
+        # "FreeMem",
+    ]
+
+    # Check if the file exists to decide if the header needs to be written
+    import os
+    import csv
+    write_header = not os.path.exists(csv_file)
+
+    # Append the row to the CSV
+    with open(csv_file, mode='a', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        import time
+        memory_stats['Timestamp'] = time.strftime("%Y-%m-%d-%H:%M:%S")
+        memory_stats['Shape'] = str(shape)
+        # memory_stats["FreeMem"] = memory_stats["MaxInUse"] - memory_stats["InUse"]
+        writer.writerow({key: memory_stats[key] for key in fieldnames})
+        # logger.warning(f"<<<<<<<<<<<<<<<<< Update mem >>>>>>>>>>>>>>>>>")
+        # msg = f"Memory stats: "
+        # for key in fieldnames:
+        #     msg += f"{key}: {str(memory_stats[key])}, "
+        # logger.warning(msg)
+
 class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
     """
     GPU model runner with sampling step.
@@ -1599,6 +1638,19 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if num_steps > 1:
             raise ValueError("num_steps > 1 is not supported in ModelRunner")
 
+        _input_shape = None
+        try:
+            if intermediate_tensors is None:
+                _input_tokens = model_input.input_tokens
+                _input_shape = _input_tokens.shape
+            else:
+                _hidden_states = intermediate_tensors.tensors.get("hidden_states", None)
+                if _hidden_states is not None:
+                    _input_shape = _hidden_states.shape
+            _input_shape = [x for x in _input_shape]
+        except:
+            _input_shape = "unknown"
+
         if self.lora_config:
             assert model_input.lora_requests is not None
             assert model_input.lora_mapping is not None
@@ -1616,6 +1668,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         virtual_engine = model_input.virtual_engine
         previous_hidden_states = kwargs.get("previous_hidden_states")
         if prefill_meta is None and decode_meta.use_cuda_graph:
+            logger.warning(f"Using CUDA graph for input shape {_input_shape}")
             assert model_input.input_tokens is not None
             graph_batch_size = model_input.input_tokens.shape[0]
             use_inputs_embeds = model_input.inputs_embeds is not None
@@ -1633,6 +1686,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 ])
         else:
             model_executable = self.model
+            logger.info(f"Using eager mode for input shape {_input_shape}")
 
         # Receive KV cache in distributed KV cache transfer setting
         # In disagg prefill setting, it will also recv hidden states and bypass
@@ -1780,7 +1834,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     for i, sequence_group_output in enumerate(valid_outputs):
                         sequence_group_output.samples[0].output_embed = \
                             sampled_token_embeds[i]
-
+        update_mem(_input_shape)
         if not self.is_driver_worker:
             return []
 

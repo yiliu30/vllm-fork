@@ -108,7 +108,16 @@ class Worker(LocalOrDistributedWorkerBase):
             torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
             logger.info("Profiling enabled. Traces will be saved to: %s",
                         torch_profiler_trace_dir)
+
+            warmup = int(os.getenv("VLLM_ENGINE_PROFILER_WARMUP_STEPS", "0"))
+            steps = int(os.getenv("VLLM_ENGINE_PROFILER_STEPS", "1"))
+            repeat = int(os.getenv("VLLM_ENGINE_PROFILER_REPEAT", "1"))
+            schedule = torch.profiler.schedule(wait=0,
+                                            warmup=warmup,
+                                            active=steps,
+                                            repeat=repeat)
             self.profiler = torch.profiler.profile(
+                schedule=schedule,
                 activities=[
                     torch.profiler.ProfilerActivity.CPU,
                     torch.profiler.ProfilerActivity.CUDA,
@@ -438,6 +447,8 @@ class Worker(LocalOrDistributedWorkerBase):
         if (worker_input.blocks_to_copy is not None
                 and worker_input.blocks_to_copy.numel() > 0):
             self.cache_engine[virtual_engine].copy(worker_input.blocks_to_copy)
+        if envs.VLLM_TORCH_PROFILER_DIR and self.profiler is not None:
+            self.profiler.step()
 
     def _get_cached_seq_group_metadata(
             self,
