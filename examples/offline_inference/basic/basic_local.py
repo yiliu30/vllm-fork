@@ -160,7 +160,7 @@ def main(args):
         # model="facebook/opt-125m"
         # model="/data5/yliu7/HF_HOME/meta-llama/Llama-3.2-1B-Instruct/",
         model=model,
-        enforce_eager=True,
+        # enforce_eager=True,
         trust_remote_code=True,
         max_model_len=2048,
         max_num_batched_tokens=2048,

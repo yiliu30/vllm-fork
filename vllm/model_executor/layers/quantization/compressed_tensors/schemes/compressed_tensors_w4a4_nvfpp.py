@@ -91,6 +91,13 @@ class CompressedTensorsW4A4NVFPP4(CompressedTensorsScheme):
         # layer.register_parameter("input_global_scale", input_global_scale)
 
     def process_weights_after_loading(self, layer) -> None:
+        if envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
+            weight_unpacked = unpack_weight(layer.weight_packed.data)
+            del layer.weight_packed
+            layer.register_parameter(
+                "weight_packed",
+                Parameter(weight_unpacked, requires_grad=False),
+            )
         pass
 
     def apply_weights(
@@ -149,7 +156,10 @@ def dq_nvfpp4(
     )
 
     fp_scale = nvfpp_to_float(scale_uint8).to(target_dtype)
-    data_lp_unpacked = unpack_weight(data_lp.data, dtype=target_dtype)
+    if envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
+        data_lp_unpacked = data_lp.data.to(target_dtype)
+    else:
+        data_lp_unpacked = unpack_weight(data_lp.data, dtype=target_dtype)
     orig_shape = data_lp_unpacked.shape
     dequant_value = data_lp_unpacked.reshape(-1, block_size)
     fp_scale = fp_scale.reshape(-1, 1)

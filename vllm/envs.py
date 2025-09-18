@@ -135,7 +135,7 @@ if TYPE_CHECKING:
     VLLM_USE_NVFP4_CT_EMULATIONS: bool = False
     VLLM_USE_MXFP4_CT_EMULATIONS: bool = False
     VLLM_COMPUTE_NANS_IN_LOGITS: bool = False
-
+    VLLM_PRE_UNPACK_FP4_WEIGHTS: bool = False
 
 def get_default_cache_root():
     return os.getenv(
@@ -944,6 +944,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Disable QDQ nvfp4 emulations
     "VLLM_DISABLE_INPUT_QDQ":
     lambda: bool(int(os.getenv("VLLM_DISABLE_INPUT_QDQ", "0"))),
+    
+    "VLLM_PRE_UNPACK_FP4_WEIGHTS":
+    lambda: bool(int(os.getenv("VLLM_PRE_UNPACK_FP4_WEIGHTS", "0"))),
 
 }
 
