@@ -788,3 +788,76 @@ def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> Optional[str]:
 
     # If there were no matches, return the untouched param name
     return name
+
+
+def gaudi_weight_wrapper(weight_loader):
+    """Wrapper for Gaudi weight conversion."""
+
+    fp8_e4m3fnuz_max = torch.finfo(torch.float8_e4m3fnuz).max
+    fp8_e4m3fn_max = torch.finfo(torch.float8_e4m3fn).max
+
+    def wrapper(*args, **kwargs):
+        # args[0] is parameter, args[1] is loaded_weight
+        # weights will be always in fp8, but scales will be in fp32,
+        # so we can detect it by dtype
+        loaded_weight = args[1]
+        if loaded_weight.dtype == torch.float8_e4m3fn:
+            loaded_weight.data = (loaded_weight.data.float() *
+                                  fp8_e4m3fnuz_max / fp8_e4m3fn_max).to(
+                                      torch.float8_e4m3fn)
+        else:
+            loaded_weight.data = (loaded_weight.data * fp8_e4m3fn_max /
+                                  fp8_e4m3fnuz_max)
+        args = (args[0], loaded_weight) + args[2:]
+        weight_loader(*args, **kwargs)
+
+    return wrapper
+
+
+from functools import wraps
+import vllm.envs as envs
+
+
+def with_thread_limits(div_omp: int = 4, div_torch: int = 8):
+    """
+    Decorator to temporarily set OMP_NUM_THREADS and PyTorch threads,
+    and restore them after the function call.
+    
+    Args:
+        div_omp: divide CPU cores by this for OMP_NUM_THREADS
+        div_torch: divide CPU cores by this for torch.set_num_threads
+    """
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not (current_platform.is_hpu()
+                    and envs.VLLM_HPU_CONVERT_TO_FP8UZ):
+                return func(*args, **kwargs)
+
+            # Save original settings
+            old_omp = os.environ.get("OMP_NUM_THREADS", None)
+            old_torch = torch.get_num_threads()
+            num_cores = os.cpu_count() or 1
+
+            # Set new limits
+            os.environ["OMP_NUM_THREADS"] = str(max(1, num_cores // div_omp))
+            torch.set_num_threads(max(1, num_cores // div_torch))
+            logger.warning_once(
+                "Setting OMP_NUM_THREADS to %s and torch.set_num_threads to %s",
+                os.environ["OMP_NUM_THREADS"], torch.get_num_threads())
+            try:
+                # Call the actual function
+                return func(*args, **kwargs)
+            finally:
+                # Restore original settings
+                if old_omp is None:
+                    os.environ.pop("OMP_NUM_THREADS", None)
+                else:
+                    os.environ["OMP_NUM_THREADS"] = old_omp
+                torch.set_num_threads(old_torch)
+
+        return wrapper
+
+    return decorator

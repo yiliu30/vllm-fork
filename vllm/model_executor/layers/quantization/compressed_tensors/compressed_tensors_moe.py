@@ -31,6 +31,7 @@ from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
 
 logger = init_logger(__name__)
+from vllm.model_executor.model_loader.weight_utils import gaudi_weight_wrapper
 
 
 class GPTQMarlinState(Enum):
@@ -114,7 +115,8 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 f"{self.weight_quant}, {self.input_quant}")
 
         self.static_input_scales = not self.input_quant.dynamic
-        if self.static_input_scales and per_channel and not current_platform.is_hpu():
+        if self.static_input_scales and per_channel and not current_platform.is_hpu(
+        ):
             raise ValueError(
                 "For FP8 Fused MoE layer, we require either per tensor or "
                 "channelwise, dynamic per token quantization.")
@@ -135,6 +137,10 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                        hidden_size: int, intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
 
+        # WEIGHTS
+        if current_platform.is_hpu() and envs.VLLM_HPU_CONVERT_TO_FP8UZ:
+            extra_weight_attrs["weight_loader"] = gaudi_weight_wrapper(
+                extra_weight_attrs.get("weight_loader"))
         layer.intermediate_size_per_partition = intermediate_size_per_partition
         layer.hidden_size = hidden_size
         layer.num_experts = num_experts
