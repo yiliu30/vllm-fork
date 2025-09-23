@@ -157,3 +157,4 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
         if bias is not None:
             out = out + bias
         return out.view(*output_shape)
+

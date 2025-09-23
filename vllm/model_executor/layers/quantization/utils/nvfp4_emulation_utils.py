@@ -109,6 +109,15 @@ def ref_nvfp4_quant(x, global_scale, block_size):
     return cast_to_fp4(clipped_x), scale.squeeze(-1)
 
 
+def get_per_tensor_scale(x):
+    amax = torch.max(torch.abs(x))
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    input_global_scale = torch.clamp(
+        amax / fp8_info.max, min=fp8_info.tiny, max=fp8_info.max
+    ).to(torch.float32)
+    input_global_scale = 1.0 / input_global_scale
+    return input_global_scale
+
 def run_nvfp4_emulations(x: torch.Tensor, input_global_scale: torch.Tensor,
                          weight: torch.Tensor,
                          weight_scale_swizzled: torch.Tensor,
@@ -116,6 +125,8 @@ def run_nvfp4_emulations(x: torch.Tensor, input_global_scale: torch.Tensor,
     group_size = 16
     x_m, x_k = x.shape
     output_dtype = x.dtype
+
+    input_global_scale = get_per_tensor_scale(x)
 
     # quantize input to (FP4 and interleaved block scale)
     x_fp4, x_blockscale = ref_nvfp4_quant(x, input_global_scale, group_size)
@@ -179,6 +190,7 @@ def run_nvfp4_emulations_no_swizzle(
         x_dq = x
     else:
         # quantize input to (FP4 and interleaved block scale)
+        input_global_scale = get_per_tensor_scale(x)
         x_fp4, x_blockscale = ref_nvfp4_quant(x, input_global_scale, group_size)
 
         # dequantize input
