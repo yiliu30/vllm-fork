@@ -1,38 +1,28 @@
-from vllm.model_executor.layers.quantization import auto_round as vllm_ar
-from vllm.model_executor.layers.quantization.auto_round import AutoRoundConfig
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+from abc import ABC, abstractmethod
+from typing import Any, Optional
 
 import torch
-from vllm.platforms import current_platform
-import torch
-from typing import TYPE_CHECKING, Any, Literal, Optional, cast
-from abc import ABC, abstractmethod
-from vllm.model_executor.layers.quantization.base_config import (
-    QuantizationConfig,
-    QuantizeMethodBase,
-)
-from typing import Union
-from vllm.model_executor.layers.linear import (
-    LinearBase,
-    LinearMethodBase,
-    UnquantizedLinearMethod,
-)
 from auto_round.schemes import QuantizationScheme
+
 import vllm.envs as envs
+from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
+                                               UnquantizedLinearMethod)
+from vllm.model_executor.layers.quantization.auto_round import AutoRoundConfig
 
 
 class AutoRoundExtensionConfig(AutoRoundConfig):
     SUPPORTED_DTYPES = AutoRoundConfig.SUPPORTED_DTYPES.union({"mx_fp"})
     SUPPORTED_FORMATS = AutoRoundConfig.SUPPORTED_FORMATS.union(
-        {"auto_round:llm_compressor"}
-    )
+        {"auto_round:llm_compressor"})
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         # FIXME: (Yi) parse the per-layer quant scheme
         if isinstance(layer, LinearBase):
             quant_method: LinearMethodBase = UnquantizedLinearMethod()
-            quant_method = AutoRoundQuantLinearMethod(
-                self, scheme=self.quant_scheme
-            )
+            quant_method = AutoRoundQuantLinearMethod(self,
+                                                      scheme=self.quant_scheme)
 
             return quant_method
         return super().get_quant_method(layer, prefix)
@@ -47,8 +37,7 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
             quant_scheme_attrs = QuantizationScheme.get_attributes()
             filter_config = {
                 key: value
-                for key, value in config.items()
-                if key in quant_scheme_attrs
+                for key, value in config.items() if key in quant_scheme_attrs
             }
             quant_scheme = QuantizationScheme.from_dict(filter_config)
             return quant_scheme
@@ -58,6 +47,7 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
 
 
 class AutoRoundQuantImpl(ABC):
+
     @classmethod
     @abstractmethod
     def get_min_capability(cls) -> int:
@@ -85,6 +75,7 @@ class AutoRoundQuantImpl(ABC):
 
 
 class AutoRoundQuantLinearMethod(LinearMethodBase):
+
     def is_mxfp8(self, quant_scheme: QuantizationScheme):
         return True
 
@@ -92,9 +83,8 @@ class AutoRoundQuantLinearMethod(LinearMethodBase):
         self.config = config
         self.scheme = scheme
         if self.is_mxfp8(self.scheme):
-            self.impl = AutoRoundMXFP8LinearImpl(
-                strategy="TENSOR_GROUP", is_static_input_scheme=True
-            )
+            self.impl = AutoRoundMXFP8LinearImpl(strategy="TENSOR_GROUP",
+                                                 is_static_input_scheme=True)
 
     @classmethod
     def get_min_capability(cls) -> int:
@@ -123,20 +113,11 @@ from typing import Callable, Optional
 
 import torch
 
+from vllm.model_executor.parameter import (GroupQuantScaleParameter,
+                                           ModelWeightParameter,
+                                           PerTensorScaleParameter)
 
-from vllm.model_executor.parameter import (
-    ModelWeightParameter,
-    PerTensorScaleParameter,
-)
-from vllm.model_executor.parameter import (
-    GroupQuantScaleParameter,
-    ModelWeightParameter,
-    PerTensorScaleParameter,
-)
-
-
-from .quant_dquant_utils import get_fp_scale, dequant_mx_fp8, quant_mx_fp8
-
+from .quant_dquant_utils import dequant_mx_fp8, quant_mx_fp8
 
 QLINEAR_METHODS_DISPATCH_TABLE = {}
 QMOE_METHODS_DISPATCH_TABLE = {}
@@ -147,6 +128,7 @@ QMOE_METHODS_DISPATCH_TABLE = {}
 
 # @register_method(scheme=ar_schemes.MXFP8, module_types=[LinearBase])
 class AutoRoundMXFP8LinearImpl(AutoRoundQuantImpl):
+
     def __init__(self, strategy: str, is_static_input_scheme: bool):
         self.strategy = strategy
         self.out_dtype = torch.get_default_dtype()
@@ -205,8 +187,7 @@ class AutoRoundMXFP8LinearImpl(AutoRoundQuantImpl):
             )
         else:
             raise NotImplementedError(
-                f"Strategy {self.strategy} is not supported for W8A8-MXFp8"
-            )
+                f"Strategy {self.strategy} is not supported for W8A8-MXFp8")
 
         # min requirement for fp8 kernels
         # weight_scale[:] = torch.finfo(torch.float32).min
@@ -216,9 +197,8 @@ class AutoRoundMXFP8LinearImpl(AutoRoundQuantImpl):
         # INPUT SCALE
         if self.is_static_input_scheme:
             input_scale = PerTensorScaleParameter(
-                data=torch.empty(
-                    len(output_partition_sizes), dtype=torch.float32
-                ),
+                data=torch.empty(len(output_partition_sizes),
+                                 dtype=torch.float32),
                 weight_loader=weight_loader,
             )
             input_scale[:] = torch.finfo(torch.float32).min
@@ -266,4 +246,3 @@ def apply():
     import vllm.model_executor.layers.quantization.auto_round as auto_round_module
 
     auto_round_module.AutoRoundConfig = AutoRoundExtensionConfig
-    from .envs_ext import all_environment_variables

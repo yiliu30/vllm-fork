@@ -1,6 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import torch
 
 __all__ = ["get_fp_scale", "dequant_mx_fp8", "quant_mx_fp8"]
+
 
 def get_fp_scale(scale_e8m0):
     # https://github.com/pytorch/ao/blob/994a4ba6c869854fcaa6ca7e118fcbd75e6c28cc/torchao/prototype/mx_formats/mx_tensor.py#L337
@@ -15,7 +18,7 @@ def get_fp_scale(scale_e8m0):
     # TODO(later): handle this for float16 if we decide to support float16
     # scales.
     s_fp = torch.pow(two, s_offset)
-    
+
     return s_fp
 
 
@@ -29,11 +32,10 @@ def dequant_mx_fp8(weight_fp8, scale_e8m0, block_size):
     dequant_weight = dequant_weight.reshape(weight_original_shape)
     return dequant_weight
 
+
 def quant_mx_fp8(tensor):
-    from torchao.prototype.mx_formats.mx_tensor import (
-        to_mx,
-        ScaleCalculationMode,
-    )
+    from torchao.prototype.mx_formats.mx_tensor import (ScaleCalculationMode,
+                                                        to_mx)
 
     scale_e8m0_biased, data_lp = to_mx(
         data_hp=tensor,

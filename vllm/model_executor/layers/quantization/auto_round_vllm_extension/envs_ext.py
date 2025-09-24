@@ -1,20 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # FILE: main.py
 
+import os
+from typing import Any, Callable
+
+import vllm.envs as envs
 from vllm.envs import environment_variables
+from vllm.logger import init_logger
 
 # FILE: extra_envs.py
 
-from typing import Callable, Any
-import os
-from vllm.envs import get_default_config_root, env_with_choices
-from vllm.logger import init_logger
-import vllm.envs as envs
 logger = init_logger(__name__)
-
-
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
-
-
 
 # Define extra environment variables
 extra_environment_variables: dict[str, Callable[[], Any]] = {
@@ -29,15 +26,15 @@ extra_environment_variables: dict[str, Callable[[], Any]] = {
 
     # Example: Define an extra environment variable for enabling experimental features
     "VLLM_AR_MXFP8_DISABLE_INPUT_QDQ":
-    lambda: os.getenv("VLLM_AR_MXFP8_DISABLE_INPUT_QDQ", "0") in ("1", "true", "True"),
-
-
+    lambda: os.getenv("VLLM_AR_MXFP8_DISABLE_INPUT_QDQ", "0") in
+    ("1", "true", "True"),
 }
 
 # Merge the environment variables
-all_environment_variables = {**environment_variables, **extra_environment_variables}
-
-
+all_environment_variables = {
+    **environment_variables,
+    **extra_environment_variables
+}
 
 # Add the extra environment variables to vllm.envs
 for name, value_fn in extra_environment_variables.items():
