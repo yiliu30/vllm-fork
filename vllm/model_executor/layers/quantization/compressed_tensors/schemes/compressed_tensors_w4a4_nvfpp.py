@@ -5,24 +5,26 @@ import torch
 from torch.nn.parameter import Parameter
 
 import vllm.envs as envs
-from vllm._custom_ops import (
-    cutlass_scaled_fp4_mm,
-    cutlass_scaled_mm_supports_fp4,
-    scaled_fp4_quant,
-)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsScheme,
 )
 
-# from vllm.model_executor.layers.quantization.utils.mxfp4_emulation_utils import (  # noqa: E501
-#     run_nvfpp_emulations)
+
 from vllm.model_executor.parameter import (
     GroupQuantScaleParameter,
     ModelWeightParameter,
     PerTensorScaleParameter,
 )
 from vllm.platforms import current_platform
+from compressed_tensors.quantization.utils.nvfpp_helper import (
+    unpack_weight,
+    qdq_nvfpp,
+)
+from vllm.model_executor.layers.quantization.compressed_tensors.nvfpp_utils import (
+    dq_nvfpp4,
+    run_nvfpp_emulations,
+)
 
 logger = init_logger(__name__)
 
@@ -106,17 +108,15 @@ class CompressedTensorsW4A4NVFPP4(CompressedTensorsScheme):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # breakpoint()
-        if envs.VLLM_USE_MXFP4_CT_EMULATIONS:
-            out = run_nvfpp_emulations(
-                x=x,
-                weight=layer.weight_packed,
-                weight_scale=layer.weight_scale,
-                group_size=self.group_size,
-            )
-            if bias is not None:
-                out = out + bias
-            return out
+        out = run_nvfpp_emulations(
+            x=x,
+            weight=layer.weight_packed,
+            weight_scale=layer.weight_scale,
+            group_size=self.group_size,
+        )
+        if bias is not None:
+            out = out + bias
+        return out
 
         # output_dtype = x.dtype
         # output_shape = [x.shape[0], layer.weight.shape[0]]
@@ -130,54 +130,3 @@ class CompressedTensorsW4A4NVFPP4(CompressedTensorsScheme):
         # if bias is not None:
         #     out = out + bias
         # return out.view(*output_shape)
-
-from compressed_tensors.quantization.utils.nvfpp_helper import unpack_weight
-
-def dq_nvfpp4(
-    data_lp,
-    scale_uint8,
-    block_size=32,
-    target_dtype=torch.float32,
-):
-    from compressed_tensors.quantization.utils.nvfpp_helper import (
-        float_to_nvfpp,
-        nvfpp_to_float,
-    )
-
-    fp_scale = nvfpp_to_float(scale_uint8).to(target_dtype)
-    if envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
-        data_lp_unpacked = data_lp.data.to(target_dtype)
-    else:
-        data_lp_unpacked = unpack_weight(data_lp.data, dtype=target_dtype)
-    orig_shape = data_lp_unpacked.shape
-    dequant_value = data_lp_unpacked.reshape(-1, block_size)
-    fp_scale = fp_scale.reshape(-1, 1)
-    dequant_value = dequant_value * fp_scale
-    return dequant_value.reshape(orig_shape)
-
-
-def run_nvfpp_emulations(
-    x: torch.Tensor,
-    weight: torch.Tensor,
-    weight_scale: torch.Tensor,
-    group_size=32,
-):
-    if envs.VLLM_DISABLE_INPUT_QDQ:
-        x_dq = x
-    else:
-        from compressed_tensors.quantization.utils.nvfpp_helper import qdq_nvfpp
-
-        x_dq = qdq_nvfpp(x, group_size=group_size)
-        x_dq = x_dq.to(x.dtype)
-
-    # dequantize weight
-    w_dq = dq_nvfpp4(
-        data_lp=weight,
-        scale_uint8=weight_scale,
-        block_size=group_size,
-        target_dtype=x.dtype,
-    )
-
-    # matmul
-    out = torch.matmul(x_dq, w_dq.t())
-    return out
