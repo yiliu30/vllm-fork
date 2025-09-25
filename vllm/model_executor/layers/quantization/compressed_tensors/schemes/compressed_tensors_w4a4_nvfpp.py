@@ -131,18 +131,7 @@ class CompressedTensorsW4A4NVFPP4(CompressedTensorsScheme):
         #     out = out + bias
         # return out.view(*output_shape)
 
-
-from compressed_tensors.compressors.quantized_compressors.nvfp4_quantized import (
-    unpack_fp4_from_uint8,
-)
-
-
-def unpack_weight(weight_uint8, dtype=torch.bfloat16):
-    m, nx2 = weight_uint8.shape
-    n = nx2 * 2
-    weight_float = unpack_fp4_from_uint8(weight_uint8, m, n, dtype)
-    return weight_float
-
+from compressed_tensors.quantization.utils.nvfpp_helper import unpack_weight
 
 def dq_nvfpp4(
     data_lp,
@@ -176,22 +165,10 @@ def run_nvfpp_emulations(
     if envs.VLLM_DISABLE_INPUT_QDQ:
         x_dq = x
     else:
-        # quantize input to (FP4 and interleaved block scale)
-        input_scale, x_q = to_mx(
-            data_hp=x,
-            elem_dtype="fp4_e2m1",
-            block_size=group_size,
-            scaling_mode=ScaleCalculationMode.RCEIL,
-        )
+        from compressed_tensors.quantization.utils.nvfpp_helper import qdq_nvfpp
 
-        # dequantize input
-        x_dq = to_dtype(
-            data_lp=x_q,
-            scale_e8m0=input_scale,
-            elem_dtype="fp4_e2m1",
-            block_size=group_size,
-            target_dtype=x.dtype,
-        )
+        x_dq = qdq_nvfpp(x, group_size=group_size)
+        x_dq = x_dq.to(x.dtype)
 
     # dequantize weight
     w_dq = dq_nvfpp4(
