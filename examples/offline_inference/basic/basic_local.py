@@ -141,6 +141,8 @@ model="/data2/yiliu4/Qwen3-30B-A3B-MXFP4/Qwen3-30B-A3B-w4g32/"
 model="/data2/yiliu4/Qwen3-235B-A22B-MXFP4/Qwen3-235B-A22B-w4g32/"
 model="/data2/yiliu4/Llama-3.2-1B-Instruct-MXFP4/Llama-3.2-1B-Instruct-w4g32/"
 model="/data5/yliu7/HF_HOME/Llama-3.2-1B-Instruct-NVFPP_B16/"
+model="/data5/yliu7/HF_HOME/Qwen3-30B-A3B-NVFPP_B16/"
+#  VLLM_USE_STATIC_MOE_HPU=1  VLLM_PRE_UNPACK_FP4_WEIGHTS=1 p basic_local.py --tp 4 --ep 4
 # <｜begin▁of▁sentence｜>Hello my name is
 # I am a 28 year old male and I am currently living in the United States.
 if "deepseek" in model.lower():
@@ -160,7 +162,7 @@ def main(args):
         # model="facebook/opt-125m"
         # model="/data5/yliu7/HF_HOME/meta-llama/Llama-3.2-1B-Instruct/",
         model=model,
-        # enforce_eager=True,
+        enforce_eager=True,
         trust_remote_code=True,
         max_model_len=2048,
         max_num_batched_tokens=2048,

@@ -87,6 +87,10 @@ class CompressedTensorsMoEMethod(FusedMoEMethodBase):
             else:
                 logger.info_once("Using CompressedTensorsWNA16MarlinMoEMethod")
                 return CompressedTensorsWNA16MarlinMoEMethod(quant_config)
+        elif quant_config._is_fp4a4_nvfpp(weight_quant, input_quant):
+            from .compressed_tensors_moe_nvfpp import CompressedTensorsW4A4NVFPPMoeMethod
+            logger.info(f"Using CompressedTensorsW4A4NVFPPMoeMethod")
+            return CompressedTensorsW4A4NVFPPMoeMethod(weight_quant.group_size)
         elif quant_config._is_fp4a4_mxfp4(weight_quant, input_quant):
             from .compressed_tensors_moe_mxfp4 import CompressedTensorsW4A4MXFP4MoeMethod
             return CompressedTensorsW4A4MXFP4MoeMethod()

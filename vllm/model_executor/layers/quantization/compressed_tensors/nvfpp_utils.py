@@ -16,12 +16,15 @@ def dq_nvfpp4(
     scale_uint8,
     block_size=32,
     target_dtype=torch.float32,
+    data_packed=False,
 ):
     fp_scale = nvfpp_to_float(scale_uint8).to(target_dtype)
-    if envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
+    if data_packed:
+        data_lp_unpacked = unpack_weight(data_lp.data, dtype=target_dtype)
+    elif envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
         data_lp_unpacked = data_lp.data.to(target_dtype)
     else:
-        data_lp_unpacked = unpack_weight(data_lp.data, dtype=target_dtype)
+        raise AssertionError("data_packed should be True if not pre-unpacked")
     orig_shape = data_lp_unpacked.shape
     dequant_value = data_lp_unpacked.reshape(-1, block_size)
     fp_scale = fp_scale.reshape(-1, 1)
@@ -33,7 +36,8 @@ def run_nvfpp_emulations(
     x: torch.Tensor,
     weight: torch.Tensor,
     weight_scale: torch.Tensor,
-    group_size=32,
+    group_size,
+    weight_packed=False,
 ):
     # !!!NOTE: This func not handle the bias
     if envs.VLLM_DISABLE_INPUT_QDQ:
@@ -48,6 +52,7 @@ def run_nvfpp_emulations(
         scale_uint8=weight_scale,
         block_size=group_size,
         target_dtype=x.dtype,
+        data_packed=weight_packed,
     )
 
     # matmul
