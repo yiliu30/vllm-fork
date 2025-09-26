@@ -19,9 +19,8 @@ def dq_nvfpp4(
     data_packed=False,
 ):
     fp_scale = nvfpp_to_float(scale_uint8).to(target_dtype)
-    if data_packed:
-        data_lp_unpacked = unpack_weight(data_lp.data, dtype=target_dtype)
-    elif envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
+    # FIXME: refine the logic of `data_packed` and `envs.VLLM_PRE_UNPACK_FP4_WEIGHTS`
+    if envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
         data_lp_unpacked = data_lp.data.to(target_dtype)
     else:
         raise AssertionError("data_packed should be True if not pre-unpacked")

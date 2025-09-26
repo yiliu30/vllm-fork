@@ -135,23 +135,20 @@ class CompressedTensorsW4A4NVFPPMoeMethod(CompressedTensorsMoEMethod):
         if envs.VLLM_USE_STATIC_MOE_HPU:
             # from torch.nn.parameter import Parameter
 
-            # if envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
-            #     from compressed_tensors.quantization.utils.nvfpp_helper import (
-            #         unpack_weight,
-            #         qdq_nvfpp,
-            #     )
-            #     num_local_experts, intermediate_size_per_partition_x2, hidden_size_packed = layer.w13_weight_packed.shape
-            #     unpacked_w13 = torch.empty(
-            #         (num_local_experts, intermediate_size_per_partition_x2, hidden_size_packed * 2),
-            #         dtype=torch.float32,
-            #         device=layer.w13_weight_packed.device)
+            if envs.VLLM_PRE_UNPACK_FP4_WEIGHTS:
+                from compressed_tensors.quantization.utils.nvfpp_helper import (
+                    unpack_weight,
+                    qdq_nvfpp,
+                )
 
-            #     weight_unpacked = unpack_weight(layer.weight_packed.data)
-            #     del layer.weight_packed
-            #     layer.register_parameter(
-            #         "weight_packed",
-            #         Parameter(weight_unpacked, requires_grad=False),
-            #     )
+                w13_weight_unpacked = unpack_weight(layer.w13_weight_packed)
+                layer.w13_weight_packed = torch.nn.Parameter(
+                    w13_weight_unpacked.contiguous(), requires_grad=False
+                )
+                w2_weight_unpacked = unpack_weight(layer.w2_weight_packed)
+                layer.w2_weight_packed = torch.nn.Parameter(
+                    w2_weight_unpacked.contiguous(), requires_grad=False
+                )
 
             return
         else:
@@ -291,14 +288,12 @@ class CompressedTensorsW4A4NVFPPMoeMethod(CompressedTensorsMoEMethod):
                     weight=local_w1_packed,
                     weight_scale=local_w1_scale,
                     group_size=self.group_size,
-                    weight_packed=True,
                 )
                 local_w3_out = run_nvfpp_emulations(
                     x=current_state_static,
                     weight=local_w3_packed,
                     weight_scale=local_w3_scale,
                     group_size=self.group_size,
-                    weight_packed=True,
                 )
 
                 w13_out = act_fn(local_w1_out) * local_w3_out
@@ -308,7 +303,6 @@ class CompressedTensorsW4A4NVFPPMoeMethod(CompressedTensorsMoEMethod):
                     weight=local_w2_packed,
                     weight_scale=local_w2_scale,
                     group_size=self.group_size,
-                    weight_packed=True,
                 )
                 padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
                     1

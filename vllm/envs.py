@@ -136,6 +136,7 @@ if TYPE_CHECKING:
     VLLM_USE_MXFP4_CT_EMULATIONS: bool = False
     VLLM_COMPUTE_NANS_IN_LOGITS: bool = False
     VLLM_PRE_UNPACK_FP4_WEIGHTS: bool = False
+    VLLM_USE_STATIC_MOE_HPU: bool = False
 
 def get_default_cache_root():
     return os.getenv(
