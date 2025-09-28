@@ -7,7 +7,7 @@ __all__ = ["get_fp_scale", "dequant_mx_fp8", "quant_mx_fp8"]
 
 def get_fp_scale(scale_e8m0):
     # https://github.com/pytorch/ao/blob/994a4ba6c869854fcaa6ca7e118fcbd75e6c28cc/torchao/prototype/mx_formats/mx_tensor.py#L337
-
+    assert scale_e8m0.dtype == torch.uint8, f"Expected uint8, got {scale_e8m0.dtype}"
     E8M0_EXPONENT_BIAS = 127
     scale_e8m0 = scale_e8m0.view(torch.uint8)
     s_offset = scale_e8m0.to(torch.int16) - E8M0_EXPONENT_BIAS

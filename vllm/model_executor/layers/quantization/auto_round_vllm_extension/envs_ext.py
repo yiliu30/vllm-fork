@@ -5,8 +5,8 @@
 import os
 from typing import Any, Callable
 
-import vllm.envs as envs
-from vllm.envs import environment_variables
+
+
 from vllm.logger import init_logger
 
 # FILE: extra_envs.py
@@ -28,8 +28,11 @@ extra_environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_AR_MXFP8_DISABLE_INPUT_QDQ":
     lambda: os.getenv("VLLM_AR_MXFP8_DISABLE_INPUT_QDQ", "0") in
     ("1", "true", "True"),
-}
 
+    "VLLM_USE_STATIC_MOE_HPU":
+    lambda: os.getenv("VLLM_USE_STATIC_MOE_HPU", "0") in ("1", "true", "True"),
+}
+from vllm.envs import environment_variables
 # Merge the environment variables
 all_environment_variables = {
     **environment_variables,
@@ -37,6 +40,7 @@ all_environment_variables = {
 }
 
 # Add the extra environment variables to vllm.envs
+import vllm.envs as envs
 for name, value_fn in extra_environment_variables.items():
     setattr(envs, name, value_fn())
 
