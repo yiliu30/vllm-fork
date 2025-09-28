@@ -329,6 +329,7 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
     ):
         super().__init__(moe)
         self.quant_config = quant_config
+        self.has_bias = self.moe.has_bias
         # self.weight_quant = self.quant_config.target_scheme_map["Linear"].get(
         #     "weights"
         # )
@@ -372,7 +373,7 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
 
         # WEIGHTS
         w13_weight = torch.nn.Parameter(
-            torch.empty(
+            torch.zeros(
                 num_experts,
                 2 * intermediate_size_per_partition,
                 hidden_size,
@@ -384,7 +385,7 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
         set_weight_attrs(w13_weight, extra_weight_attrs)
 
         w2_weight = torch.nn.Parameter(
-            torch.empty(
+            torch.zeros(
                 num_experts,
                 hidden_size,
                 intermediate_size_per_partition,
@@ -399,7 +400,7 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
         if 1 or self.weight_quant.strategy == QuantizationStrategy.TENSOR_GROUP:
             # Weight Scales
             w13_weight_scale = torch.nn.Parameter(
-                data=torch.empty(
+                data=torch.zeros(
                     num_experts,
                     2 * intermediate_size_per_partition,
                     hidden_size // self.group_size,
@@ -410,7 +411,7 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
             layer.register_parameter("w13_weight_scale", w13_weight_scale)
             # w2
             w2_weight_scale = torch.nn.Parameter(
-                data=torch.empty(
+                data=torch.zeros(
                     num_experts,
                     hidden_size,
                     intermediate_size_per_partition // self.group_size,
@@ -449,8 +450,50 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
             layer.w13_input_scale = None
             layer.w2_input_scale = None
 
+        E = num_experts
+        H = hidden_size
+        IN = intermediate_size_per_partition
+        if self.has_bias:
+            # TODO: @yiliu30: use the dtype in CK
+            bias_dtype = torch.bfloat16
+            w13_bias = torch.nn.Parameter(
+                torch.zeros(E, 2 * IN, dtype=bias_dtype), requires_grad=False
+            )
+            layer.register_parameter("w13_bias", w13_bias)
+            set_weight_attrs(w13_bias, extra_weight_attrs)
+
+            w2_bias = torch.nn.Parameter(
+                torch.zeros(num_experts, hidden_size, dtype=bias_dtype),
+                requires_grad=False,
+            )
+            layer.register_parameter("w2_bias", w2_bias)
+            set_weight_attrs(w2_bias, extra_weight_attrs)
+
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        return
+        # TODO: @yiliu30 remove it
+        def check_nan(tensor):
+            return tensor.float().sum() == 0
+
+        if check_nan(layer.w13_weight):
+            logger.info("all zeros self.w13_weight")
+            breakpoint()
+
+        if check_nan(layer.w2_weight):
+            logger.info("NAN IN self.w2_weight")
+            breakpoint()
+
+        if check_nan(layer.w13_bias):
+            logger.info("NAN IN self.w13_bias")
+            breakpoint()
+        if check_nan(layer.w2_bias):
+            logger.info("NAN IN self.w2_bias")
+            breakpoint()
+        if check_nan(layer.w13_weight_scale):
+            logger.info("NAN IN self.w13_weight_scale")
+            breakpoint()
+        if check_nan(layer.w2_weight_scale):
+            logger.info("NAN IN self.w2_weight_scale")
+            breakpoint()
 
     def apply(
         self,
@@ -510,8 +553,11 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
             )
             mask_weights.scatter_(-1, topk_ids, 1)
             mask_weights = mask_weights.transpose(0, 1)
-            # Note: ep_size equal tp_size
-            ep_rank = get_tensor_model_parallel_rank()
+            # Note: ep_size equal tp_size'
+            if expert_map is None:
+                ep_rank = 0
+            else:
+                ep_rank = get_tensor_model_parallel_rank()
             ep_shift = ep_rank * num_experts
 
             for expert_index in range(num_experts):
@@ -551,23 +597,48 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
                         x = dequant_x.to(x.dtype)
                     out = x @ dequnat_weight.t()
                     return out.to(x.dtype) + (bias if bias is not None else 0)
+                local_w1_bias = None
+                local_w2_bias = None
+                local_w3_bias = None
+                if self.has_bias:
+                    local_w13_bias = layer.w13_bias[expert_index]
+                    local_w1_bias = local_w13_bias[:intermediate_size_per_partition]
+                    local_w3_bias = local_w13_bias[intermediate_size_per_partition:]
+                    local_w2_bias = layer.w2_bias[expert_index]
 
                 local_w1_out = run_mxfp8_emulations(
                     x=current_state_static,
                     weight=local_w1,
                     weight_scale=local_w1_scale,
+                    bias=local_w1_bias
                 )
                 local_w3_out = run_mxfp8_emulations(
                     x=current_state_static,
                     weight=local_w3,
                     weight_scale=local_w3_scale,
+                    bias=local_w3_bias
                 )
-                w13_out = act_fn(local_w1_out) * local_w3_out
+                # w13_out = act_fn(local_w1_out) * local_w3_out
+                
+                # TODO: @yiliu30: wrapper as act func
+                limit = 7.0
+                alpha = 1.702
+                local_w1_out = local_w1_out.clamp(min=None, max=limit)
+                local_w3_out = local_w3_out.clamp(min=-limit, max=limit)
+                
+                glu = (local_w1_out) * F.sigmoid(local_w1_out * alpha)
+                w13_out = (local_w3_out + 1) * glu
 
+                # gate = gate.clamp(min=None, max=self.limit)
+                # up = up.clamp(min=-self.limit, max=self.limit)
+                # glu = gate * torch.sigmoid(gate * self.alpha)
+                # gated_output = (up + 1) * glu
+                
                 local_w2_out = run_mxfp8_emulations(
                     x=w13_out,
                     weight=local_w2,
                     weight_scale=local_w2_scale,
+                    bias=local_w2_bias
                 )
                 padded_weight = experts_mask[expert_index +
                                              ep_shift].unsqueeze(1)
