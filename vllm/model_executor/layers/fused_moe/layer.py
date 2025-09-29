@@ -1477,7 +1477,24 @@ class FusedMoE(CustomOp):
             param.materialize(final_shape, dtype=loaded_weight.dtype)
 
         expert_data = param.data if full_load else param.data[expert_id]
+        
+        # FIXME: @yiliu30 handle TP
+        # ==-----------------------------------------------------------------==
+        # Case bias: W13/W2
+        if "bias" in weight_name:
+            if shard_id == "w2":
+                param.data[expert_id].copy_(loaded_weight)
+                return True if return_success else None
+            else:
+                assert shard_id in ["w1", "w3"]
 
+                _out_dim =expert_data.shape[0]
+                if shard_id == "w1":                    
+                    expert_data[:_out_dim//2] = loaded_weight
+                else:
+                    expert_data[_out_dim//2:] = loaded_weight
+        # ==-----------------------------------------------------------------==
+        
         # Case input scale: input_scale loading is only supported for fp8
         if "input_scale" in weight_name:
             # this is needed for compressed-tensors only

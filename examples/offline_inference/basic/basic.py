@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+
+
 from vllm import LLM, SamplingParams
 
 # Sample prompts.
@@ -16,7 +18,12 @@ sampling_params = SamplingParams(temperature=0.8, top_p=0.95)
 
 def main():
     # Create an LLM.
-    llm = LLM(model="facebook/opt-125m")
+    model="/data5/yliu7/HF_HOME/OPEA/Qwen2.5-0.5B-Instruct-int4-sym-inc"
+    model="/home/yliu7/workspace/auto-round/tmp_autoround_llama_mxfp8"
+    llm = LLM(
+        # model="facebook/opt-125m"
+        model=model
+        )
     # Generate texts from the prompts.
     # The output is a list of RequestOutput objects
     # that contain the prompt, generated text, and other information.

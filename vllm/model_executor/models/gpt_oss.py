@@ -35,7 +35,8 @@ from .utils import (AutoWeightsLoader, WeightsMapper, extract_layer_index,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
 
-
+from vllm.logger import init_logger
+logger = init_logger(__name__)
 class OAIAttention(nn.Module):
 
     def __init__(
@@ -222,6 +223,11 @@ class TransformerBlock(torch.nn.Module):
         output = self.mlp(hidden_states)
         return output, residual
 
+from vllm.model_executor.model_loader.weight_utils import (
+    default_weight_loader, maybe_remap_kv_scale_name)
+    
+import typing
+from collections.abc import Callable, Iterable
 
 @support_torch_compile
 class GptOssModel(nn.Module):
@@ -597,6 +603,170 @@ class GptOssModel(nn.Module):
             loaded_params.add(name)
         return loaded_params
 
+    def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
+        # Params for weights, fp8 weight scales, fp8 activation scales
+        # (param_name, weight_name, expert_id, shard_id)
+        return FusedMoE.make_expert_params_mapping(
+            ckpt_gate_proj_name="gate_proj",
+            ckpt_down_proj_name="down_proj",
+            ckpt_up_proj_name="up_proj",
+            num_experts=self.config.num_local_experts,
+            num_redundant_experts=0,
+        )
+
+    def load_weights_ar(
+        self, weights: Iterable[tuple[str, torch.Tensor]]
+    ) -> set[str]:
+        # FIXME: @yiliu30: this break the bf16 path, fixme
+        stacked_params_mapping_mlp = [
+            # (param_name, shard_name, shard_id)
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "up_proj", 1),
+        ]
+
+        stacked_params_mapping = [
+            # (param_name, shard_name, shard_id)
+            (".qkv", ".q_proj", "q"),
+            (".qkv", ".k_proj", "k"),
+            (".qkv", ".v_proj", "v"),
+        ]
+        stacked_params_mapping = (
+            stacked_params_mapping + stacked_params_mapping_mlp
+        )
+
+        # Params for weights, fp8 weight scales, fp8 activation scales
+        # (param_name, weight_name, expert_id, shard_id)
+        expert_params_mapping = FusedMoE.make_expert_params_mapping(
+            ckpt_gate_proj_name="gate_proj",
+            ckpt_down_proj_name="down_proj",
+            ckpt_up_proj_name="up_proj",
+            # num_experts=self.config.n_routed_experts,
+            num_experts=self.config.num_local_experts,
+            num_redundant_experts=0,
+        )
+
+        params_dict = dict(self.named_parameters())
+        loaded_params: set[str] = set()
+        expert_params_mapping = self.get_expert_mapping()
+        # breakpoint()
+
+        tp_rank = get_tensor_model_parallel_rank()
+        tp_size = get_tensor_model_parallel_world_size()
+
+        # Attention heads per rank
+        heads_per_rank = self.config.num_attention_heads // tp_size
+        head_start = tp_rank * heads_per_rank
+
+        ep_size = get_ep_group().world_size
+        ep_rank = get_ep_group().rank
+        num_experts = self.config.num_local_experts
+        experts_per_rank = num_experts // ep_size
+        ep_rank_start = ep_rank * experts_per_rank
+        ep_rank_end = (ep_rank + 1) * experts_per_rank
+
+        for name, loaded_weight in weights:
+            if "sinks" in name:
+                # Handle attention sinks (distributed across ranks)
+                param = params_dict[name]
+                narrow_weight = loaded_weight.narrow(
+                    0, head_start, heads_per_rank
+                )
+                param.data.copy_(narrow_weight)
+                loaded_params.add(name)
+                continue
+
+            for param_name, weight_name, shard_id in stacked_params_mapping:
+                # Skip non-stacked layers and experts (experts handled below).
+                if weight_name not in name:
+                    continue
+                # We have mlp.experts[0].gate_proj in the checkpoint.
+                # Since we handle the experts below in expert_params_mapping,
+                # we need to skip here BEFORE we update the name, otherwise
+                # name will be updated to mlp.experts[0].gate_up_proj, which
+                # will then be updated below in expert_params_mapping
+                # for mlp.experts[0].gate_gate_up_proj, which breaks load.
+                if ("mlp.experts." in name) and name not in params_dict:
+                    continue
+                name = name.replace(weight_name, param_name)
+                # Skip loading extra bias for GPTQ models.
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+                if is_pp_missing_parameter(name, self):
+                    continue
+
+                param = params_dict[name]
+                weight_loader = param.weight_loader
+                weight_loader(param, loaded_weight, shard_id)
+                break
+            else:
+                is_expert_weight = False
+                for mapping in expert_params_mapping:
+                    param_name, weight_name, expert_id, shard_id = mapping
+                    if weight_name not in name:
+                        continue
+
+                    # Anyway, this is an expert weight and should not be
+                    # attempted to load as other weights later
+                    is_expert_weight = True
+
+                    # Do not modify `name` since the loop may continue here
+                    # Instead, create a new variable
+                    name_mapped = name.replace(weight_name, param_name)
+                    logger.info(
+                        f"replace weight_name:{weight_name} to {name_mapped}"
+                    )
+                    if is_pp_missing_parameter(name_mapped, self):
+                        continue
+
+                    param = params_dict[name_mapped]
+                    # We should ask the weight loader to return success or not
+                    # here since otherwise we may skip experts with other
+                    # available replicas.
+                    weight_loader = typing.cast(
+                        Callable[..., bool], param.weight_loader
+                    )
+                    # if "w2_bias" in name_mapped:
+                    #     breakpoint()
+                    success = weight_loader(
+                        param,
+                        loaded_weight,
+                        name_mapped,
+                        shard_id=shard_id,
+                        expert_id=expert_id,
+                        return_success=True,
+                    )
+                    if success:
+                        name = name_mapped
+                        break
+                else:
+                    if is_expert_weight:
+                        # We've checked that this is an expert weight
+                        # However it's not mapped locally to this rank
+                        # So we simply skip it
+                        continue
+
+                    # Skip loading extra bias for GPTQ models.
+                    if name.endswith(".bias") and name not in params_dict:
+                        continue
+
+                    # Remapping the name of FP8 kv-scale.
+                    name = maybe_remap_kv_scale_name(name, params_dict)
+                    if name is None:
+                        continue
+
+                    if is_pp_missing_parameter(name, self):
+                        continue
+
+                    param = params_dict[name]
+                    weight_loader = getattr(
+                        param, "weight_loader", default_weight_loader
+                    )
+                    weight_loader(param, loaded_weight)
+            loaded_params.add(name)
+
+        return loaded_params
+
+
     def load_weights(self, weights: Iterable[tuple[str,
                                                    torch.Tensor]]) -> set[str]:
         stacked_params_mapping = [
@@ -626,6 +796,8 @@ class GptOssModel(nn.Module):
             return self._load_weights_mxfp4(ep_rank_end, ep_rank_start,
                                             heads_per_rank, head_start,
                                             weights, stacked_params_mapping)
+        elif quant_method == "auto-round":
+            return self.load_weights_ar(weights)
         else:
             return self._load_weights_other(ep_rank_end, ep_rank_start,
                                             heads_per_rank, head_start,
