@@ -7,9 +7,16 @@ VLLM_ENABLE_AR_EXT = os.environ.get("VLLM_ENABLE_AR_EXT", "") in [
     "true",
     "True",
 ]
+
 if VLLM_ENABLE_AR_EXT:
     print(
-        f"!!! VLLM_ENABLE_AR_EXT is set to {VLLM_ENABLE_AR_EXT}, applying auto_round_vllm_extension ..."
+        "*****************************************************************************"
+    )
+    print(
+        f"* !!! VLLM_ENABLE_AR_EXT is set to {VLLM_ENABLE_AR_EXT}, applying auto_round_vllm_extension *"
+    )
+    print(
+        "*****************************************************************************"
     )
     from vllm.model_executor.layers.quantization import (
         auto_round_vllm_extension as auto_round_ext,
