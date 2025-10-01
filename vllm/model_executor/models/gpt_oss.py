@@ -712,9 +712,9 @@ class GptOssModel(nn.Module):
                     # Do not modify `name` since the loop may continue here
                     # Instead, create a new variable
                     name_mapped = name.replace(weight_name, param_name)
-                    logger.info(
-                        f"replace weight_name:{weight_name} to {name_mapped}"
-                    )
+                    # logger.info(
+                    #     f"replace weight_name:{weight_name} to {name_mapped}"
+                    # )
                     if is_pp_missing_parameter(name_mapped, self):
                         continue
 

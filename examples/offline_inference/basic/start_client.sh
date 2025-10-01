@@ -19,26 +19,39 @@ model_path=/data5/yliu7/HF_HOME/GLM-4.5-Air-w8afp8-llmc/GLM-4.5-Air-w8afp8
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-20b-BF16-MXFP8/
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-120b-BF16-unsloth-MXFP8
 port=8088
+# HF_ALLOW_CODE_EVAL=1 \
+# lm_eval --model local-completions \
+#     --tasks $task_name \
+#     --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/completions,num_concurrent=8,max_retriess=1000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
+#     --batch_size ${batch_size}  \
+#     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
+#     --confirm_run_unsafe_code \
+#     --log_samples \
+#     --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
+#     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
+#     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
+
 HF_ALLOW_CODE_EVAL=1 \
-lm_eval --model local-completions \
+lm_eval --model local-chat-completions \
     --tasks $task_name \
-    --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/completions,num_concurrent=1,max_length=${max_length},max_gen_toks=${max_gen_toks} \
+    --apply_chat_template \
+    --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/chat/completions,num_concurrent=1500,max_retries=1000,timeout=600,max_length=${max_length},max_gen_toks=${max_gen_toks} \
     --batch_size ${batch_size}  \
     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
     --confirm_run_unsafe_code \
     --log_samples \
-    --limit 64 \
     --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
+    --use_cache "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
 
 
 
 
-# curl -X POST http://127.0.0.1:8088/v1/completions \
+# curl -X POST http://127.0.0.1:8000/v1/completions \
 #      -H "Content-Type: application/json" \
 #      -d '{
-#            "model": "/data5/yliu7/HF_HOME/Yi30/gpt-oss-120b-BF16-unsloth-MXFP8",
+#            "model": "/storage/yiliu7/deepseek-ai/DeepSeek-V3.2-Exp/",
 #            "prompt": "Solve the following math problem step by step: What is 25 + 37?",
 #            "max_tokens": 100,
 #            "temperature": 0.7,
