@@ -750,7 +750,6 @@ class GptOssModel(nn.Module):
         return loaded_params
 
 
-
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
@@ -785,10 +784,9 @@ class GptOssModel(nn.Module):
         elif quant_method == "auto-round":
             return self.load_weights_ar(weights)
         else:
-             return self._load_weights_other(ep_rank_end, ep_rank_start,
-                                             heads_per_rank, head_start,
-                                             weights, stacked_params_mapping)
-
+            return self._load_weights_other(ep_rank_end, ep_rank_start,
+                                            heads_per_rank, head_start,
+                                            weights, stacked_params_mapping)
 
 
 class GptOssForCausalLM(nn.Module, SupportsPP, SupportsEagle3):
