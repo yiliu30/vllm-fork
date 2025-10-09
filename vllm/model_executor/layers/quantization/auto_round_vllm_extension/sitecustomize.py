@@ -2,11 +2,10 @@
 
 import os
 
-VLLM_ENABLE_AR_EXT = os.environ.get("VLLM_ENABLE_AR_EXT", "") in [
+VLLM_ENABLE_AR_EXT = os.environ.get("VLLM_ENABLE_AR_EXT", "").lower() in (
     "1",
     "true",
-    "True",
-]
+)
 
 if VLLM_ENABLE_AR_EXT:
     print(
