@@ -23,3 +23,13 @@ if VLLM_ENABLE_AR_EXT:
     )
 
     auto_round_ext.apply()
+else:
+    print(
+        "*****************************************************************************"
+    )
+    print(
+        f"* Sitecustomize is loaded, but VLLM_ENABLE_AR_EXT is set to {VLLM_ENABLE_AR_EXT}, skipping auto_round_vllm_extension *"
+    )
+    print(
+        "*****************************************************************************"
+    )
