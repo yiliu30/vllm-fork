@@ -1,9 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from abc import ABC, abstractmethod
-import torch
 from typing import Optional
 
-class AutoRoundQuantImpl(ABC):
+import torch
 
+
+class AutoRoundQuantImpl(ABC):
     @classmethod
     @abstractmethod
     def get_min_capability(cls) -> int:

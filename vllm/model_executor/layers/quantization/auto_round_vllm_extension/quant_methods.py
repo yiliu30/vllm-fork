@@ -1,18 +1,17 @@
-from typing import Callable, Optional, TYPE_CHECKING
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+from typing import Optional
 
 import torch
+from auto_round.schemes import QuantizationScheme
+
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe import (
-    FusedMoE,
     FusedMoEConfig,
     FusedMoEMethodBase,
-    FusedMoeWeightScaleSupported,
 )
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
-from vllm.model_executor.utils import set_weight_attrs
-
-from vllm.model_executor.layers.linear import LinearMethodBase, UnquantizedLinearMethod
-from auto_round.schemes import QuantizationScheme
+from vllm.model_executor.layers.linear import LinearMethodBase
 
 logger = init_logger(__name__)
 
@@ -31,7 +30,9 @@ class AutoRoundQuantLinearMethod(LinearMethodBase):
         if self.is_mxfp8(self.scheme):
             from .linear_impl_mxfp8 import AutoRoundMXFP8LinearImpl
 
-            self.impl = AutoRoundMXFP8LinearImpl(strategy="TENSOR_GROUP", is_static_input_scheme=True)
+            self.impl = AutoRoundMXFP8LinearImpl(
+                strategy="TENSOR_GROUP", is_static_input_scheme=True
+            )
 
     @classmethod
     def get_min_capability(cls) -> int:
@@ -94,7 +95,11 @@ class AutoRoundMoEMethod(FusedMoEMethodBase):
             impl = AutoRoundMoEMethodMXFP8(quant_config, layer.moe_config)
             return impl
         else:
-            raise RuntimeError(f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}")
+            raise RuntimeError(
+                f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}"
+            )
 
-    def get_fused_moe_quant_config(self, layer: torch.nn.Module) -> Optional[FusedMoEQuantConfig]:
+    def get_fused_moe_quant_config(
+        self, layer: torch.nn.Module
+    ) -> Optional[FusedMoEQuantConfig]:
         return self.impl.get_fused_moe_quant_config(layer)

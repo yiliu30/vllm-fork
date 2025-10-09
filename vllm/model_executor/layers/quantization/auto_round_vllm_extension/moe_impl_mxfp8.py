@@ -3,23 +3,20 @@
 
 
 from typing import Callable, Optional
-import torch.nn.functional as F
+
 import torch
+import torch.nn.functional as F
+
+import vllm.envs as envs
 from vllm.distributed import get_tensor_model_parallel_rank
-import vllm.envs as envs
-from vllm import _custom_ops as ops
 from vllm.logger import init_logger
-from vllm.model_executor.utils import set_weight_attrs
-import vllm.envs as envs
-from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
-
-
 from vllm.model_executor.layers.fused_moe import (
     FusedMoE,
     FusedMoEConfig,
-    FusedMoEMethodBase,
     FusedMoeWeightScaleSupported,
 )
+from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+from vllm.model_executor.utils import set_weight_attrs
 
 logger = init_logger(__name__)
 from .quant_methods import AutoRoundMoEMethod
@@ -59,7 +56,9 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
 
         # self.rocm_aiter_moe_enabled = is_rocm_aiter_moe_enabled()
 
-    def get_fused_moe_quant_config(self, layer: torch.nn.Module) -> Optional[FusedMoEQuantConfig]:
+    def get_fused_moe_quant_config(
+        self, layer: torch.nn.Module
+    ) -> Optional[FusedMoEQuantConfig]:
         # TODO: @yiliu30: implement it
         return None
 
@@ -130,11 +129,15 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
             )
             layer.register_parameter("w2_weight_scale", w2_weight_scale)
             # Add PER-TENSORGROUP quantization for FusedMoE.weight_loader.
-            extra_weight_attrs.update({"quant_method": FusedMoeWeightScaleSupported.GROUP.value})
+            extra_weight_attrs.update(
+                {"quant_method": FusedMoeWeightScaleSupported.GROUP.value}
+            )
             set_weight_attrs(w13_weight_scale, extra_weight_attrs)
             set_weight_attrs(w2_weight_scale, extra_weight_attrs)
         else:
-            raise NotImplementedError(f"Strategy {self.weight_quant.strategy} is not supported for W8A8-Fp8")
+            raise NotImplementedError(
+                f"Strategy {self.weight_quant.strategy} is not supported for W8A8-Fp8"
+            )
 
         # INPUT_SCALES
         # FIXME: (Yi) remove it
@@ -162,7 +165,9 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
         if self.has_bias:
             # TODO: @yiliu30: use the dtype in CK
             bias_dtype = torch.bfloat16
-            w13_bias = torch.nn.Parameter(torch.zeros(E, 2 * IN, dtype=bias_dtype), requires_grad=False)
+            w13_bias = torch.nn.Parameter(
+                torch.zeros(E, 2 * IN, dtype=bias_dtype), requires_grad=False
+            )
             layer.register_parameter("w13_bias", w13_bias)
             set_weight_attrs(w13_bias, extra_weight_attrs)
 
@@ -240,7 +245,9 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
             num_all_tokens, hidden_dim = x.shape
             num_experts = layer.local_num_experts
             total_num_experts = router_logits.size(-1)
-            experts_mask = torch.zeros((x.size(0), total_num_experts), dtype=x.dtype, device=x.device)
+            experts_mask = torch.zeros(
+                (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
+            )
             topk_ids = topk_ids.to(torch.int64)
             topk_weights = topk_weights.to(x.dtype)
             experts_mask.scatter_(-1, topk_ids, topk_weights)
@@ -305,10 +312,16 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
                     local_w2_bias = layer.w2_bias[expert_index]
 
                 local_w1_out = run_mxfp8_emulations(
-                    x=current_state_static, weight=local_w1, weight_scale=local_w1_scale, bias=local_w1_bias
+                    x=current_state_static,
+                    weight=local_w1,
+                    weight_scale=local_w1_scale,
+                    bias=local_w1_bias,
                 )
                 local_w3_out = run_mxfp8_emulations(
-                    x=current_state_static, weight=local_w3, weight_scale=local_w3_scale, bias=local_w3_bias
+                    x=current_state_static,
+                    weight=local_w3,
+                    weight_scale=local_w3_scale,
+                    bias=local_w3_bias,
                 )
                 # w13_out = act_fn(local_w1_out) * local_w3_out
 
@@ -327,7 +340,10 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
                 # gated_output = (up + 1) * glu
 
                 local_w2_out = run_mxfp8_emulations(
-                    x=w13_out, weight=local_w2, weight_scale=local_w2_scale, bias=local_w2_bias
+                    x=w13_out,
+                    weight=local_w2,
+                    weight_scale=local_w2_scale,
+                    bias=local_w2_bias,
                 )
                 padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(1)
                 local_w2_out = local_w2_out * padded_weight

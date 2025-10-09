@@ -1,17 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from auto_round.schemes import QuantizationScheme
+
+from vllm.logger import init_logger
+from vllm.model_executor.layers.fused_moe import FusedMoE
+from vllm.model_executor.layers.linear import (
+    LinearBase,
+    LinearMethodBase,
+    UnquantizedLinearMethod,
+)
 from vllm.model_executor.layers.quantization.auto_round import AutoRoundConfig
 
-
-from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase, UnquantizedLinearMethod
 from .quant_methods import AutoRoundMoEMethod, AutoRoundQuantLinearMethod
-from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase, UnquantizedLinearMethod
-from vllm.model_executor.layers.fused_moe import FusedMoE
-from vllm.logger import init_logger
 
 logger = init_logger(__name__)
 
@@ -22,7 +25,9 @@ def need_skip_attn(prefix: str):
 
 class AutoRoundExtensionConfig(AutoRoundConfig):
     SUPPORTED_DTYPES = AutoRoundConfig.SUPPORTED_DTYPES.union({"mx_fp"})
-    SUPPORTED_FORMATS = AutoRoundConfig.SUPPORTED_FORMATS.union({"auto_round:llm_compressor"})
+    SUPPORTED_FORMATS = AutoRoundConfig.SUPPORTED_FORMATS.union(
+        {"auto_round:llm_compressor"}
+    )
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         if isinstance(layer, LinearBase):
@@ -43,9 +48,10 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
 
         # FIXME: (Yi) parse the per-layer quant scheme
         def create_quant_scheme(config):
-
             quant_scheme_attrs = QuantizationScheme.get_attributes()
-            filter_config = {key: value for key, value in config.items() if key in quant_scheme_attrs}
+            filter_config = {
+                key: value for key, value in config.items() if key in quant_scheme_attrs
+            }
             quant_scheme = QuantizationScheme.from_dict(filter_config)
             return quant_scheme
 

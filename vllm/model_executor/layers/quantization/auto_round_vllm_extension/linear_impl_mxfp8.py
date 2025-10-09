@@ -1,12 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from typing import Callable, Optional
 
 import torch
 
-from vllm.model_executor.parameter import GroupQuantScaleParameter, ModelWeightParameter, PerTensorScaleParameter
-
-from .mxfp8_qdq_utils import dequant_mx_fp8, quant_mx_fp8
-from .auto_round_impls import AutoRoundQuantImpl
 import vllm.envs as envs
+from vllm.model_executor.parameter import (
+    GroupQuantScaleParameter,
+    ModelWeightParameter,
+    PerTensorScaleParameter,
+)
+
+from .auto_round_impls import AutoRoundQuantImpl
+from .mxfp8_qdq_utils import dequant_mx_fp8, quant_mx_fp8
 
 
 class AutoRoundMXFP8LinearImpl(AutoRoundQuantImpl):
@@ -67,7 +73,9 @@ class AutoRoundMXFP8LinearImpl(AutoRoundQuantImpl):
                 weight_loader=weight_loader,
             )
         else:
-            raise NotImplementedError(f"Strategy {self.strategy} is not supported for W8A8-MXFp8")
+            raise NotImplementedError(
+                f"Strategy {self.strategy} is not supported for W8A8-MXFp8"
+            )
 
         # min requirement for fp8 kernels
         # weight_scale[:] = torch.finfo(torch.float32).min
