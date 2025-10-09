@@ -29,6 +29,10 @@ extra_environment_variables: dict[str, Callable[[], Any]] = {
     lambda: os.getenv("VLLM_AR_MXFP8_DISABLE_INPUT_QDQ", "0") in
     ("1", "true", "True"),
 
+    "VLLM_AR_MXFP4_DISABLE_INPUT_QDQ":
+    lambda: os.getenv("VLLM_AR_MXFP4_DISABLE_INPUT_QDQ", "0") in
+    ("1", "true", "True"),
+
     "VLLM_USE_STATIC_MOE_HPU":
     lambda: os.getenv("VLLM_USE_STATIC_MOE_HPU", "0") in ("1", "true", "True"),
 }
