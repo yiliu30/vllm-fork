@@ -13,6 +13,8 @@ model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-120b-BF16-unsloth-MXFP8
 tp_size=4
 ep_size=2
 
+PYTHONPATH=/home/yliu7/workspace/inc/3rd-party/vllm/vllm/model_executor/layers/quantization/auto_round_vllm_extension/:$PYTHONPATH \
+VLLM_ENABLE_AR_EXT=1 \
 VLLM_USE_STATIC_MOE_HPU=1 \
     vllm serve $model_path \
     --max-model-len 8192 \
