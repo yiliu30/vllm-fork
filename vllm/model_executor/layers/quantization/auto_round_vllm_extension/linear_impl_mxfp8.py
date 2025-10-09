@@ -11,7 +11,7 @@ from vllm.model_executor.parameter import (
     PerTensorScaleParameter,
 )
 
-from .auto_round_impls import AutoRoundQuantImpl
+from .quant_impl import AutoRoundQuantImpl
 from .mxfp8_qdq_utils import dequant_mx_fp8, quant_mx_fp8
 
 
@@ -20,7 +20,6 @@ class AutoRoundMXFP8LinearImpl(AutoRoundQuantImpl):
         self.strategy = strategy
         self.out_dtype = torch.get_default_dtype()
         self.is_static_input_scheme = is_static_input_scheme
-        # self.fp8_linear = Fp8LinearOp(use_per_token_if_dynamic=True)
         self.group_size = 32
 
     @classmethod
