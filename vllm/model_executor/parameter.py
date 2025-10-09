@@ -19,6 +19,16 @@ __all__ = [
 
 logger = init_logger(__name__)
 
+def update_shape(src_data, dst_data):
+    if src_data.numel() == dst_data.numel():
+        if src_data.shape != dst_data.shape:
+            src_data = src_data.reshape(dst_data.shape)
+        return src_data
+    else:
+        raise ValueError(
+            f"Cannot reshape src_data of shape {src_data.shape} to dst_data of shape {dst_data.shape}"
+        )
+
 
 class BasevLLMParameter(Parameter):
     """
@@ -68,6 +78,7 @@ class BasevLLMParameter(Parameter):
         # FIXME: REMOVE SUCH HACK
         if self.data.numel() == 1 and loaded_weight.numel() == 1:
             loaded_weight = loaded_weight.reshape(self.data.shape)
+        loaded_weight = update_shape(loaded_weight, self.data)
         assert (self.data.shape == loaded_weight.shape
                 or self._is_1d_and_scalar(loaded_weight))
         self.data.copy_(loaded_weight)
@@ -154,7 +165,7 @@ class _ColumnvLLMParameter(BasevLLMParameter):
                                        shard_size)
         loaded_weight = loaded_weight.narrow(self.output_dim,
                                              shard_id * shard_size, shard_size)
-
+        loaded_weight = update_shape(loaded_weight, param_data)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
 

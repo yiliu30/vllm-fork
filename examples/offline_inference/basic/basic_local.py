@@ -54,7 +54,7 @@ model="/data5/yliu7/HF_HOME/DeepSeek-V2-Lite-MXFP4"
 model="/data5/wzy/vLLM-mxfp4/mnt/Meta-Llama-3.1-8B-Instruct-MXFP4"
 model="/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantizing_moe/DeepSeek-V2-Lite-NVFP4"
 model="/data0/saved_model/zai-org/GLM-4.5-Air/1/GLM-4.5-Air-w8afp8"
-
+model="/data6/qwen_fp8/"
 # <｜begin▁of▁sentence｜>Hello my name is
 # I am a 28 year old male and I am currently living in the United States.
 if "deepseek" in model.lower():

@@ -799,7 +799,15 @@ def determine_expert_map(
             torch.arange(0, local_num_experts, dtype=torch.int32)
     return (local_num_experts, expert_map)
 
-
+def update_shape(src_data, dst_data):
+    if src_data.numel() == dst_data.numel():
+        if src_data.shape != dst_data.shape:
+            src_data = src_data.reshape(dst_data.shape)
+        return src_data
+    else:
+        raise ValueError(
+            f"Cannot reshape src_data of shape {src_data.shape} to dst_data of shape {dst_data.shape}"
+        )
 class FusedMoE(torch.nn.Module):
     """FusedMoE layer for MoE models.
 
@@ -1063,6 +1071,7 @@ class FusedMoE(torch.nn.Module):
                                        tp_rank: int):
         # for per channel weight quantization
         if shard_id == "w2":
+            loaded_weight = update_shape(loaded_weight, expert_data)
             expert_data.copy_(loaded_weight)
         elif shard_id in ("w1", "w3"):
             self._load_w13(shard_id=shard_id,
@@ -1087,6 +1096,7 @@ class FusedMoE(torch.nn.Module):
         else:
             assert shard_id == "w3"
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
+        loaded_weight = update_shape(loaded_weight, expert_data)
         expert_data.copy_(loaded_weight)
 
     def _load_w2(self,
