@@ -18,6 +18,7 @@ from vllm.distributed import (
     get_tensor_model_parallel_world_size,
     tensor_model_parallel_all_gather,
 )
+from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import QKVParallelLinear, RowParallelLinear
@@ -44,8 +45,9 @@ from .utils import (
     maybe_prefix,
 )
 
-from vllm.logger import init_logger
 logger = init_logger(__name__)
+
+
 class OAIAttention(nn.Module):
     def __init__(
         self,
@@ -223,11 +225,12 @@ class TransformerBlock(torch.nn.Module):
         output = self.mlp(hidden_states)
         return output, residual
 
-from vllm.model_executor.model_loader.weight_utils import (
-    default_weight_loader, maybe_remap_kv_scale_name)
-    
+
 import typing
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
+
+from vllm.model_executor.model_loader.weight_utils import maybe_remap_kv_scale_name
+
 
 @support_torch_compile
 class GptOssModel(nn.Module):
@@ -597,9 +600,7 @@ class GptOssModel(nn.Module):
             num_redundant_experts=0,
         )
 
-    def load_weights_ar(
-        self, weights: Iterable[tuple[str, torch.Tensor]]
-    ) -> set[str]:
+    def load_weights_ar(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         # FIXME: @yiliu30: this break the bf16 path, fixme
         stacked_params_mapping_mlp = [
             # (param_name, shard_name, shard_id)
@@ -613,9 +614,7 @@ class GptOssModel(nn.Module):
             (".qkv", ".k_proj", "k"),
             (".qkv", ".v_proj", "v"),
         ]
-        stacked_params_mapping = (
-            stacked_params_mapping + stacked_params_mapping_mlp
-        )
+        stacked_params_mapping = stacked_params_mapping + stacked_params_mapping_mlp
 
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)
@@ -651,9 +650,7 @@ class GptOssModel(nn.Module):
             if "sinks" in name:
                 # Handle attention sinks (distributed across ranks)
                 param = params_dict[name]
-                narrow_weight = loaded_weight.narrow(
-                    0, head_start, heads_per_rank
-                )
+                narrow_weight = loaded_weight.narrow(0, head_start, heads_per_rank)
                 param.data.copy_(narrow_weight)
                 loaded_params.add(name)
                 continue
@@ -749,7 +746,6 @@ class GptOssModel(nn.Module):
 
         return loaded_params
 
-
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
@@ -778,15 +774,25 @@ class GptOssModel(nn.Module):
             else None
         )
         if quant_method == "mxfp4":
-            return self._load_weights_mxfp4(ep_rank_end, ep_rank_start,
-                                            heads_per_rank, head_start,
-                                            weights, stacked_params_mapping)
+            return self._load_weights_mxfp4(
+                ep_rank_end,
+                ep_rank_start,
+                heads_per_rank,
+                head_start,
+                weights,
+                stacked_params_mapping,
+            )
         elif quant_method == "auto-round":
             return self.load_weights_ar(weights)
         else:
-            return self._load_weights_other(ep_rank_end, ep_rank_start,
-                                            heads_per_rank, head_start,
-                                            weights, stacked_params_mapping)
+            return self._load_weights_other(
+                ep_rank_end,
+                ep_rank_start,
+                heads_per_rank,
+                head_start,
+                weights,
+                stacked_params_mapping,
+            )
 
 
 class GptOssForCausalLM(nn.Module, SupportsPP, SupportsEagle3):

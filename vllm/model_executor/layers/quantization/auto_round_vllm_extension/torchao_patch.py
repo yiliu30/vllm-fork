@@ -1,7 +1,9 @@
-import torch
-
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from enum import Enum, auto
-from typing import Callable, Dict, Union
+from typing import Union
+
+import torch
 
 
 class ScaleCalculationMode(Enum):
@@ -25,7 +27,6 @@ class ScaleCalculationMode(Enum):
     CEIL = auto()
     EVEN = auto()
     RCEIL = auto()
-
 
 
 # This is conceptually an enum of non-core dtypes
@@ -329,9 +330,11 @@ def to_mx(
     # scale_e8m0_biased = scale_e8m0_biased.view(torch.float8_e8m0fnu)
     return scale_e8m0_biased, data_lp
 
+
 def down_size(size):
     assert size[-1] % 2 == 0, f"{size} last dim not divisible by two"
     return (*size[:-1], size[-1] // 2)
+
 
 def pack_uint4(uint8_data: torch.Tensor) -> torch.Tensor:
     # converting to uint8 for operations
@@ -339,7 +342,8 @@ def pack_uint4(uint8_data: torch.Tensor) -> torch.Tensor:
     assert shape[-1] % 2 == 0
     uint8_data = uint8_data.contiguous().view(-1)
     return (uint8_data[::2] << 4 | uint8_data[1::2]).view(down_size(shape))
-    
+
+
 def f32_to_f4_unpacked(x):
     """
     Input: torch.Tensor of dtype torch.float
