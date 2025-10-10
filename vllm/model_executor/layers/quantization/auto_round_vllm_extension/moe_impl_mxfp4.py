@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+# ==-------------------------------------------------------------------------==
+# MOE MXFP4
+# ==------------------------------------------------------------------------==
+
 
 from typing import Callable, Optional
 
@@ -21,10 +25,6 @@ from vllm.model_executor.utils import set_weight_attrs
 logger = init_logger(__name__)
 from .quant_methods import AutoRoundMoEMethod
 
-
-# ==-------------------------------------------------------------------------==
-# MOE MXFP4
-# ==------------------------------------------------------------------------==
 
 
 class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
@@ -135,31 +135,6 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
     ) -> Optional[FusedMoEQuantConfig]:
         # TODO: @yiliu30: implement it
         return None
-
-    def swizzle_blockscale(self, scale: torch.tensor):
-        assert scale.dtype == torch.float8_e4m3fn
-        # Pad and blockwise interleave weight_scale
-        scale_ndim = scale.ndim
-        if scale.ndim == 2:
-            scale = scale.unsqueeze(0)
-        assert scale.ndim == 3
-        B, M, K = scale.shape
-        round_up_multiple = lambda x, m: (x + m - 1) // m * m
-        M_padded = round_up_multiple(M, 128)
-        K_padded = round_up_multiple(K, 4)
-        padded_scale = torch.zeros((B, M_padded, K_padded), dtype=scale.dtype)
-        padded_scale[:B, :M, :K] = scale
-        batches, rows, cols = padded_scale.shape
-        assert rows % 128 == 0
-        assert cols % 4 == 0
-        padded_scale = padded_scale.reshape(batches, rows // 128, 4, 32, cols // 4, 4)
-        swizzled_scale = padded_scale.permute((0, 1, 4, 3, 2, 5))
-        swizzled_scale = swizzled_scale.contiguous().cuda()
-        return (
-            swizzled_scale.reshape(M, K)
-            if scale_ndim == 2
-            else swizzled_scale.reshape(B, M, K)
-        )
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if envs.VLLM_ENABLE_STATIC_MOE:
