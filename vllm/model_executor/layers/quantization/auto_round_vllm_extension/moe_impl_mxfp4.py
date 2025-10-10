@@ -27,6 +27,19 @@ from .quant_methods import AutoRoundMoEMethod
 
 
 
+
+def apply_act(local_w1_out, local_w3_out, act_fn, is_gpt_oss=False):
+    if is_gpt_oss:
+        w13_out = act_fn(local_w1_out) * local_w3_out
+    else:
+        limit = 7.0
+        alpha = 1.702
+        local_w1_out = local_w1_out.clamp(min=None, max=limit)
+        local_w3_out = local_w3_out.clamp(min=-limit, max=limit)
+        glu = (local_w1_out) * F.sigmoid(local_w1_out * alpha)
+        w13_out = (local_w3_out + 1) * glu
+    return w13_out
+
 class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
     def __init__(
         self,
@@ -138,7 +151,56 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if envs.VLLM_ENABLE_STATIC_MOE:
-            return
+           if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+                logger.debug(
+                    f"start processing weights for {getattr(layer, 'prefix', 'unknown')}"
+                )
+                weight_name_lst = ["w13_weight", "w2_weight"]
+                from .mxfp4_qdq_utils import dequant_mxfp4_to_fp8
+
+                for weight_name_prefix in weight_name_lst:
+                    weight_name = f"{weight_name_prefix}_packed"
+                    weight = getattr(layer, weight_name)
+                    weight_scale_name = f"{weight_name_prefix}_scale"
+                    weight_scale = getattr(layer, weight_scale_name)
+                    new_weight_name = f"{weight_name_prefix}_unpacked"
+                    new_scale_name = weight_scale_name
+                    num_experts, _, _ = weight.shape
+                    unpacked_weight_lst = []
+                    scale_list = []
+                    for expert_index in range(num_experts):
+                        weight_fp8, scale_bf16 = dequant_mxfp4_to_fp8(
+                            data_lp=weight[expert_index],
+                            scale_e8m0=weight_scale[expert_index],
+                        )
+
+                        unpacked_weight_lst.append(weight_fp8)
+                        scale_list.append(scale_bf16)
+                    unpacked_weight_fp8 = torch.stack(
+                        unpacked_weight_lst, dim=0
+                    )
+                    scale_bf16 = torch.stack(scale_list, dim=0)
+                    assert unpacked_weight_fp8.shape[0] == num_experts, (
+                        f"Expected {num_experts} unpacked weights, got "
+                        f"{unpacked_weight_fp8.shape[0]}"
+                    )
+                    delattr(layer, weight_name)
+                    delattr(layer, weight_scale_name)
+                    layer.register_parameter(
+                        new_weight_name,
+                        torch.nn.Parameter(
+                            unpacked_weight_fp8,
+                            requires_grad=False,
+                        ),
+                    )
+                    layer.register_parameter(
+                        new_scale_name,
+                        torch.nn.Parameter(
+                            scale_bf16,
+                            requires_grad=False,
+                        ),
+                    )
+
         else:
             raise NotImplementedError(
                 "process_weights_after_loading is not implemented for now."
@@ -176,7 +238,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             e_score_correction_bias=e_score_correction_bias,
         )
 
-        if envs.VLLM_ENABLE_STATIC_MOE:
+        if envs.VLLM_ENABLE_STATIC_MOE and not envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
             num_experts, intermediate_size_per_partition_x2, _ = (
                 layer.w13_weight_packed.shape
             )
@@ -261,15 +323,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                     bias=local_w3_bias,
                 )
 
-                # TODO: @yiliu30: wrapper as act func
-                limit = 7.0
-                alpha = 1.702
-                local_w1_out = local_w1_out.clamp(min=None, max=limit)
-                local_w3_out = local_w3_out.clamp(min=-limit, max=limit)
-                glu = (local_w1_out) * F.sigmoid(local_w1_out * alpha)
-                w13_out = (local_w3_out + 1) * glu
-
-                # w13_out = act_fn(local_w1_out) * local_w3_out
+                w13_out = apply_act(local_w1_out, local_w3_out, act_fn, is_gpt_oss=True)
 
                 local_w2_out = run_mxfp4_emulations(
                     x=w13_out,
@@ -284,3 +338,95 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                 else:
                     final_hidden_states += local_w2_out
             return final_hidden_states
+        if envs.VLLM_ENABLE_STATIC_MOE and envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+            num_experts, intermediate_size_per_partition_x2, _ = (
+                layer.w13_weight_unpacked.shape
+            )
+            intermediate_size_per_partition = intermediate_size_per_partition_x2 // 2
+            # TODO: use mask buffer to reduce memory
+            act_fn = F.silu
+            num_all_tokens, hidden_dim = x.shape
+            num_experts = layer.local_num_experts
+            total_num_experts = router_logits.size(-1)
+            experts_mask = torch.zeros(
+                (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
+            )
+            topk_ids = topk_ids.to(torch.int64)
+            topk_weights = topk_weights.to(x.dtype)
+            experts_mask.scatter_(-1, topk_ids, topk_weights)
+            experts_mask = experts_mask.transpose(0, 1)
+
+            mask_weights = torch.zeros(
+                (num_all_tokens, total_num_experts), dtype=x.dtype, device=x.device
+            )
+            mask_weights.scatter_(-1, topk_ids, 1)
+            mask_weights = mask_weights.transpose(0, 1)
+            # Note: ep_size equal tp_size
+            if expert_map is not None:
+                ep_rank = get_tensor_model_parallel_rank()
+            else:
+                ep_rank = 0
+            ep_shift = ep_rank * num_experts
+
+            for expert_index in range(num_experts):
+                mask_weight = mask_weights[expert_index + ep_shift].unsqueeze(1)
+                current_state_static = x * mask_weight
+
+                local_unpacked_w13 = layer.w13_weight_unpacked[expert_index]
+                local_w13_scale = layer.w13_weight_scale[expert_index]
+
+                local_unpacked_w2 = layer.w2_weight_unpacked[expert_index]
+                local_w2_scale = layer.w2_weight_scale[expert_index]
+                
+                local_unpacked_w1 = local_unpacked_w13[:intermediate_size_per_partition, ...]
+                half_scale = local_w13_scale.shape[0] // 2
+                local_w1_scale = local_w13_scale[:half_scale, ...]
+                local_unpacked_w3 = local_unpacked_w13[intermediate_size_per_partition:, ...]
+                local_w3_scale = local_w13_scale[half_scale:, ...]
+
+
+
+                local_w1_bias = None
+                local_w2_bias = None
+                local_w3_bias = None
+                if self.has_bias:
+                    local_w13_bias = layer.w13_bias[expert_index]
+                    local_w1_bias = local_w13_bias[:intermediate_size_per_partition]
+                    local_w3_bias = local_w13_bias[intermediate_size_per_partition:]
+                    local_w2_bias = layer.w2_bias[expert_index]
+
+                from .mxfp4_qdq_utils import mxfp4_gemm_with_unpacked_weight
+
+                local_w1_out = mxfp4_gemm_with_unpacked_weight(
+                    x=current_state_static,
+                    weigth_fp8=local_unpacked_w1,
+                    weight_scale_bf16=local_w1_scale,
+                    bias=local_w1_bias
+                )
+                local_w3_out = mxfp4_gemm_with_unpacked_weight(
+                    x=current_state_static,
+                    weigth_fp8=local_unpacked_w3,
+                    weight_scale_bf16=local_w3_scale,
+                    bias=local_w3_bias
+                )
+
+                w13_out = apply_act(local_w1_out, local_w3_out, act_fn, is_gpt_oss=True)
+                
+
+                local_w2_out = mxfp4_gemm_with_unpacked_weight(
+                    x=w13_out,
+                    weigth_fp8=local_unpacked_w2,
+                    weight_scale_bf16=local_w2_scale,
+                    bias=local_w2_bias
+                )
+                
+                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
+                    1
+                )
+                local_w2_out = local_w2_out * padded_weight
+                if expert_index == 0:
+                    final_hidden_states = local_w2_out
+                else:
+                    final_hidden_states += local_w2_out
+            return final_hidden_states
+        raise NotImplementedError(f"Not implemented for now.")

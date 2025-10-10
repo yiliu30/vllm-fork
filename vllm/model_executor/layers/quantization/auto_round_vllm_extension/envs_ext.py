@@ -14,6 +14,8 @@ extra_environment_variables: dict[str, Callable[[], Any]] = {
     in ("1", "true", "True"),
     "VLLM_AR_MXFP4_DISABLE_INPUT_QDQ": lambda: os.getenv("VLLM_AR_MXFP4_DISABLE_INPUT_QDQ", "0")
     in ("1", "true", "True"),
+    "VLLM_MXFP4_PRE_UNPACK_WEIGHTS": lambda: os.getenv("VLLM_MXFP4_PRE_UNPACK_WEIGHTS", "0")
+    in ("1", "true", "True"),
     "VLLM_ENABLE_STATIC_MOE": lambda: os.getenv("VLLM_ENABLE_STATIC_MOE", "0") in ("1", "true", "True"),
 }
 from vllm.envs import environment_variables
