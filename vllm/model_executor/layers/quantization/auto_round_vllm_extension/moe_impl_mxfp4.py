@@ -51,6 +51,10 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
         self.group_size = 32
         self.quant_config = quant_config
         self.has_bias = self.moe.has_bias
+        self.mask_weights_buffer = None
+        self.experts_mask_buffer = None
+        self.bt_threshold = 16 * 1024
+        # self.bt_threshold = 0
 
     def create_weights(
         self,
@@ -206,6 +210,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                 "process_weights_after_loading is not implemented for now."
             )
 
+    @torch.inference_mode()
     def apply(
         self,
         layer: torch.nn.Module,
@@ -237,6 +242,51 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
         )
+        num_all_tokens, hidden_dim = x.shape
+        num_experts = layer.local_num_experts
+        total_num_experts = router_logits.size(-1)
+        bt = num_all_tokens
+        if (self.mask_weights_buffer is None
+                or self.mask_weights_buffer.dtype != x.dtype
+                or self.mask_weights_buffer.device != x.device
+                or self.mask_weights_buffer.shape[0] < bt
+                or self.mask_weights_buffer.shape[1] < total_num_experts):
+            if (bt > self.bt_threshold):
+                mask_weights = torch.zeros((bt, total_num_experts),
+                                        dtype=x.dtype,
+                                        device=x.device)
+                if self.mask_weights_buffer is None and self.bt_threshold != 0:
+                    self.mask_weights_buffer = torch.zeros(
+                        (self.bt_threshold, total_num_experts), dtype=x.dtype, device=x.device
+                    )
+                    self.experts_mask_buffer = torch.zeros(
+                        (self.bt_threshold, total_num_experts), dtype=x.dtype, device=x.device
+                    )
+            else:
+                self.mask_weights_buffer = torch.zeros(
+                    (bt, total_num_experts),
+                    dtype=x.dtype,
+                    device=x.device)
+                self.experts_mask_buffer = torch.zeros(
+                                       (bt, total_num_experts),
+                    dtype=x.dtype,
+                    device=x.device)
+                mask_weights = self.mask_weights_buffer
+                experts_mask = self.experts_mask_buffer
+        else:
+            self.mask_weights_buffer.zero_()
+            mask_weights = self.mask_weights_buffer
+            self.experts_mask_buffer.zero_()
+            experts_mask = self.experts_mask_buffer
+
+        topk_ids = topk_ids.to(torch.int64)
+        topk_weights = topk_weights.to(x.dtype)
+        experts_mask.scatter_(-1, topk_ids, topk_weights)
+        mask_weights.scatter_(-1, topk_ids, 1)
+        mask_weights = mask_weights[:bt, :total_num_experts]
+        mask_weights = mask_weights.transpose(0, 1)
+        experts_mask = experts_mask[:bt, :total_num_experts]
+        experts_mask = experts_mask.transpose(0, 1)
 
         if envs.VLLM_ENABLE_STATIC_MOE and not envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
             num_experts, intermediate_size_per_partition_x2, _ = (
@@ -256,11 +306,11 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             experts_mask.scatter_(-1, topk_ids, topk_weights)
             experts_mask = experts_mask.transpose(0, 1)
 
-            mask_weights = torch.zeros(
-                (num_all_tokens, total_num_experts), dtype=x.dtype, device=x.device
-            )
-            mask_weights.scatter_(-1, topk_ids, 1)
-            mask_weights = mask_weights.transpose(0, 1)
+            # mask_weights = torch.zeros(
+            #     (num_all_tokens, total_num_experts), dtype=x.dtype, device=x.device
+            # )
+            # mask_weights.scatter_(-1, topk_ids, 1)
+            # mask_weights = mask_weights.transpose(0, 1)
             # Note: ep_size equal tp_size
             if expert_map is not None:
                 ep_rank = get_tensor_model_parallel_rank()
@@ -348,19 +398,19 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             num_all_tokens, hidden_dim = x.shape
             num_experts = layer.local_num_experts
             total_num_experts = router_logits.size(-1)
-            experts_mask = torch.zeros(
-                (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
-            )
-            topk_ids = topk_ids.to(torch.int64)
-            topk_weights = topk_weights.to(x.dtype)
-            experts_mask.scatter_(-1, topk_ids, topk_weights)
-            experts_mask = experts_mask.transpose(0, 1)
+            # experts_mask = torch.zeros(
+            #     (x.size(0), total_num_experts), dtype=x.dtype, device=x.device
+            # )
+            # topk_ids = topk_ids.to(torch.int64)
+            # topk_weights = topk_weights.to(x.dtype)
+            # experts_mask.scatter_(-1, topk_ids, topk_weights)
+            # experts_mask = experts_mask.transpose(0, 1)
 
-            mask_weights = torch.zeros(
-                (num_all_tokens, total_num_experts), dtype=x.dtype, device=x.device
-            )
-            mask_weights.scatter_(-1, topk_ids, 1)
-            mask_weights = mask_weights.transpose(0, 1)
+            # mask_weights = torch.zeros(
+            #     (num_all_tokens, total_num_experts), dtype=x.dtype, device=x.device
+            # )
+            # mask_weights.scatter_(-1, topk_ids, 1)
+            # mask_weights = mask_weights.transpose(0, 1)
             # Note: ep_size equal tp_size
             if expert_map is not None:
                 ep_rank = get_tensor_model_parallel_rank()
