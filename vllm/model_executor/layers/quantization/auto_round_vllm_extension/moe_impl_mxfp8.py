@@ -237,7 +237,7 @@ class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
             e_score_correction_bias=e_score_correction_bias,
         )
 
-        if envs.VLLM_USE_STATIC_MOE_HPU:
+        if envs.VLLM_ENABLE_STATIC_MOE:
             num_experts, intermediate_size_per_partition_2x, _ = layer.w13_weight.shape
             intermediate_size_per_partition = intermediate_size_per_partition_2x // 2
             # FIXME: Handle mask

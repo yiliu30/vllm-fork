@@ -15,7 +15,7 @@ ep_size=2
 
 PYTHONPATH=/home/yliu7/workspace/inc/3rd-party/vllm/vllm/model_executor/layers/quantization/auto_round_vllm_extension/:$PYTHONPATH \
 VLLM_ENABLE_AR_EXT=1 \
-VLLM_USE_STATIC_MOE_HPU=1 \
+VLLM_ENABLE_STATIC_MOE=1 \
     vllm serve $model_path \
     --max-model-len 8192 \
     --tensor-parallel-size $tp_size \

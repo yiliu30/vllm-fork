@@ -89,10 +89,14 @@ class AutoRoundMoEMethod(FusedMoEMethodBase):
         input_quant = None
 
         # FIXME: @yiliu30: temporarily only support MXFP8
-        if 1 or quant_config._is_mxfp8_w8a8(weight_quant, input_quant):
-            from .moe_impl_mxfp8 import AutoRoundMoEMethodMXFP8
+        # if 0 and quant_config._is_mxfp8_w8a8(weight_quant, input_quant):
+        #     from .moe_impl_mxfp8 import AutoRoundMoEMethodMXFP8
 
-            impl = AutoRoundMoEMethodMXFP8(quant_config, layer.moe_config)
+        #     impl = AutoRoundMoEMethodMXFP8(quant_config, layer.moe_config)
+        #     return impl
+        if 1 or quant_config._is_mxfp4_w4a8(weight_quant, input_quant):
+            from .moe_impl_mxfp4 import AutoRoundMoEMethodMXFp4Impl
+            impl = AutoRoundMoEMethodMXFp4Impl(quant_config, layer.moe_config)
             return impl
         else:
             raise RuntimeError(

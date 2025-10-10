@@ -1,25 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# FILE: main.py
 
 import os
 from typing import Any, Callable
 
 from vllm.logger import init_logger
 
-# FILE: extra_envs.py
-
 logger = init_logger(__name__)
 
 # Define extra environment variables
 extra_environment_variables: dict[str, Callable[[], Any]] = {
-    # Example: Define an extra environment variable for enabling experimental features
-    "VLLM_AR_MXFP8_DISABLE_INPUT_QDQ": lambda: os.getenv(
-        "VLLM_AR_MXFP8_DISABLE_INPUT_QDQ", "0"
-    )
+    "VLLM_AR_MXFP8_DISABLE_INPUT_QDQ": lambda: os.getenv("VLLM_AR_MXFP8_DISABLE_INPUT_QDQ", "0")
     in ("1", "true", "True"),
-    "VLLM_USE_STATIC_MOE_HPU": lambda: os.getenv("VLLM_USE_STATIC_MOE_HPU", "0")
+    "VLLM_AR_MXFP4_DISABLE_INPUT_QDQ": lambda: os.getenv("VLLM_AR_MXFP4_DISABLE_INPUT_QDQ", "0")
     in ("1", "true", "True"),
+    "VLLM_ENABLE_STATIC_MOE": lambda: os.getenv("VLLM_ENABLE_STATIC_MOE", "0") in ("1", "true", "True"),
 }
 from vllm.envs import environment_variables
 
@@ -32,6 +27,4 @@ import vllm.envs as envs
 for name, value_fn in extra_environment_variables.items():
     setattr(envs, name, value_fn())
 
-logger.warning_once(
-    f"Added extra environment variables: {list(extra_environment_variables.keys())}"
-)
+logger.warning_once(f"Added extra environment variables: {list(extra_environment_variables.keys())}")

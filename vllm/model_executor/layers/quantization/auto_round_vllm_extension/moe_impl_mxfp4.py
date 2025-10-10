@@ -162,7 +162,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
         )
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if envs.VLLM_USE_STATIC_MOE_HPU:
+        if envs.VLLM_ENABLE_STATIC_MOE:
             return
         else:
             raise NotImplementedError(
@@ -202,7 +202,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             e_score_correction_bias=e_score_correction_bias,
         )
 
-        if envs.VLLM_USE_STATIC_MOE_HPU:
+        if envs.VLLM_ENABLE_STATIC_MOE:
             # w_state_dict = [
             #     "w13_weight_packed:torch.Size([64, 2816, 1024])",
             #     "w13_weight_scale:torch.Size([64, 2816, 128])",
