@@ -166,8 +166,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             return
         else:
             raise NotImplementedError(
-                "process_weights_after_loading is not implemented for "
-                "CompressedTensorsW4A4MXFP4MoeMethod on this platform."
+                "process_weights_after_loading is not implemented for now."
             )
 
     def apply(
@@ -203,32 +202,11 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
         )
 
         if envs.VLLM_ENABLE_STATIC_MOE:
-            # w_state_dict = [
-            #     "w13_weight_packed:torch.Size([64, 2816, 1024])",
-            #     "w13_weight_scale:torch.Size([64, 2816, 128])",
-            #     "w13_weight_global_scale:torch.Size([64, 2])",
-            #     "w13_input_global_scale:torch.Size([64, 2])",
-            #     "w2_weight_packed:torch.Size([64, 2048, 704])",
-            #     "w2_weight_scale:torch.Size([64, 2048, 88])",
-            #     "w2_weight_global_scale:torch.Size([64])",
-            #     "w2_input_global_scale:torch.Size([64])",
-            # ]
-            # w_list = [
-            #     "w13_weight_packed",
-            #     "w13_weight_scale",
-            #     "w13_weight_global_scale",
-            #     "w13_input_global_scale",
-            #     "w2_weight_packed",
-            #     "w2_weight_scale",
-            #     "w2_weight_global_scale",
-            #     "w2_input_global_scale",
-            # ]
-            # # [num_experts, 2 * intermediate_size_per_partition, hidden_size//2]
             num_experts, intermediate_size_per_partition_x2, _ = (
                 layer.w13_weight_packed.shape
             )
             intermediate_size_per_partition = intermediate_size_per_partition_x2 // 2
-            # FIXME: Handle mask
+            # TODO: use mask buffer to reduce memory
             act_fn = F.silu
             num_all_tokens, hidden_dim = x.shape
             num_experts = layer.local_num_experts
@@ -247,7 +225,10 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             mask_weights.scatter_(-1, topk_ids, 1)
             mask_weights = mask_weights.transpose(0, 1)
             # Note: ep_size equal tp_size
-            ep_rank = get_tensor_model_parallel_rank()
+            if expert_map is not None:
+                ep_rank = get_tensor_model_parallel_rank()
+            else:
+                ep_rank = 0
             ep_shift = ep_rank * num_experts
 
             for expert_index in range(num_experts):
@@ -328,53 +309,3 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                 else:
                     final_hidden_states += local_w2_out
             return final_hidden_states
-
-        if self.use_marlin:
-            return torch.ops.vllm.fused_marlin_moe(
-                x,
-                layer.w13_weight,
-                layer.w2_weight,
-                layer.w13_weight_scale,
-                layer.w2_weight_scale,
-                router_logits,
-                topk_weights,
-                topk_ids,
-                global_scale1=layer.w13_weight_scale_2,
-                global_scale2=layer.w2_weight_scale_2,
-                quant_type_id=scalar_types.float4_e2m1f.id,
-                global_num_experts=global_num_experts,
-                expert_map=expert_map,
-            )
-
-        assert activation == "silu", "Only SiLU activation is supported."
-        assert not apply_router_weight_on_input, (
-            "Router weight on input is not supported for ModelOptNvFp4FusedMoE."
-        )
-        assert expert_map is None, (
-            "Expert Parallelism / expert_map "
-            "is currently not supported for "
-            "ModelOptNvFp4FusedMoE."
-        )
-
-        from vllm.model_executor.layers.fused_moe.cutlass_moe import cutlass_moe_fp4
-
-        # Cutlass moe takes in activations in BF16/Half precision
-        # and fp4 quantized weights loaded from the checkpoint
-        return cutlass_moe_fp4(
-            a=x,
-            w1_fp4=layer.w13_weight,
-            w1_blockscale=layer.w13_blockscale_swizzled,
-            w1_alphas=layer.g1_alphas,
-            w2_fp4=layer.w2_weight,
-            w2_blockscale=layer.w2_blockscale_swizzled,
-            w2_alphas=layer.g2_alphas,
-            topk_weights=topk_weights,
-            topk_ids=topk_ids,
-            m=x.shape[0],
-            n=layer.w2_weight.shape[2] * 2,
-            k=x.shape[1],
-            e=layer.w13_weight.shape[0],
-            a1_gscale=layer.w13_input_scale_quant,
-            a2_gscale=layer.w2_input_scale_quant,
-            device=x.device,
-        ).to(x.dtype)
