@@ -306,6 +306,16 @@ def fused_moe_kernel_gptq_awq(
     tl.store(c_ptrs, accumulator, mask=c_mask)
 
 
+# A,
+# B,
+# C,
+# B_bias,
+# A_scale,
+# B_scale,
+# topk_weights,
+# sorted_token_ids,
+# expert_ids,
+
 @triton.jit
 def fused_moe_kernel(
     # Pointers to matrices
@@ -679,6 +689,7 @@ def invoke_fused_moe_kernel(
             **config,
         )
     else:
+        breakpoint()
         config = config.copy()
         BLOCK_SIZE_K = config.pop("BLOCK_SIZE_K")
         if block_shape is not None:
@@ -1589,6 +1600,7 @@ def fused_experts(
             topk_ids=topk_ids,
         )
     else:
+        # breakpoint()
         return dispatch_fused_experts_func(inplace)(
             hidden_states=hidden_states,
             w1=w1,
@@ -1777,11 +1789,32 @@ def fused_experts_impl(
             OCP_MX_Scheme.w_mxfp4_a_mxfp6_e3m2,
             OCP_MX_Scheme.w_mxfp4_a_mxfp6_e2m3,
         }:
+            # breakpoint()
             # Weight has to be dequantized for mxfp4 emulation.
-            w1 = dequant_mxfp4(w1, w1_scale, hidden_states.dtype)
+            import vllm.model_executor.layers.quantization.auto_round_vllm_extension.mxfp4_qdq_utils as mxfp4_utils
+            # w1_bk = dequant_mxfp4(w1.clone(), w1_scale, hidden_states.dtype)
+            
+            w1 = mxfp4_utils.to_dtype(
+                data_lp=w1,
+                scale_e8m0=w1_scale,
+                elem_dtype="fp4_e2m1",
+                block_size=32,
+                target_dtype=hidden_states.dtype,
+            )
+            # breakpoint()
             w1_scale = None
-            w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
+            w2 = mxfp4_utils.to_dtype(
+                data_lp=w2,
+                scale_e8m0=w2_scale,
+                elem_dtype="fp4_e2m1",
+                block_size=32,
+                target_dtype=hidden_states.dtype,
+            )
             w2_scale = None
+
+            # w1_scale = None
+            # w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
+            # w2_scale = None
         elif ocp_mx_scheme == OCP_MX_Scheme.w_mxfp6_e3m2_a_mxfp6_e3m2:
             w1 = dequant_mxfp6(
                 w1, w1_scale, quant_dtype="fp6_e3m2", float_dtype=hidden_states.dtype
@@ -1828,6 +1861,8 @@ def fused_experts_impl(
 
         curr_topk_ids = topk_ids[begin_chunk_idx:end_chunk_idx]
         curr_topk_weights = topk_weights[begin_chunk_idx:end_chunk_idx]
+        # qcurr_hidden_states = curr_hidden_states
+        # a1q_scale = None
         qcurr_hidden_states, a1q_scale = moe_kernel_quantize_input(
             A=curr_hidden_states,
             A_scale=a1_scale,
@@ -1839,7 +1874,7 @@ def fused_experts_impl(
         sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
             curr_topk_ids, config["BLOCK_SIZE_M"], global_num_experts, expert_map
         )
-
+        # breakpoint()
         invoke_fused_moe_kernel(
             qcurr_hidden_states,
             w1,
@@ -1886,7 +1921,9 @@ def fused_experts_impl(
 
         else:
             raise ValueError(f"Unsupported FusedMoe activation: {activation}.")
-
+        
+        # qintermediate_cache2 = intermediate_cache2
+        # a2q_scale = None
         qintermediate_cache2, a2q_scale = moe_kernel_quantize_input(
             A=intermediate_cache2,
             A_scale=a2_scale,
