@@ -1629,7 +1629,6 @@ class FusedMoE(CustomOp):
                 return True if return_success else None
             else:
                 assert shard_id in ["w1", "w3"]
-
                 _out_dim =expert_data.shape[0]
                 if shard_id == "w1":                    
                     expert_data[:_out_dim//2] = loaded_weight

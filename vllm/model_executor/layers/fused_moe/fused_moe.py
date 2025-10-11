@@ -306,15 +306,6 @@ def fused_moe_kernel_gptq_awq(
     tl.store(c_ptrs, accumulator, mask=c_mask)
 
 
-# A,
-# B,
-# C,
-# B_bias,
-# A_scale,
-# B_scale,
-# topk_weights,
-# sorted_token_ids,
-# expert_ids,
 
 @triton.jit
 def fused_moe_kernel(
@@ -689,7 +680,6 @@ def invoke_fused_moe_kernel(
             **config,
         )
     else:
-        breakpoint()
         config = config.copy()
         BLOCK_SIZE_K = config.pop("BLOCK_SIZE_K")
         if block_shape is not None:
@@ -1600,7 +1590,6 @@ def fused_experts(
             topk_ids=topk_ids,
         )
     else:
-        # breakpoint()
         return dispatch_fused_experts_func(inplace)(
             hidden_states=hidden_states,
             w1=w1,
@@ -1694,8 +1683,12 @@ def fused_experts_impl(
             "w_mxfp4_a_mxfp6_e3m2",
             "w_mxfp4_a_mxfp6_e2m3",
         }:
-            # 16bit activation and fp4x2 packed weight
-            assert hidden_states.size(1) == w1.size(2) * 2, "hidden size mismatch"
+            if not envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+                # 16bit activation and fp4x2 packed weight
+                assert hidden_states.size(1) == w1.size(2) * 2, "hidden size mismatch"
+            else:
+                # 16bit activation and unpacked weight
+                assert hidden_states.size(1) == w1.size(2), "hidden size mismatch"
         elif ocp_mx_scheme in {
             "w_mxfp6_e3m2_a_mxfp6_e3m2",
             "w_mxfp6_e2m3_a_mxfp6_e2m3",
@@ -1789,32 +1782,64 @@ def fused_experts_impl(
             OCP_MX_Scheme.w_mxfp4_a_mxfp6_e3m2,
             OCP_MX_Scheme.w_mxfp4_a_mxfp6_e2m3,
         }:
-            # breakpoint()
-            # Weight has to be dequantized for mxfp4 emulation.
-            import vllm.model_executor.layers.quantization.auto_round_vllm_extension.mxfp4_qdq_utils as mxfp4_utils
-            # w1_bk = dequant_mxfp4(w1.clone(), w1_scale, hidden_states.dtype)
-            
-            w1 = mxfp4_utils.to_dtype(
-                data_lp=w1,
-                scale_e8m0=w1_scale,
-                elem_dtype="fp4_e2m1",
-                block_size=32,
-                target_dtype=hidden_states.dtype,
-            )
-            # breakpoint()
-            w1_scale = None
-            w2 = mxfp4_utils.to_dtype(
-                data_lp=w2,
-                scale_e8m0=w2_scale,
-                elem_dtype="fp4_e2m1",
-                block_size=32,
-                target_dtype=hidden_states.dtype,
-            )
-            w2_scale = None
 
-            # w1_scale = None
-            # w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
-            # w2_scale = None
+            # Weight has to be dequantized for mxfp4 emulation.
+            if not envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+                import vllm.model_executor.layers.quantization.auto_round_vllm_extension.mxfp4_qdq_utils as mxfp4_utils
+                w1 = mxfp4_utils.to_dtype(
+                    data_lp=w1,
+                    scale_e8m0=w1_scale,
+                    elem_dtype="fp4_e2m1",
+                    block_size=32,
+                    target_dtype=hidden_states.dtype,
+                )
+
+                def revert_interleaved_w1(w1):
+                    """
+                    w1[0,:8,:4]
+                    tensor([[ 0.0000,  0.0000,  0.0000, -0.0625],
+                            [ 0.0234,  0.0156,  0.0234,  0.0312],
+                            [-0.0312,  0.0156,  0.0312, -0.0156],
+                            [ 0.0078,  0.0078,  0.0078,  0.0156],
+                            [ 0.0078,  0.0000,  0.0000,  0.0234],
+                            [ 0.0000, -0.0078, -0.0156, -0.0469],
+                            [-0.0469,  0.0078, -0.0625,  0.0234],
+                            [ 0.0156,  0.0000, -0.0312,  0.0156]], device='cuda:0',
+                        dtype=torch.bfloat16)
+
+
+                    tensor([[ 0.0000,  0.0000,  0.0000, -0.0625],
+                            [ 0.0156, -0.0000, -0.0000, -0.0938],
+                            [ 0.0234,  0.0156,  0.0234,  0.0312],
+                            [ 0.0312,  0.0000, -0.0156,  0.0000],
+                            [-0.0312,  0.0156,  0.0312, -0.0156],
+                            [-0.0234,  0.0469, -0.0312, -0.0312],
+                            [ 0.0078,  0.0078,  0.0078,  0.0156],
+                            [ 0.0469, -0.0312, -0.0469,  0.0625]], device='cuda:0',
+                        dtype=torch.bfloat16)
+
+                    """
+                    new_w1 = torch.zeros_like(w1)
+                    E, N, H = w1.shape
+                    new_w1[:, ::2, :] = w1[:, : N // 2, :]
+                    new_w1[:, 1::2, :] = w1[:, N // 2 :, :]
+                    return new_w1
+                
+                w1 = revert_interleaved_w1(w1)
+                
+                w1_scale = None
+                w2 = mxfp4_utils.to_dtype(
+                    data_lp=w2,
+                    scale_e8m0=w2_scale,
+                    elem_dtype="fp4_e2m1",
+                    block_size=32,
+                    target_dtype=hidden_states.dtype,
+                )
+                w2_scale = None
+                # w1 = dequant_mxfp4(w1, w1_scale, hidden_states.dtype)
+                # w1_scale = None
+                # w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
+                # w2_scale = None
         elif ocp_mx_scheme == OCP_MX_Scheme.w_mxfp6_e3m2_a_mxfp6_e3m2:
             w1 = dequant_mxfp6(
                 w1, w1_scale, quant_dtype="fp6_e3m2", float_dtype=hidden_states.dtype
@@ -1874,7 +1899,6 @@ def fused_experts_impl(
         sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
             curr_topk_ids, config["BLOCK_SIZE_M"], global_num_experts, expert_map
         )
-        # breakpoint()
         invoke_fused_moe_kernel(
             qcurr_hidden_states,
             w1,

@@ -124,6 +124,8 @@ def _dequant_mxfp4_fake(
 def _quant_dequant_mxfp4(
     x: torch.Tensor, scale_calculation_mode: str = "even"
 ) -> torch.Tensor:
+    from vllm.model_executor.layers.quantization.auto_round_vllm_extension.mxfp4_qdq_utils import qdq_mxfp4
+    return qdq_mxfp4(x)
     try:
         from quark.torch.kernel import mx
     except ImportError as err:
@@ -133,7 +135,7 @@ def _quant_dequant_mxfp4(
             "amd-quark`."
         ) from err
     # breakpoint()
-    # return x
+    
     return mx.qdq_mxfp4(x, scale_calculation_mode)
 
 

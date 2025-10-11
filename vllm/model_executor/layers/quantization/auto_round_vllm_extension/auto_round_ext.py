@@ -32,6 +32,9 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         if isinstance(layer, LinearBase):
             quant_method: LinearMethodBase = UnquantizedLinearMethod()
+            # FIXME: handle linear as well
+            logger.warning_once(f"Skip quantizing layer: {prefix}")
+            return quant_method
             # if not need_skip_attn(prefix):
             quant_method = AutoRoundQuantLinearMethod(self, scheme=self.quant_scheme)
 

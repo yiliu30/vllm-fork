@@ -180,7 +180,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if envs.VLLM_ENABLE_STATIC_MOE:
-           if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+            if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
                 logger.debug(
                     f"start processing weights for {getattr(layer, 'prefix', 'unknown')}"
                 )
@@ -205,9 +205,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
 
                         unpacked_weight_lst.append(weight_fp8)
                         scale_list.append(scale_bf16)
-                    unpacked_weight_fp8 = torch.stack(
-                        unpacked_weight_lst, dim=0
-                    )
+                    unpacked_weight_fp8 = torch.stack(unpacked_weight_lst, dim=0)
                     scale_bf16 = torch.stack(scale_list, dim=0)
                     assert unpacked_weight_fp8.shape[0] == num_experts, (
                         f"Expected {num_experts} unpacked weights, got "
@@ -231,8 +229,119 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                     )
 
         elif envs.VLLM_AR_MXFP4_MODULAR_MOE:
-            logger.warning_once("No processing needed for modular moe.")
-            pass
+
+            def revert_interleaved_bias(bias):
+                """
+                Convert from blocked bias format to interleaved format.
+
+                Args:
+                    bias: Tensor of shape [E, intermediate_size*2] where the first half contains
+                        w1 biases and second half contains w3 biases for each expert
+
+                Returns:
+                    Tensor with interleaved w1 and w3 biases
+                """
+                # bias[0]: [expert_0_w1_bias..., expert_0_w3_bias...]
+                revert_bias = torch.zeros_like(bias, device=bias.device)
+                E, two_IN = bias.shape
+
+                # Verify the shape is as expected
+                if two_IN % 2 != 0:
+                    raise ValueError(
+                        f"Expected even number of bias elements, got {two_IN}"
+                    )
+
+                revert_bias[..., ::2] = bias[..., : two_IN // 2]
+                revert_bias[..., 1::2] = bias[..., two_IN // 2 :]
+
+                return revert_bias
+
+            # breakpoint()
+            w13_bias_swapped = revert_interleaved_bias(layer.w13_bias)
+            layer.w13_bias.data.copy_(w13_bias_swapped)
+
+            if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+                import vllm.model_executor.layers.quantization.auto_round_vllm_extension.mxfp4_qdq_utils as mxfp4_utils
+                w1 = layer.w13_weight_packed
+                w1_scale = layer.w13_weight_scale
+                w1 = mxfp4_utils.to_dtype(
+                    data_lp=w1,
+                    scale_e8m0=w1_scale,
+                    elem_dtype="fp4_e2m1",
+                    block_size=32,
+                    target_dtype=torch.bfloat16,
+                )
+
+                def revert_interleaved_w1(w1):
+                    """
+                    w1[0,:8,:4]
+                    tensor([[ 0.0000,  0.0000,  0.0000, -0.0625],
+                            [ 0.0234,  0.0156,  0.0234,  0.0312],
+                            [-0.0312,  0.0156,  0.0312, -0.0156],
+                            [ 0.0078,  0.0078,  0.0078,  0.0156],
+                            [ 0.0078,  0.0000,  0.0000,  0.0234],
+                            [ 0.0000, -0.0078, -0.0156, -0.0469],
+                            [-0.0469,  0.0078, -0.0625,  0.0234],
+                            [ 0.0156,  0.0000, -0.0312,  0.0156]], device='cuda:0',
+                        dtype=torch.bfloat16)
+
+
+                    tensor([[ 0.0000,  0.0000,  0.0000, -0.0625],
+                            [ 0.0156, -0.0000, -0.0000, -0.0938],
+                            [ 0.0234,  0.0156,  0.0234,  0.0312],
+                            [ 0.0312,  0.0000, -0.0156,  0.0000],
+                            [-0.0312,  0.0156,  0.0312, -0.0156],
+                            [-0.0234,  0.0469, -0.0312, -0.0312],
+                            [ 0.0078,  0.0078,  0.0078,  0.0156],
+                            [ 0.0469, -0.0312, -0.0469,  0.0625]], device='cuda:0',
+                        dtype=torch.bfloat16)
+
+                    """
+                    new_w1 = torch.zeros_like(w1)
+                    E, N, H = w1.shape
+                    new_w1[:, ::2, :] = w1[:, : N // 2, :]
+                    new_w1[:, 1::2, :] = w1[:, N // 2 :, :]
+                    return new_w1
+                
+                w1 = revert_interleaved_w1(w1)
+                
+                w1_scale = None
+                w2 = layer.w2_weight_packed
+                w2_scale = layer.w2_weight_scale
+                w2 = mxfp4_utils.to_dtype(
+                    data_lp=w2,
+                    scale_e8m0=w2_scale,
+                    elem_dtype="fp4_e2m1",
+                    block_size=32,
+                    target_dtype=torch.bfloat16,
+                )
+                w2_scale = None
+                del layer.w13_weight_packed
+                del layer.w13_weight_scale
+                del layer.w2_weight_packed
+                del layer.w2_weight_scale
+                layer.w13_weight_scale = None
+                layer.w2_weight_scale = None
+                layer.register_parameter(
+                    "w13_weight_unpacked",
+                    torch.nn.Parameter(
+                        w1,
+                        requires_grad=False,
+                    ),
+                )
+                layer.register_parameter(
+                    "w2_weight_unpacked",
+                    torch.nn.Parameter(
+                        w2,
+                        requires_grad=False,
+                    ),
+                )
+                
+                # w1 = dequant_mxfp4(w1, w1_scale, hidden_states.dtype)
+                # w1_scale = None
+                # w2 = dequant_mxfp4(w2, w2_scale, hidden_states.dtype)
+                # w2_scale = None
+
         else:
             raise NotImplementedError(
                 "process_weights_after_loading is not implemented for now."
@@ -274,14 +383,20 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,)
         assert self.fused_experts is None
-        
+
         if envs.VLLM_AR_MXFP4_MODULAR_MOE:
             from vllm.model_executor.layers.fused_moe import fused_experts
 
+            if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+                w1 = layer.w13_weight_unpacked
+                w2 = layer.w2_weight_unpacked
+            else:
+                w1 = layer.w13_weight_packed
+                w2 = layer.w2_weight_packed
             out = fused_experts(
                 x,
-                layer.w13_weight_packed,
-                layer.w2_weight_packed,
+                w1,
+                w2,
                 topk_weights=topk_weights,
                 topk_ids=topk_ids,
                 inplace=True,
