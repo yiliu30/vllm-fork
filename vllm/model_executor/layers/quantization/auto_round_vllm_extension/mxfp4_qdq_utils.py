@@ -278,6 +278,9 @@ def to_dtype(
     return_scale=False,
 ):
     orig_shape = data_lp.shape
+    last_dim = orig_shape[-1]
+    data_lp = data_lp.reshape(-1, last_dim)
+    result_shape = orig_shape[:-1] + (last_dim * 2,)
     is_transposed = not data_lp.is_contiguous()
     # if the underlying data is transposed, convert to row major before
     # unpacking and unscaling
@@ -299,7 +302,8 @@ def to_dtype(
         # manually adjust shape to account for the unpacking
         # TODO(future PR): clean up the shape code and remove the hack
         # below
-        orig_shape = (*orig_shape[:-1], orig_shape[-1] * 2)
+        # orig_shape = (*orig_shape[:-1], orig_shape[-1] * 2)
+        orig_shape = result_shape
     else:
         raise AssertionError("unsupported")
 
