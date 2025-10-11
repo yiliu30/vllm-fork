@@ -2,12 +2,12 @@
 
 export no_proxy="localhost, 127.0.0.1, ::1"
 task_name=gsm8k
-batch_size=16
+batch_size=8
 # LIMIT=128
 timestamp=$(date +%Y%m%d_%H%M%S)
 EVAL_LOG_NAME="eval_${task_name}_${timestamp}"
 max_length=8192
-max_gen_toks=2048
+max_gen_toks=4096
 
 mkdir -p benchmark_logs
 model_path=/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantization_non_uniform/Llama-3.2-1B-Instruct-NVFP4-FP8-Dynamic
@@ -19,7 +19,7 @@ model_path=/data5/yliu7/HF_HOME/GLM-4.5-Air-w8afp8-llmc/GLM-4.5-Air-w8afp8
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-20b-BF16-MXFP8/
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-120b-BF16-unsloth-MXFP8
 model_path=/data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/
-model_path=/data5/yliu7/HF_HOME/Yi30/unsloth-gpt-oss-20b-BF16-MXFP4
+# model_path=/data5/yliu7/HF_HOME/Yi30/unsloth-gpt-oss-20b-BF16-MXFP4
 # model_path=/models/DeepSeek-V2-Lite-Chat/
 port=8099
 # HF_ALLOW_CODE_EVAL=1 \
@@ -77,7 +77,6 @@ lm_eval --model local-chat-completions \
     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
     --confirm_run_unsafe_code \
     --log_samples \
-    --limit 128 \
     --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     --use_cache "benchmark_logs/$EVAL_LOG_NAME" \
