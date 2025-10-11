@@ -6,7 +6,7 @@
 # ==------------------------------------------------------------------------==
 
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -156,6 +156,26 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
         self, layer: torch.nn.Module
     ) -> Optional[FusedMoEQuantConfig]:
         # TODO: @yiliu30: implement it
+        if envs.VLLM_AR_MXFP4_MODULAR_MOE:
+            from vllm.model_executor.layers.fused_moe.config import (
+                FusedMoEQuantConfig,
+                fp8_w8a8_moe_quant_config,
+                ocp_mx_moe_quant_config,
+            )
+            self.input_dtype = "mxfp4"
+            self.weight_dtype = "mxfp4"
+            # breakpoint()
+            return ocp_mx_moe_quant_config(
+                quant_dtype=self.input_dtype,
+                weight_dtype=self.weight_dtype,
+                w1_scale=layer.w13_weight_scale,
+                w2_scale=layer.w2_weight_scale,
+                a1_scale=None,
+                a2_scale=None,
+                w1_bias=layer.w13_bias if self.has_bias else None,
+                w2_bias=layer.w2_bias if self.has_bias else None,
+                block_shape=None,
+            )
         return None
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
@@ -210,6 +230,9 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                         ),
                     )
 
+        elif envs.VLLM_AR_MXFP4_MODULAR_MOE:
+            logger.warning_once("No processing needed for modular moe.")
+            pass
         else:
             raise NotImplementedError(
                 "process_weights_after_loading is not implemented for now."
@@ -230,11 +253,15 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
         expert_map: Optional[torch.Tensor] = None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
+        routed_scaling_factor: float = 1.0,
         e_score_correction_bias: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
         activation: str = "silu",
-        **kwargs,
-    ):
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         topk_weights, topk_ids, _ = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
@@ -245,8 +272,28 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             num_expert_group=num_expert_group,
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
-            e_score_correction_bias=e_score_correction_bias,
-        )
+            e_score_correction_bias=e_score_correction_bias,)
+        assert self.fused_experts is None
+        
+        if envs.VLLM_AR_MXFP4_MODULAR_MOE:
+            from vllm.model_executor.layers.fused_moe import fused_experts
+
+            out = fused_experts(
+                x,
+                layer.w13_weight_packed,
+                layer.w2_weight_packed,
+                topk_weights=topk_weights,
+                topk_ids=topk_ids,
+                inplace=True,
+                activation=activation,
+                global_num_experts=global_num_experts,
+                apply_router_weight_on_input=apply_router_weight_on_input,
+                expert_map=expert_map,
+                quant_config=self.moe_quant_config,
+            )
+            return out
+            
+        
         num_all_tokens, hidden_dim = x.shape
         num_experts = layer.local_num_experts
         total_num_experts = router_logits.size(-1)
