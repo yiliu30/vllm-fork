@@ -10,10 +10,13 @@ model_path=/data5/yliu7/HF_HOME/GLM-4.5-Air-w8afp8-llmc/GLM-4.5-Air-w8afp8
 # model_path=/data5/yliu7/HF_HOME/meta-llama/Llama-3.2-1B-Instruct/
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-20b-BF16-MXFP8/
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-120b-BF16-unsloth-MXFP8
+model_path=/data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/
+model_path=/data5/yliu7/HF_HOME/Yi30/unsloth-gpt-oss-20b-BF16-MXFP4
 tp_size=4
 ep_size=2
 
 PYTHONPATH=/home/yliu7/workspace/inc/3rd-party/vllm/vllm/model_executor/layers/quantization/auto_round_vllm_extension/:$PYTHONPATH \
+VLLM_MXFP4_PRE_UNPACK_WEIGHTS=1 \
 VLLM_ENABLE_AR_EXT=1 \
 VLLM_ENABLE_STATIC_MOE=1 \
     vllm serve $model_path \
@@ -21,9 +24,9 @@ VLLM_ENABLE_STATIC_MOE=1 \
     --tensor-parallel-size $tp_size \
     --max-num-batched-tokens  8192 \
     --max-num-seqs 32 \
-    --gpu-memory-utilization 0.8 \
+    --gpu-memory-utilization 0.7 \
     --dtype bfloat16 \
-    --port 8088 \
+    --port 8099 \
     --enable-expert-parallel \
     --compilation_config '{"cudagraph_mode":"FULL_DECODE_ONLY","level":3}' \
     --trust-remote-code  2>&1 | tee $log_file

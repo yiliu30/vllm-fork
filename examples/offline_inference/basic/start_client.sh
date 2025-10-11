@@ -7,7 +7,7 @@ batch_size=16
 timestamp=$(date +%Y%m%d_%H%M%S)
 EVAL_LOG_NAME="eval_${task_name}_${timestamp}"
 max_length=8192
-max_gen_toks=6144
+max_gen_toks=2048
 
 mkdir -p benchmark_logs
 model_path=/home/yliu7/workspace/inc/3rd-party/llm-compressor/examples/quantization_non_uniform/Llama-3.2-1B-Instruct-NVFP4-FP8-Dynamic
@@ -18,8 +18,10 @@ model_path=/data5/yliu7/HF_HOME/GLM-4.5-Air-w8afp8-llmc/GLM-4.5-Air-w8afp8
 # model_path=/data5/yliu7/HF_HOME/meta-llama/Llama-3.2-1B-Instruct/
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-20b-BF16-MXFP8/
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-120b-BF16-unsloth-MXFP8
+model_path=/data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/
+model_path=/data5/yliu7/HF_HOME/Yi30/unsloth-gpt-oss-20b-BF16-MXFP4
 # model_path=/models/DeepSeek-V2-Lite-Chat/
-port=8088
+port=8099
 # HF_ALLOW_CODE_EVAL=1 \
 # lm_eval --model local-completions \
 #     --tasks $task_name \
@@ -60,40 +62,43 @@ port=8088
 #     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
 #     --confirm_run_unsafe_code \
 #     --log_samples \
-#     --limit 5 \
+#     --limit 64 \
 #     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
 #     --use_cache "benchmark_logs/$EVAL_LOG_NAME" \
 #     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
 
 
-# HF_ALLOW_CODE_EVAL=1 \
-# lm_eval --model local-chat-completions \
-#     --tasks $task_name \
-#     --apply_chat_template \
-#     --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/chat/completions,num_concurrent=1500,max_retries=100,timeout=6000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
-#     --batch_size ${batch_size}  \
-#     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
-#     --confirm_run_unsafe_code \
-#     --log_samples \
-#     --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
-#     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
-#     --use_cache /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/benchmark_logs/eval_gsm8k_20251001_223738_rank0.db \
-#     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
-
-# For next token tasks, we need use local-completions.
-task_name=mmlu
 HF_ALLOW_CODE_EVAL=1 \
-lm_eval --model local-completions \
+lm_eval --model local-chat-completions \
     --tasks $task_name \
-    --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/completions,num_concurrent=1500,max_retries=100,timeout=6000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
+    --apply_chat_template \
+    --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/chat/completions,num_concurrent=1500,max_retries=100,timeout=10000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
     --batch_size ${batch_size}  \
     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
     --confirm_run_unsafe_code \
     --log_samples \
+    --limit 128 \
     --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     --use_cache "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
+
+# --use_cache /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/benchmark_logs/eval_gsm8k_20251001_223738_rank0.db \
+# For next token tasks, we need use local-completions.
+# task_name=mmlu
+# HF_ALLOW_CODE_EVAL=1 \
+# lm_eval --model local-completions \
+#     --tasks $task_name \
+#     --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/completions,num_concurrent=1500,max_retries=100,timeout=6000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
+#     --batch_size ${batch_size}  \
+#     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
+#     --confirm_run_unsafe_code \
+#     --limit 8 \
+#     --log_samples \
+#     --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
+#     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
+#     --use_cache "benchmark_logs/$EVAL_LOG_NAME" \
+#     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
 
 
 
