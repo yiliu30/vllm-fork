@@ -457,7 +457,9 @@ def mxfp4_gemm_with_unpacked_weight(x, weigth_fp8, weight_scale_bf16, bias=None)
 #
 
 
-def fp4_121_positive(x: torch.Tensor, stochastic_rounding: bool = False) -> torch.Tensor:
+def fp4_121_positive(
+    x: torch.Tensor, stochastic_rounding: bool = False
+) -> torch.Tensor:
     if stochastic_rounding:
         noise = torch.rand_like(x) - 0.5
         step1 = torch.round(2.0 * x + noise) / 2.0
@@ -506,6 +508,8 @@ def fp4_121_scaled_even_rounding(
         scale_tmp = torch.floor(torch.log2(amax_x)) - 2.0
         scale_clamp = torch.clamp(scale_tmp, min=-127, max=127)
         scale = torch.pow(2.0, scale_clamp)
+    else:
+        raise NotImplementedError(f"Unsupported scale format: {scale_format}")
 
     scale = torch.where((0 < scale) * (scale < torch.inf), scale, 1.0)
 
@@ -526,29 +530,11 @@ def qdq_mxfp4(
     scale_format: str = "e8m0",
     grid: bool = False,
 ) -> torch.Tensor:
-    # TODO:
-    # 1) enable dim
-    # 2) enable e3m0
     shape = x.shape
-    if grid:
-        assert len(shape) == 2, "grid enabled for 2d tensors only"
-        x = (
-            x.reshape(shape[0] // block_size, block_size, shape[1] // block_size, block_size)
-            .permute(0, 2, 1, 3)
-            .reshape(-1, block_size * block_size)
-        )
-    else:
-        x = x.reshape(-1, block_size)
+    x = x.reshape(-1, block_size)
 
     x = fp4_121_scaled(x, stochastic_rounding, scale_format)
 
-    if grid:
-        x = (
-            x.reshape(shape[0] // block_size, shape[1] // block_size, block_size, block_size)
-            .permute(0, 2, 1, 3)
-            .reshape(shape)
-        )
-    else:
-        x = x.reshape(shape)
+    x = x.reshape(shape)
 
     return x
