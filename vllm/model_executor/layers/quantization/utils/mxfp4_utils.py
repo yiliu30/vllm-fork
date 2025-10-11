@@ -132,7 +132,8 @@ def _quant_dequant_mxfp4(
             "MX-FP4 models. Please install it with `pip install "
             "amd-quark`."
         ) from err
-
+    # breakpoint()
+    # return x
     return mx.qdq_mxfp4(x, scale_calculation_mode)
 
 
