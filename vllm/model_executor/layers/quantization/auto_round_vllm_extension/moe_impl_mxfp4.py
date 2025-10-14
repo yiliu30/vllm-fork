@@ -241,7 +241,9 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                 Returns:
                     Tensor with interleaved w1 and w3 biases
                 """
-                # bias[0]: [expert_0_w1_bias..., expert_0_w3_bias...]
+                # loaded bias[0]: [e0_w1_bias_0, e0_w1_bias_1, ..., e0_w3_bias_0, e0_w3_bias_1...]
+                # Expected bias[0]: [e0_w1_bias_0, e0_w3_bias_0, e0_w1_bias_1, e0_w3_bias_1...]
+                # The expected bias order is used in triton kernel https://github.com/vllm-project/vllm/pull/22508
                 revert_bias = torch.zeros_like(bias, device=bias.device)
                 E, two_IN = bias.shape
 
