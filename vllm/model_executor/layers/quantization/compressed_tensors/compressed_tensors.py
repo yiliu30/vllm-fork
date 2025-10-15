@@ -98,11 +98,16 @@ class CompressedTensorsConfig(QuantizationConfig):
             if scheme is None:
                 return UnquantizedLinearMethod()
             layer.scheme = scheme
+            logger.debug("Using scheme: %s for %s", scheme.__class__.__name__,
+                         prefix)
             return CompressedTensorsLinearMethod(self)
         if isinstance(layer, Attention):
             return CompressedTensorsKVCacheMethod(self)
         if isinstance(layer, FusedMoE):
-            return CompressedTensorsMoEMethod.get_moe_method(self, layer)
+            method = CompressedTensorsMoEMethod.get_moe_method(self, layer)
+            logger.debug("Using MoE method: %s for %s", 
+                         method.__class__.__name__, prefix)
+            return method
         return None
 
     @classmethod

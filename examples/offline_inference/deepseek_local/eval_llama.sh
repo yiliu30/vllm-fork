@@ -3,6 +3,12 @@ DEFAULT_MODEL_PATH="/mnt/disk8/Yi30/Llama-4-Scout-17B-16E-Instruct-FP8_STATIC-91
 DEFAULT_MODEL_PATH="/mnt/disk5/Yi30/Yi30/Llama-4-Maverick-17B-128E-Instruct-FP8_STATIC-916-G2/"
 DEFAULT_MODEL_PATH="/mnt/disk5/meta-llama/Llama-4-Maverick-17B-128E-Instruct"
 DEFAULT_MODEL_PATH="/mnt/disk5/meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8-G2"
+# The Acc is good on G3, and have been uploaded to HF
+# We need to update the weight scale shape from [out_feats] -> [out_feats, 1]
+DEFAULT_MODEL_PATH=/software/users/yiliu7/HF_HOME/Yi30/Llama-4-Maverick-17B-128E-Instruct-FP8_STATIC-916
+# DEFAULT_MODEL_PATH=/software/users/yiliu7/Yi30/Llama-4-Scout-17B-16E-Instruct-FP8_STATIC-916
+# !!!!! The mlp.gate was quantized 
+# DEFAULT_MODEL_PATH="/software/users/yiliu7/HF_HOME/Yi30/Qwen3-30B-A3B-W-FP8-PCS-A-FP8"
 # DEFAULT_MODEL_PATH="/mnt/disk8/Yi30/Llama-4-Scout-17B-16E-Instruct-FP8_STATIC-916"
 # DEFAULT_MODEL_PATH=/mnt/disk5/Qwen3-30B-A3B-FP8-G2/
 # DEFAULT_MODEL_PATH="/mnt/disk8/yiliu7/zai-org/GLM-4.5-Air-FP8-G2/"
@@ -40,12 +46,11 @@ export VLLM_HPU_CONVERT_TO_FP8UZ=0
 # export VLLM_HPU_CONVERT_TO_FP8UZ=1
 # export VLLM_HPU_FORCE_CHANNEL_FP8=0
 
-# # export QUANT_CONFIG=./quant_configs/inc_measure.json
-# export QUANT_CONFIG=./quant_configs/unit_quant_config.json 
-# export  QUANT_CONFIG="./quant_configs/inc_quant.json"
-# export  QUANT_CONFIG="./quant_configs/inc_quant_naive.json"
-# export  QUANT_CONFIG="./quant_configs/inc_quant_fp8kv.json"
-# VLLM_HPU_CONVERT_TO_FP8UZ=1 \
+
+# ==-------------------------------------------------------------------------==
+# Run basic
+# ==-------------------------------------------------------------------------==
+VLLM_HPU_CONVERT_TO_FP8UZ=1 \
 VLLM_SUPPORT_MOE_CHUNK=true \
 PT_HPU_LAZY_MODE=1 \
     python deepseek_example.py \
@@ -58,7 +63,9 @@ PT_HPU_LAZY_MODE=1 \
     --max_model_len 512 2>&1 | tee $LOG_FILE
     # --fp8_inc \
     
-
+# ==-------------------------------------------------------------------------==
+# Run lm-eval-harness
+# ==-------------------------------------------------------------------------==
 # model_path=${FP8_MODEL_PATH}
 # model_name=$(basename ${model_path})
 # timestamp=$(date +"%Y%m%d_%H%M%S")
@@ -67,13 +74,6 @@ PT_HPU_LAZY_MODE=1 \
 # tp_size=${WORLD_SIZE}
 # mkdir -p ${output_dir}
 
-# PT_HPU_LAZY_MODE=1 \
-# VLLM_SKIP_WARMUP=true \
-# PT_HPU_ENABLE_LAZY_COLLECTIVES=true \
-# PT_HPU_WEIGHT_SHARING=0 \
-# lm_eval --model vllm \
-#   --model_args "pretrained=${model_path},tensor_parallel_size=${tp_size},max_model_len=4096,max_num_seqs=128,gpu_memory_utilization=0.8,use_v2_block_manager=True,dtype=bfloat16,max_gen_toks=2048,disable_log_stats=True" \
-#   --tasks gsm8k --batch_size 128 --log_samples --output_path ${output_dir} --show_config 2>&1 | tee ${output_dir}/log.txt
   
 # PT_HPU_LAZY_MODE=1 \
 # VLLM_SKIP_WARMUP=true \
@@ -85,6 +85,16 @@ PT_HPU_LAZY_MODE=1 \
 #   --apply_chat_template \
 #   --batch_size 128 --log_samples --output_path ${output_dir} --show_config 2>&1 | tee ${output_dir}/log.txt
   
+  
+  
+  
+# PT_HPU_LAZY_MODE=1 \
+# VLLM_SKIP_WARMUP=true \
+# PT_HPU_ENABLE_LAZY_COLLECTIVES=true \
+# PT_HPU_WEIGHT_SHARING=0 \
+# lm_eval --model vllm \
+#   --model_args "pretrained=${model_path},tensor_parallel_size=${tp_size},max_model_len=4096,max_num_seqs=128,gpu_memory_utilization=0.8,use_v2_block_manager=True,dtype=bfloat16,max_gen_toks=2048,disable_log_stats=True" \
+#   --tasks gsm8k --batch_size 128 --log_samples --output_path ${output_dir} --show_config 2>&1 | tee ${output_dir}/log.txt
   
 #   |             Groups             |Version|Filter|n-shot|Metric|   |Value |   |Stderr|
 # |--------------------------------|------:|------|------|------|---|-----:|---|-----:|
@@ -161,3 +171,54 @@ PT_HPU_LAZY_MODE=1 \
 # | - Science                      |      0|none  |      |acc   |↑  |0.4467|±  |0.0409|
 # | - Tech and Engineering         |      0|none  |      |acc   |↑  |0.3905|±  |0.0335|
 
+
+# vllm-vlm (pretrained=/software/users/yiliu7/HF_HOME/Yi30/Llama-4-Maverick-17B-128E-Instruct-FP8_STATIC-916,tensor_parallel_size=8,max_model_len=4096,max_num_seqs=128,gpu_memory_utilization=0.8,use_v2_block_manager=True,dtype=bfloat16,max_gen_toks=2048,disable_log_stats=True,max_images=1), gen_kwargs: (None), limit: None, num_fewshot: None, batch_size: 128
+# |                 Tasks                 |Version|Filter|n-shot|Metric|   |Value |   |Stderr|
+# |---------------------------------------|------:|------|-----:|------|---|-----:|---|-----:|
+# |mmmu_val                               |      0|none  |      |acc   |↑  |0.5489|±  |0.0158|
+# | - Art and Design                      |      0|none  |      |acc   |↑  |0.5917|±  |0.0404|
+# |  - Art                                |      0|none  |     0|acc   |↑  |0.7333|±  |0.0821|
+# |  - Art Theory                         |      0|none  |     0|acc   |↑  |0.7667|±  |0.0785|
+# |  - Design                             |      0|none  |     0|acc   |↑  |0.6667|±  |0.0875|
+# |  - Music                              |      0|none  |     0|acc   |↑  |0.2000|±  |0.0743|
+# | - Business                            |      0|none  |      |acc   |↑  |0.6133|±  |0.0397|
+# |  - Accounting                         |      0|none  |     0|acc   |↑  |0.6000|±  |0.0910|
+# |  - Economics                          |      0|none  |     0|acc   |↑  |0.7333|±  |0.0821|
+# |  - Finance                            |      0|none  |     0|acc   |↑  |0.4667|±  |0.0926|
+# |  - Manage                             |      0|none  |     0|acc   |↑  |0.5667|±  |0.0920|
+# |  - Marketing                          |      0|none  |     0|acc   |↑  |0.7000|±  |0.0851|
+# | - Health and Medicine                 |      0|none  |      |acc   |↑  |0.6400|±  |0.0373|
+# |  - Basic Medical Science              |      0|none  |     0|acc   |↑  |0.6000|±  |0.0910|
+# |  - Clinical Medicine                  |      0|none  |     0|acc   |↑  |0.6000|±  |0.0910|
+# |  - Diagnostics and Laboratory Medicine|      0|none  |     0|acc   |↑  |0.3667|±  |0.0895|
+# |  - Pharmacy                           |      0|none  |     0|acc   |↑  |0.8333|±  |0.0692|
+# |  - Public Health                      |      0|none  |     0|acc   |↑  |0.8000|±  |0.0743|
+# | - Humanities and Social Science       |      0|none  |      |acc   |↑  |0.6917|±  |0.0425|
+# |  - History                            |      0|none  |     0|acc   |↑  |0.6667|±  |0.0875|
+# |  - Literature                         |      0|none  |     0|acc   |↑  |0.7333|±  |0.0821|
+# |  - Psychology                         |      0|none  |     0|acc   |↑  |0.6000|±  |0.0910|
+# |  - Sociology                          |      0|none  |     0|acc   |↑  |0.7667|±  |0.0785|
+# | - Science                             |      0|none  |      |acc   |↑  |0.5000|±  |0.0411|
+# |  - Biology                            |      0|none  |     0|acc   |↑  |0.5000|±  |0.0928|
+# |  - Chemistry                          |      0|none  |     0|acc   |↑  |0.4333|±  |0.0920|
+# |  - Geography                          |      0|none  |     0|acc   |↑  |0.4667|±  |0.0926|
+# |  - Math                               |      0|none  |     0|acc   |↑  |0.4667|±  |0.0926|
+# |  - Physics                            |      0|none  |     0|acc   |↑  |0.6333|±  |0.0895|
+# | - Tech and Engineering                |      0|none  |      |acc   |↑  |0.3667|±  |0.0330|
+# |  - Agriculture                        |      0|none  |     0|acc   |↑  |0.4667|±  |0.0926|
+# |  - Architecture and Engineering       |      0|none  |     0|acc   |↑  |0.2667|±  |0.0821|
+# |  - Computer Science                   |      0|none  |     0|acc   |↑  |0.5333|±  |0.0926|
+# |  - Electronics                        |      0|none  |     0|acc   |↑  |0.2333|±  |0.0785|
+# |  - Energy and Power                   |      0|none  |     0|acc   |↑  |0.2667|±  |0.0821|
+# |  - Materials                          |      0|none  |     0|acc   |↑  |0.4333|±  |0.0920|
+# |  - Mechanical Engineering             |      0|none  |     0|acc   |↑  |0.3667|±  |0.0895|
+
+# |             Groups             |Version|Filter|n-shot|Metric|   |Value |   |Stderr|
+# |--------------------------------|------:|------|------|------|---|-----:|---|-----:|
+# |mmmu_val                        |      0|none  |      |acc   |↑  |0.5489|±  |0.0158|
+# | - Art and Design               |      0|none  |      |acc   |↑  |0.5917|±  |0.0404|
+# | - Business                     |      0|none  |      |acc   |↑  |0.6133|±  |0.0397|
+# | - Health and Medicine          |      0|none  |      |acc   |↑  |0.6400|±  |0.0373|
+# | - Humanities and Social Science|      0|none  |      |acc   |↑  |0.6917|±  |0.0425|
+# | - Science                      |      0|none  |      |acc   |↑  |0.5000|±  |0.0411|
+# | - Tech and Engineering         |      0|none  |      |acc   |↑  |0.3667|±  |0.0330|

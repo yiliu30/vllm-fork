@@ -802,6 +802,19 @@ def determine_expert_map(
     return (local_num_experts, expert_map)
 
 
+def update_shape(src_data, dst_data):
+    # FIXME: Remove it 
+    import habana_frameworks.torch.core as htcore
+    if src_data.numel() != dst_data.numel():
+        raise ValueError("Data size mismatch")
+    else:
+        if src_data.shape != dst_data.shape:
+            src_data = src_data.reshape(dst_data.shape)
+            logger.debug(f"Reshape src_data to {dst_data.shape}")
+            htcore.mark_step()
+            torch.hpu.synchronize()
+    return src_data
+
 class FusedMoE(torch.nn.Module):
     """FusedMoE layer for MoE models.
 
@@ -1087,6 +1100,7 @@ class FusedMoE(torch.nn.Module):
                                        tp_rank: int, expert_id: int):
         # for per channel weight quantization
         if shard_id == "w2":
+            loaded_weight = update_shape(loaded_weight, expert_data)
             expert_data.copy_(loaded_weight)
         elif shard_id in ("w1", "w3"):
             self._load_w13(shard_id=shard_id,
@@ -1117,6 +1131,7 @@ class FusedMoE(torch.nn.Module):
         else:
             assert shard_id == "w3"
             expert_data = expert_data.narrow(shard_dim, shard_size, shard_size)
+        loaded_weight = update_shape(loaded_weight, expert_data)
         expert_data.copy_(loaded_weight)
 
     def _load_w2(self,
