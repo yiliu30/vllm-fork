@@ -59,6 +59,8 @@ from .llama4 import Llama4ForCausalLM
 from .utils import (AutoWeightsLoader, flatten_bn, maybe_prefix,
                     merge_multimodal_embeddings)
 
+from vllm.model_executor.model_loader.weight_utils import with_thread_limits
+
 
 class Llama4ImagePatchInputs(TypedDict):
     type: Literal["pixel_values"]
@@ -893,6 +895,7 @@ class Llama4ForConditionalGeneration(nn.Module, SupportsMultiModal,
             qkv_weight = torch.cat(weight, dim=0)
             yield key, qkv_weight
 
+    @with_thread_limits()
     def load_weights(self, weights: Iterable[tuple[str,
                                                    torch.Tensor]]) -> set[str]:
 
