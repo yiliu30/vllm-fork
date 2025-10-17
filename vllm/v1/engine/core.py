@@ -313,6 +313,13 @@ class EngineCore:
         if not self.scheduler.has_requests():
             return {}, False
         scheduler_output = self.scheduler.schedule()
+        logger.info((
+            f"scheduler_output.scheduled_new_reqs: {[(req.req_id, len(req.prompt_token_ids))  for req in scheduler_output.scheduled_new_reqs]} \n"
+            f"scheduler_output.scheduled_cached_reqs: {scheduler_output.scheduled_cached_reqs} \n"
+            f"scheduler_output.num_scheduled_tokens: {scheduler_output.num_scheduled_tokens} \n"
+            f"scheduler_output.total_num_scheduled_tokens: {scheduler_output.total_num_scheduled_tokens} \n"
+            f"scheduler_output.finished_req_ids: {scheduler_output.finished_req_ids} \n"
+        ))
         model_output = self.execute_model_with_error_logging(
             self.model_executor.execute_model,  # type: ignore
             scheduler_output,

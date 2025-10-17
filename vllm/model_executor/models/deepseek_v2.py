@@ -582,6 +582,16 @@ def sparse_attn_indexer(
     total_seq_lens: int,
     topk_indices_buffer: Optional[torch.Tensor],
 ) -> torch.Tensor:
+
+    """
+    1. Quantize k and store in kv_cache
+    2. Compute the attention logits using the quantized k in kv_cache and q_fp8
+        For the prefill stage, it computes the attention logits [num_tokens, num_kv_tokens]
+        For the decode stage, it computes the attention logits [num_decode_tokens, max_model_len]
+    3. Select topk_tokens from the attention logits for each query position: [num_tokens, 2048] and update topk_indices_buffer
+    """
+
+
     # careful! this will be None in dummy run
     attn_metadata = get_forward_context().attn_metadata
     # assert isinstance(attn_metadata, dict)

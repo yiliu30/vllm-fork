@@ -454,9 +454,9 @@ __global__ void concat_and_cache_ds_mla_kernel(
   }
 
   // The first two warps handle the NoPE part
-  const int8_t warp_idx = threadIdx.x >> 5;
-  const int8_t lane_idx = threadIdx.x & 31;
-  const int8_t tile_idx = warp_idx * 2 + (lane_idx >> 4);
+  const int8_t warp_idx = threadIdx.x >> 5;  // 0,1
+  const int8_t lane_idx = threadIdx.x & 31;  // 0..31
+  const int8_t tile_idx = warp_idx * 2 + (lane_idx >> 4);  // 0..3
 
   // Each thread handles 8 elements of NoPE
   // Load the NoPE elements for this thread into registers
@@ -484,7 +484,7 @@ __global__ void concat_and_cache_ds_mla_kernel(
   // The first lane of each half-warp writes the scale to kv_cache
   if ((lane_idx == 0) || (lane_idx == 16)) {
     float* kv_cache_32bit = reinterpret_cast<float*>(&kv_cache[dst_idx_start]);
-    const uint64_t dst_idx = kv_lora_rank / 4 + tile_idx;
+    const uint64_t dst_idx = kv_lora_rank / 4 + tile_idx; // 128 + 0..3
     kv_cache_32bit[dst_idx] = tile_scale;
   }
 
@@ -505,6 +505,58 @@ __global__ void concat_and_cache_ds_mla_kernel(
       *reinterpret_cast<const uint64_t*>(result);
 }
 
+
+// void indexer_k_quant_and_cache(
+//     torch::Tensor& k,             // [num_tokens, head_dim]
+//     torch::Tensor& kv_cache,      // [num_blocks, block_size, cache_stride]
+//     torch::Tensor& slot_mapping,  // [num_tokens]
+//     int64_t quant_block_size,     // quantization block size
+//     const std::string& scale_fmt) {
+//   int num_tokens = k.size(0);
+//   int head_dim = k.size(1);
+//   int cache_block_size = kv_cache.size(1);
+//   int cache_stride = kv_cache.size(2);
+//   bool use_ue8m0 = scale_fmt == "ue8m0";
+
+//   TORCH_CHECK(k.device() == kv_cache.device(),
+//               "k and kv_cache must be on the same device");
+//   TORCH_CHECK(k.device() == slot_mapping.device(),
+//               "k and slot_mapping must be on the same device");
+//   TORCH_CHECK(head_dim % quant_block_size == 0,
+//               "head_dim must be divisible by quant_block_size");
+
+//   constexpr int vec_size = 4;
+//   head_dim = 128
+//   quant_block_size = 128
+//   vec_size = 4
+//   grid_y = (128 + 128 * 4 - 1) / (128 * 4) = 1
+//   dim3 grid(num_tokens, (head_dim + quant_block_size * vec_size - 1) /
+//                             (quant_block_size * vec_size));
+//   dim3 block(32, vec_size);
+//   const at::cuda::OptionalCUDAGuard device_guard(device_of(k));
+//   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+//   DISPATCH_BY_KV_CACHE_DTYPE(k.dtype(), "fp8_e4m3",
+//                              CALL_INDEXER_K_QUANT_AND_CACHE);
+
+// // Macro to dispatch the kernel based on the data type.
+// #define CALL_INDEXER_K_QUANT_AND_CACHE(KV_T, CACHE_T, KV_DTYPE)         \
+//   vllm::indexer_k_quant_and_cache_kernel<KV_T, CACHE_T, KV_DTYPE>       \
+//       <<<grid, block, 0, stream>>>(                                     \
+//           reinterpret_cast<KV_T*>(k.data_ptr()),                        \
+//           reinterpret_cast<CACHE_T*>(kv_cache.data_ptr()),              \
+//           slot_mapping.data_ptr<int64_t>(), head_dim, quant_block_size, \
+//           cache_block_size, cache_stride, use_ue8m0);
+
+
+// void indexer_k_quant_and_cache(
+//     torch::Tensor& k,             // [num_tokens, head_dim]
+//     torch::Tensor& kv_cache,      // [num_blocks, block_size, cache_stride]
+//     torch::Tensor& slot_mapping,  // [num_tokens]
+//     int64_t quant_block_size,     // quantization block size
+//     const std::string& scale_fmt) {
+
+// __nv_bfloat16, uint8_t, vllm::Fp8KVCacheDataType::kFp8E4M3
 template <typename scalar_t, typename cache_t, Fp8KVCacheDataType kv_dt>
 __global__ void indexer_k_quant_and_cache_kernel(
     const scalar_t* __restrict__ k,  // [num_tokens, head_dim]
@@ -513,11 +565,22 @@ __global__ void indexer_k_quant_and_cache_kernel(
     const int head_dim,                        // dimension of each head
     const int quant_block_size,                // quantization block size
     const int cache_block_size,                // cache block size
-    const int cache_stride,  // stride for each token in kv_cache
+    const int cache_stride,  // stride for each token in kv_cache, 132
     const bool use_ue8m0     // use ue8m0 scale format
 ) {
   constexpr int VEC_SIZE = 4;
   const int64_t token_idx = blockIdx.x;
+  // For head_dim = 0, blockIdx.y = 0
+  // 32 4
+  // blockDim.y * blockDim.x = 128
+  // (blockIdx.y * 128 + threadIdx.y * 4 + threadIdx.x) * 4 = thradIdx.y * 4 + threadIdx.x
+  //  theadIdx.y, threadIdx.x
+  // (0, 0): 0, 1, 2, 3
+  // (0, 1): 4, 5, 6, 7
+  // (0, 2): 8, 9, 10, 11
+  // (0, 3): 12, 13, 14, 15
+  // (1, 0): 16, 17, 18, 19
+  // ...
   const int64_t head_dim_idx = (blockIdx.y * blockDim.y * blockDim.x +
                                 threadIdx.y * blockDim.x + threadIdx.x) *
                                VEC_SIZE;
@@ -525,6 +588,7 @@ __global__ void indexer_k_quant_and_cache_kernel(
   const int64_t block_idx = slot_idx / cache_block_size;
   const int64_t block_offset = slot_idx % cache_block_size;
 
+  // For head_dim 128, only thread 0...31 are active
   // NOTE: slot_idx can be -1 if the token is padded
   if (slot_idx < 0 || (head_dim_idx >= head_dim)) {
     return;
@@ -571,6 +635,9 @@ __global__ void indexer_k_quant_and_cache_kernel(
     reinterpret_cast<float*>(kv_cache)[dst_scale_idx / 4] = scale;
   }
 }
+
+
+
 
 template <int BLOCK_Y_SIZE>
 __global__ void cp_gather_indexer_k_quant_cache_kernel(
