@@ -1,3 +1,6 @@
+OPENAI_API_KEY=None  python -m gpt_oss.evals --model /data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/  --eval aime25 --base-url http://localhost:8099/v1 --reasoning-effort low 
+
+
 #  curl http://127.0.0.1:8088/metrics
 
 export no_proxy="localhost, 127.0.0.1, ::1"
@@ -19,7 +22,9 @@ model_path=/data5/yliu7/HF_HOME/GLM-4.5-Air-w8afp8-llmc/GLM-4.5-Air-w8afp8
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-20b-BF16-MXFP8/
 model_path=/data5/yliu7/HF_HOME/Yi30/gpt-oss-120b-BF16-unsloth-MXFP8
 model_path=/data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/
-model_path=/data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/
+model_path="/data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/"
+# model_path=/data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/
+# model_path=/data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/
 # model_path=/data5/yliu7/HF_HOME/Yi30/unsloth-gpt-oss-20b-BF16-MXFP4
 # model_path=/models/DeepSeek-V2-Lite-Chat/
 port=8099
@@ -43,12 +48,14 @@ port=8099
 HF_ALLOW_CODE_EVAL=1 \
 lm_eval --model  local-completions  \
     --tasks $task_name \
+        --apply_chat_template \
     --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/completions,num_concurrent=1500,max_retries=1000,timeout=6000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
     --batch_size 8  \
+    --limit 128 \
+    --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
     --confirm_run_unsafe_code \
     --log_samples \
-    --limit 128 \
     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
     --use_cache "benchmark_logs/$EVAL_LOG_NAME" \
     2>&1 | tee "benchmark_logs/${EVAL_LOG_NAME}.log"
@@ -73,12 +80,12 @@ lm_eval --model  local-completions  \
 # lm_eval --model local-chat-completions \
 #     --tasks $task_name \
 #     --apply_chat_template \
-#     --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/chat/completions,num_concurrent=1,max_retries=100,timeout=10000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
-#     --batch_size ${batch_size}  \
+#     --model_args model=${model_path},base_url=http://127.0.0.1:${port}/v1/chat/completions,num_concurrent=512,max_retries=100,timeout=10000,max_length=${max_length},max_gen_toks=${max_gen_toks} \
+#     --batch_size 1  \
 #     --gen_kwargs="max_gen_toks=${max_gen_toks}" \
 #     --confirm_run_unsafe_code \
 #     --log_samples \
-#     --limit 4 \
+#     --limit 128 \
 #     --include_path /home/yliu7/workspace/inc/3rd-party/vllm/examples/offline_inference/basic/gpt_oss_gsm8k/ \
 #     --output_path "benchmark_logs/$EVAL_LOG_NAME" \
 #     --use_cache "benchmark_logs/$EVAL_LOG_NAME" \
