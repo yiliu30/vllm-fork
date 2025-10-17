@@ -810,9 +810,9 @@ def update_shape(src_data, dst_data):
     else:
         if src_data.shape != dst_data.shape:
             src_data = src_data.reshape(dst_data.shape)
-            logger.warning_once(f"Reshape src_data to {dst_data.shape}")
-            # htcore.mark_step()
-            # torch.hpu.synchronize()
+            logger.warning(f"Reshape src_data to {dst_data.shape}")
+            htcore.mark_step()
+            torch.hpu.synchronize()
     return src_data
 
 class FusedMoE(torch.nn.Module):

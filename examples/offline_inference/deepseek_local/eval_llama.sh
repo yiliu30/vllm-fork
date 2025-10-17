@@ -5,7 +5,8 @@ DEFAULT_MODEL_PATH="/mnt/disk5/meta-llama/Llama-4-Maverick-17B-128E-Instruct"
 DEFAULT_MODEL_PATH="/mnt/disk5/meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8-G2"
 # The Acc is good on G3, and have been uploaded to HF
 # We need to update the weight scale shape from [out_feats] -> [out_feats, 1]
-# DEFAULT_MODEL_PATH=/software/users/yiliu7/HF_HOME/Yi30/Llama-4-Maverick-17B-128E-Instruct-FP8_STATIC-916
+DEFAULT_MODEL_PATH=/software/users/yiliu7/HF_HOME/Yi30/Llama-4-Maverick-17B-128E-Instruct-FP8_STATIC-916
+DEFAULT_MODEL_PATH=/software/users/yiliu7/HF_HOME/Yi30/Llama-4-Maverick-17B-128E-Instruct-FP8_STATIC-916-Updated-Shape/
 # DEFAULT_MODEL_PATH=/software/users/yiliu7/Yi30/Llama-4-Scout-17B-16E-Instruct-FP8_STATIC-916
 # !!!!! The mlp.gate was quantized 
 # DEFAULT_MODEL_PATH="/software/users/yiliu7/HF_HOME/Yi30/Qwen3-30B-A3B-W-FP8-PCS-A-FP8"
