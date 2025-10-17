@@ -45,6 +45,7 @@ ep_size=$tp_size
 #     --max-model-len 131072 \
 #     --max-num-batched-tokens 10240 \
 #     --max-num-seqs 128 \
+#     --port 8099 \
 #     --gpu-memory-utilization 0.85 \
 #     --no-enable-prefix-caching \
 #     --trust-remote-code  2>&1 | tee $log_file
@@ -71,30 +72,31 @@ ep_size=$tp_size
 
 
 # W4A4 A100/B200
-model_path="/data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/"
-model_path=/data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/
-model_path=/storage/yiliu7/unsloth/gpt-oss-120b-BF16-ar-MXFP4
-tp_size=4
-# VLLM_DEBUG_LOG_API_SERVER_RESPONSE=true \
-# OPENAI_API_KEY=None  python -m gpt_oss.evals --model /data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/  --eval aime25 --base-url http://localhost:8099/v1 --reasoning-effort low 
-# OPENAI_API_KEY=None  python -m gpt_oss.evals --model /data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/  --eval aime25 --base-url http://localhost:8099/v1 --reasoning-effort low 
-# OPENAI_API_KEY=None  python -m gpt_oss.evals --model /storage/yiliu7/unsloth/gpt-oss-120b-BF16-ar-MXFP4 --eval aime25 --base-url http://localhost:8099/v1 --reasoning-effort low  --output_dir ./w4a4-res/
-PYTHONPATH=/home/yliu7/workspace/inc/3rd-party/vllm/vllm/model_executor/layers/quantization/auto_round_vllm_extension/:$PYTHONPATH \
-VLLM_MXFP4_PRE_UNPACK_WEIGHTS=1 \
-VLLM_ENABLE_AR_EXT=1 \
-VLLM_ENABLE_STATIC_MOE=0 \
-VLLM_AR_MXFP4_MODULAR_MOE=1 \
-    vllm serve $model_path \
-    --max-model-len 131072 \
-    --max-num-batched-tokens 10240 \
-    --tensor-parallel-size $tp_size \
-    --max-num-seqs 256 \
-    --gpu-memory-utilization 0.8 \
-    --dtype bfloat16 \
-    --port 8099 \
-    --no-enable-prefix-caching \
-    --enable-expert-parallel \
-    --trust-remote-code  2>&1 | tee $log_file
+# model_path="/data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/"
+# model_path=/data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/
+# model_path=/storage/yiliu7/unsloth/gpt-oss-120b-BF16-ar-MXFP4
+# tp_size=4
+# # VLLM_DEBUG_LOG_API_SERVER_RESPONSE=true \
+# # OPENAI_API_KEY=None  python -m gpt_oss.evals --model /data5/yliu7/HF_HOME/unsloth-gpt-oss-20b-BF16-ar-MXFP4/  --eval aime25 --base-url http://localhost:8099/v1 --reasoning-effort low 
+# # OPENAI_API_KEY=None  python -m gpt_oss.evals --model /data6/yiliu4/unsloth-gpt-oss-120b-BF16-ar-MXFP4/  --eval aime25 --base-url http://localhost:8099/v1 --reasoning-effort low 
+# # OPENAI_API_KEY=None  python -m gpt_oss.evals --model /storage/yiliu7/unsloth/gpt-oss-120b-BF16-ar-MXFP4 --eval aime25 --base-url http://localhost:8099/v1 --reasoning-effort low  --output_dir ./w4a4-res/
+# PYTHONPATH=/home/yliu7/workspace/inc/3rd-party/vllm/vllm/model_executor/layers/quantization/auto_round_vllm_extension/:$PYTHONPATH \
+# PYTHONPATH=/home/yiliu7/workspace/vllm/vllm/model_executor/layers/quantization/auto_round_vllm_extension/:$PYTHONPATH \
+# VLLM_MXFP4_PRE_UNPACK_WEIGHTS=1 \
+# VLLM_ENABLE_AR_EXT=1 \
+# VLLM_ENABLE_STATIC_MOE=0 \
+# VLLM_AR_MXFP4_MODULAR_MOE=1 \
+#     vllm serve $model_path \
+#     --max-model-len 131072 \
+#     --max-num-batched-tokens 10240 \
+#     --tensor-parallel-size $tp_size \
+#     --max-num-seqs 256 \
+#     --gpu-memory-utilization 0.8 \
+#     --dtype bfloat16 \
+#     --port 8099 \
+#     --no-enable-prefix-caching \
+#     --enable-expert-parallel \
+#     --trust-remote-code  2>&1 | tee $log_file
 
 
 # ==-----------------------------------------------------------------==
