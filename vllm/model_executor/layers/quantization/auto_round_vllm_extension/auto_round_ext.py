@@ -44,6 +44,14 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
             quant_method = super().get_quant_method(layer, prefix)
         logger.debug(f"Apply {quant_method.__class__.__name__} to {prefix}")
         return quant_method
+    
+    def _is_mxfp4_w4a4(self, *args, **kwargs):
+        # FIXME: below impl is incomplete
+        return self.weight_bits == 4 and self.group_size == 32
+    
+    def _is_mxfp8_w8a8(self, *args, **kwargs):
+        # FIXME: below impl is incomplete
+        return self.weight_bits == 8 and self.group_size == 32
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> AutoRoundConfig:

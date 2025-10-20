@@ -95,6 +95,23 @@ EBITS_F8_E4M3, MBITS_F8_E4M3 = 4, 3
 EBITS_F8_E5M2, MBITS_F8_E5M2 = 5, 2
 
 
+
+def get_fp_scale(scale_e8m0):
+    scale_e8m0 = scale_e8m0.view(torch.uint8)
+    s_offset = scale_e8m0.to(torch.int16) - E8M0_EXPONENT_BIAS
+    # TODO(later): it would be nice if there was a way to do the 2^x operation
+    # in PyTorch without creating a tensor of twos
+    two = torch.full(s_offset.size(), 2.0, device=scale_e8m0.device)
+    # pow(two, s_offset) can be out of range of floating point formats.
+    # TODO(later): handle this for float16 if we decide to support float16
+    # scales.
+    s_fp = torch.pow(two, s_offset)
+
+    # If a block exponent was 255, set values of that block to NaN
+    s_fp = torch.where(scale_e8m0 != E8M0_EXPONENT_NAN_VAL, s_fp, float("nan"))
+
+    return s_fp
+
 def _to_mx_rceil(
     data_hp: torch.Tensor,
     max_abs: torch.Tensor,
@@ -188,22 +205,6 @@ def to_mx(
         target_max_pow2 = F8E4M3_MAX_POW2
         mbits = MBITS_F8_E4M3
         max_pos = F8E4M3_MAX
-    elif elem_dtype == torch.float8_e5m2:
-        target_max_pow2 = F8E5M2_MAX_POW2
-        mbits = MBITS_F8_E5M2
-        max_pos = F8E5M2_MAX
-    elif elem_dtype == DTYPE_FP6_E2M3:
-        target_max_pow2 = F6_E2M3_MAX_POW2
-        mbits = MBITS_F6_E2M3
-        max_pos = F6_E2M3_MAX
-    elif elem_dtype == DTYPE_FP6_E3M2:
-        target_max_pow2 = F6_E3M2_MAX_POW2
-        mbits = MBITS_F6_E3M2
-        max_pos = F6_E3M2_MAX
-    elif elem_dtype == torch.float4_e2m1fn_x2:
-        target_max_pow2 = F4_E2M1_MAX_POW2
-        mbits = MBITS_F4_E2M1
-        max_pos = F4_E2M1_MAX
     else:
         raise AssertionError("unsupported element dtype")
 
@@ -302,28 +303,6 @@ def to_mx(
         data_lp = data_lp.to(elem_dtype)
         # need to reshape at the end to help inductor fuse things
         data_lp = data_lp.reshape(orig_shape)
-    elif elem_dtype == DTYPE_FP6_E2M3:
-        data_lp = f32_to_f6_e2m3_unpacked(data_lp)
-        if pack_fp6:
-            orig_shape = [*orig_shape[:-1], 3 * orig_shape[-1] // 4]
-            data_lp = pack_uint6(data_lp)
-        # need to reshape at the end to help inductor fuse things
-        data_lp = data_lp.reshape(orig_shape)
-    elif elem_dtype == DTYPE_FP6_E3M2:
-        data_lp = f32_to_f6_e3m2_unpacked(data_lp)
-        if pack_fp6:
-            orig_shape = [*orig_shape[:-1], 3 * orig_shape[-1] // 4]
-            data_lp = pack_uint6(data_lp)
-        # need to reshape at the end to help inductor fuse things
-        data_lp = data_lp.reshape(orig_shape)
-    elif elem_dtype == torch.float4_e2m1fn_x2:
-        # can't reshape at the end without handling it in the packing code,
-        # punt until later since we'll need to rethink the torch.compile
-        # approach for fp4x2 in any case
-        data_lp = data_lp.reshape(orig_shape)
-        data_lp = f32_to_f4_unpacked(data_lp)
-        orig_shape = [*orig_shape[:-1], orig_shape[-1] // 2]
-        data_lp = pack_uint4(data_lp)
     else:
         raise AssertionError("unsupported")
 
@@ -342,12 +321,3 @@ def pack_uint4(uint8_data: torch.Tensor) -> torch.Tensor:
     assert shape[-1] % 2 == 0
     uint8_data = uint8_data.contiguous().view(-1)
     return (uint8_data[::2] << 4 | uint8_data[1::2]).view(down_size(shape))
-
-
-def f32_to_f4_unpacked(x):
-    """
-    Input: torch.Tensor of dtype torch.float
-    Output: torch.Tensor of dtype torch.uint8, with bits 0-3 empty and
-      bits 4-7 in fp4_e2m1
-    """
-    return _f32_to_floatx_unpacked(x, EBITS_F4_E2M1, MBITS_F4_E2M1)
