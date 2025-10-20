@@ -3,21 +3,20 @@ import torch
 import vllm.envs as envs
 
 from compressed_tensors.quantization import FP4_E2M1_DATA
-from torchao.prototype.mx_formats.mx_tensor import (
-    _to_mx_rceil,
-    get_fp_scale,
-    ScaleCalculationMode,
-)
-from torchao.prototype.mx_formats.constants import (
-    BF16_EXP_BIAS,
-    DTYPE_FP4_E2M1,
-    E8M0_EXPONENT_BIAS,
-    E8M0_EXPONENT_NAN_VAL,
-    F4_E2M1_MAX,
-    F4_E2M1_MAX_POW2,
-    F32_EXP_BIAS,
-    F32_MIN_NORMAL,
-)
+from .torchao_patch import ScaleCalculationMode, _to_mx_rceil, get_fp_scale
+
+
+BF16_EXP_BIAS = 127
+DTYPE_FP4_E2M1 = "fp4_e2m1"
+E8M0_EXPONENT_BIAS = 127
+E8M0_EXPONENT_NAN_VAL = 255
+
+F4_E2M1_MAX = 6.0
+F4_E2M1_MAX_POW2 = 2  # 4
+F32_EXP_BIAS = 127
+
+F32_MIN_NORMAL = 2 ** (-F32_EXP_BIAS + 1)
+
 
 SBITS, EBITS_F32, MBITS_F32 = 1, 8, 23
 EBITS_BF16, MBITS_BF16 = 8, 7
