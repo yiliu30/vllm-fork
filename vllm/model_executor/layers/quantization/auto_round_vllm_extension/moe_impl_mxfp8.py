@@ -26,7 +26,7 @@ from .quant_methods import AutoRoundMoEMethod
 # ==------------------------------------------------------------------------==
 
 
-class AutoRoundMoEMethodMXFP8(AutoRoundMoEMethod):
+class AutoRoundMoEMethodMXFp8Impl(AutoRoundMoEMethod):
     def __init__(
         self,
         quant_config: "AutoRoundConfig",  # type: ignore # noqa E501

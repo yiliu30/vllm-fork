@@ -40,7 +40,6 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
             quant_method = AutoRoundMoEMethod.get_moe_method(self, layer, prefix)
         else:
             quant_method = super().get_quant_method(layer, prefix)
-        logger.debug(f"Apply {quant_method.__class__.__name__} to {prefix}")
         return quant_method
 
 
