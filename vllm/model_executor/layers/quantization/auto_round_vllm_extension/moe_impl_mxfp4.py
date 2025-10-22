@@ -137,7 +137,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
         H = hidden_size
         IN = intermediate_size_per_partition
         if self.has_bias:
-            # TODO: @yiliu30: use the dtype in CK
+            # TODO: yiliu30 use the dtype in CK
             bias_dtype = torch.bfloat16
             w13_bias = torch.nn.Parameter(
                 torch.zeros(E, 2 * IN, dtype=bias_dtype), requires_grad=False
@@ -155,16 +155,12 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
     def get_fused_moe_quant_config(
         self, layer: torch.nn.Module
     ) -> Optional[FusedMoEQuantConfig]:
-        # TODO: @yiliu30: implement it
         if envs.VLLM_AR_MXFP4_MODULAR_MOE:
             from vllm.model_executor.layers.fused_moe.config import (
-                FusedMoEQuantConfig,
-                fp8_w8a8_moe_quant_config,
                 ocp_mx_moe_quant_config,
             )
             self.input_dtype = "mxfp4"
             self.weight_dtype = "mxfp4"
-            # breakpoint()
             return ocp_mx_moe_quant_config(
                 quant_dtype=self.input_dtype,
                 weight_dtype=self.weight_dtype,
@@ -181,9 +177,6 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         if envs.VLLM_ENABLE_STATIC_MOE:
             if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
-                logger.debug(
-                    f"start processing weights for {getattr(layer, 'prefix', 'unknown')}"
-                )
                 weight_name_lst = ["w13_weight", "w2_weight"]
                 from .mxfp4_qdq_utils import dequant_mxfp4_to_fp8
 
@@ -383,8 +376,11 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             num_expert_group=num_expert_group,
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
-            e_score_correction_bias=e_score_correction_bias,)
+            e_score_correction_bias=e_score_correction_bias,
+        )
         assert self.fused_experts is None
+        
+        # There are three implementations:
 
         if envs.VLLM_AR_MXFP4_MODULAR_MOE:
             from vllm.model_executor.layers.fused_moe import fused_experts
@@ -409,8 +405,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                 quant_config=self.moe_quant_config,
             )
             return out
-            
-        
+
         num_all_tokens, hidden_dim = x.shape
         num_experts = layer.local_num_experts
         total_num_experts = router_logits.size(-1)
@@ -454,7 +449,6 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
             self.experts_mask_buffer.zero_()
             experts_mask = self.experts_mask_buffer
 
-
         topk_ids = topk_ids.to(torch.int64)
         topk_weights = topk_weights.to(x.dtype)
         experts_mask.scatter_(-1, topk_ids, topk_weights)
@@ -464,10 +458,7 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
         experts_mask = experts_mask[:num_all_tokens, :total_num_experts]
         experts_mask = experts_mask.transpose(0, 1)
         # Note: ep_size equal tp_size
-        if expert_map is not None:
-            ep_rank = get_tensor_model_parallel_rank()
-        else:
-            ep_rank = 0
+        ep_rank = get_tensor_model_parallel_rank() if expert_map is not None else 0
         ep_shift = ep_rank * num_experts
 
         if envs.VLLM_ENABLE_STATIC_MOE and not envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
@@ -481,28 +472,18 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
 
                 local_w13_packed = layer.w13_weight_packed[expert_index]
                 local_w13_scale = layer.w13_weight_scale[expert_index]
-                # local_w13_global_scale = layer.w13_weight_global_scale[expert_index]
-                # local_w13_input_global_scale = layer.w13_input_global_scale[
-                #     expert_index
-                # ]
                 local_w2_packed = layer.w2_weight_packed[expert_index]
                 local_w2_scale = layer.w2_weight_scale[expert_index]
-                # local_w2_global_scale = layer.w2_weight_global_scale[expert_index]
-                # local_w2_input_global_scale = layer.w2_input_global_scale[expert_index]
 
                 local_w1_packed = local_w13_packed[
                     :intermediate_size_per_partition, ...
                 ]
                 local_w1_scale = local_w13_scale[:intermediate_size_per_partition, ...]
-                # local_w1_global_scale = local_w13_global_scale[0]
-                # local_w1_input_global_scale = local_w13_input_global_scale[0]
 
                 local_w3_packed = local_w13_packed[
                     intermediate_size_per_partition:, ...
                 ]
                 local_w3_scale = local_w13_scale[intermediate_size_per_partition:, ...]
-                # local_w3_global_scale = local_w13_global_scale[1]
-                # local_w3_input_global_scale = local_w13_input_global_scale[1]
 
                 from .mxfp4_qdq_utils import run_mxfp4_emulations
 
@@ -514,8 +495,6 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                     local_w1_bias = local_w13_bias[:intermediate_size_per_partition]
                     local_w3_bias = local_w13_bias[intermediate_size_per_partition:]
                     local_w2_bias = layer.w2_bias[expert_index]
-
-                # local_w13_input_global_scale_max = local_w13_input_global_scale.max()
 
                 local_w1_out = run_mxfp4_emulations(
                     x=current_state_static,
@@ -560,14 +539,16 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
 
                 local_unpacked_w2 = layer.w2_weight_unpacked[expert_index]
                 local_w2_scale = layer.w2_weight_scale[expert_index]
-                
-                local_unpacked_w1 = local_unpacked_w13[:intermediate_size_per_partition, ...]
+
+                local_unpacked_w1 = local_unpacked_w13[
+                    :intermediate_size_per_partition, ...
+                ]
                 half_scale = local_w13_scale.shape[0] // 2
                 local_w1_scale = local_w13_scale[:half_scale, ...]
-                local_unpacked_w3 = local_unpacked_w13[intermediate_size_per_partition:, ...]
+                local_unpacked_w3 = local_unpacked_w13[
+                    intermediate_size_per_partition:, ...
+                ]
                 local_w3_scale = local_w13_scale[half_scale:, ...]
-
-
 
                 local_w1_bias = None
                 local_w2_bias = None
@@ -584,32 +565,29 @@ class AutoRoundMoEMethodMXFp4Impl(AutoRoundMoEMethod):
                     x=current_state_static,
                     weigth_fp8=local_unpacked_w1,
                     weight_scale_bf16=local_w1_scale,
-                    bias=local_w1_bias
+                    bias=local_w1_bias,
                 )
                 local_w3_out = mxfp4_gemm_with_unpacked_weight(
                     x=current_state_static,
                     weigth_fp8=local_unpacked_w3,
                     weight_scale_bf16=local_w3_scale,
-                    bias=local_w3_bias
+                    bias=local_w3_bias,
                 )
 
                 w13_out = apply_act(local_w1_out, local_w3_out, activation)
-                
 
                 local_w2_out = mxfp4_gemm_with_unpacked_weight(
                     x=w13_out,
                     weigth_fp8=local_unpacked_w2,
                     weight_scale_bf16=local_w2_scale,
-                    bias=local_w2_bias
+                    bias=local_w2_bias,
                 )
-                
-                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(
-                    1
-                )
+
+                padded_weight = experts_mask[expert_index + ep_shift].unsqueeze(1)
                 local_w2_out = local_w2_out * padded_weight
                 if expert_index == 0:
                     final_hidden_states = local_w2_out
                 else:
                     final_hidden_states += local_w2_out
             return final_hidden_states
-        raise NotImplementedError(f"Not implemented for now.")
+        raise NotImplementedError("Not implemented for now.")
