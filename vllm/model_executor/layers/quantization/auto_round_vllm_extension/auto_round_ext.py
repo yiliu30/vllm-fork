@@ -19,9 +19,6 @@ from .quant_methods import AutoRoundMoEMethod, AutoRoundQuantLinearMethod
 logger = init_logger(__name__)
 
 
-def need_skip_attn(prefix: str):
-    return "self_attn" in prefix
-
 
 class AutoRoundExtensionConfig(AutoRoundConfig):
     SUPPORTED_DTYPES = AutoRoundConfig.SUPPORTED_DTYPES.union({"mx_fp"})
@@ -30,6 +27,7 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
     )
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
+
         if isinstance(layer, LinearBase):
             quant_method: LinearMethodBase = UnquantizedLinearMethod()
             # FIXME: handle linear as well
@@ -39,32 +37,35 @@ class AutoRoundExtensionConfig(AutoRoundConfig):
             quant_method = AutoRoundQuantLinearMethod(self, scheme=self.quant_scheme)
 
         elif isinstance(layer, FusedMoE):
-            quant_method = AutoRoundMoEMethod.get_moe_method(self, layer)
+            quant_method = AutoRoundMoEMethod.get_moe_method(self, layer, prefix)
         else:
             quant_method = super().get_quant_method(layer, prefix)
         logger.debug(f"Apply {quant_method.__class__.__name__} to {prefix}")
         return quant_method
-    
-    def _is_mxfp4_w4a4(self, *args, **kwargs):
-        # FIXME: below impl is incomplete
-        return self.weight_bits == 4 and self.group_size == 32
-    
-    def _is_mxfp8_w8a8(self, *args, **kwargs):
-        # FIXME: below impl is incomplete
-        return self.weight_bits == 8 and self.group_size == 32
+
+
+    @staticmethod
+    def _parse_quant_scheme(config: dict):
+        quant_scheme_attrs = QuantizationScheme.get_attributes()
+        filter_config = {
+            key: value for key, value in config.items() if key in quant_scheme_attrs
+        }
+        quant_scheme = QuantizationScheme.from_dict(filter_config)
+        return quant_scheme
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> AutoRoundConfig:
         ar_config = super().from_config(config)
-
-        # FIXME: (Yi) parse the per-layer quant scheme
-        def create_quant_scheme(config):
-            quant_scheme_attrs = QuantizationScheme.get_attributes()
-            filter_config = {
-                key: value for key, value in config.items() if key in quant_scheme_attrs
-            }
-            quant_scheme = QuantizationScheme.from_dict(filter_config)
-            return quant_scheme
-
-        ar_config.quant_scheme = create_quant_scheme(config)
+        # TODO: (yiliu) refine below implementation
+        quant_scheme = AutoRoundExtensionConfig._parse_quant_scheme(config)
+        layer_schemes = {}
+        layer_schemes = {}  # ensure dict
+        extra_config = getattr(ar_config, "extra_config", None)
+        if extra_config is not None:
+            for layer_name, layer_config in extra_config.items():
+                layer_schemes[layer_name] = AutoRoundExtensionConfig._parse_quant_scheme(
+                    layer_config
+                )
+        ar_config.quant_scheme = quant_scheme
+        ar_config.layer_schemes = layer_schemes
         return ar_config

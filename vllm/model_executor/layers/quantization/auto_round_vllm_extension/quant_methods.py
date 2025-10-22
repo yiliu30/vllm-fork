@@ -71,39 +71,62 @@ class AutoRoundQuantLinearMethod(LinearMethodBase):
         return self.impl.apply_weights(layer, x, bias=bias)
 
 
+
+def _is_mxfp4_w4a4(scheme: QuantizationScheme):
+    # FIXME: below impl is incomplete
+    return scheme.bits == 4 and scheme.group_size == 32
+
+def _is_mxfp8_w8a8(scheme: QuantizationScheme):
+    # FIXME: below impl is incomplete
+    return scheme.bits == 8 and scheme.group_size == 32
+
 class AutoRoundMoEMethod(FusedMoEMethodBase):
-    def __init_(self, moe: FusedMoEConfig):
+    def __init__(self, moe: FusedMoEConfig):
         super().__init__(moe)
 
     @staticmethod
     def get_moe_method(
         quant_config: "AutoRoundConfig",  # type: ignore # noqa E501
         layer: torch.nn.Module,
+        prefix: str,
     ) -> "AutoRoundMoEMethod":
-        # TODO: @dsikka: refactor this to use schemes as other kernels
-        # are supported + check if the layer is being ignored.
-        # weight_quant = quant_config.target_scheme_map["Linear"].get("weights")
-        # input_quant = quant_config.target_scheme_map["Linear"].get(
-        #     "input_activations")
-        weight_quant = None
-        input_quant = None
 
-        # FIXME: @yiliu30: below check is imcomplete
-        if quant_config._is_mxfp8_w8a8(weight_quant, input_quant):
-            from .moe_impl_mxfp8 import AutoRoundMoEMethodMXFP8
+        def get_scheme(quant_config: "AutoRoundConfig", prefix: str):
+            # Check extra_config first
+            layer_schemes = quant_config.layer_schemes
+            # FIXME: make more robust
+            for name, scheme in layer_schemes.items():
+                if prefix.startswith(name):
+                    return scheme
+            # If not found, use default
+            return quant_config.quant_scheme
 
-            impl = AutoRoundMoEMethodMXFP8(quant_config, layer.moe_config)
-            return impl
+        def check_quantized(weight_bits: int) -> bool:
+            return weight_bits < 16
 
-        if quant_config._is_mxfp4_w4a4(weight_quant, input_quant):
-            from .moe_impl_mxfp4 import AutoRoundMoEMethodMXFp4Impl
+        def get_impl(scheme: QuantizationScheme):
+            if not check_quantized(scheme.bits):
+                from vllm.model_executor.layers.fused_moe.layer import (
+                    UnquantizedFusedMoEMethod,
+                )
 
-            impl = AutoRoundMoEMethodMXFp4Impl(quant_config, layer.moe_config)
-            return impl
-        else:
-            raise RuntimeError(
-                f"Unsupported FusedMoe scheme: {weight_quant}, {input_quant}"
-            )
+                return UnquantizedFusedMoEMethod(layer.moe_config)
+
+            elif _is_mxfp8_w8a8(scheme):
+                from .moe_impl_mxfp8 import AutoRoundMoEMethodMXFP8
+
+                return AutoRoundMoEMethodMXFP8(quant_config, layer.moe_config)
+            elif _is_mxfp4_w4a4(scheme):
+                from .moe_impl_mxfp4 import AutoRoundMoEMethodMXFp4Impl
+
+                return AutoRoundMoEMethodMXFp4Impl(quant_config, layer.moe_config)
+
+            raise ValueError(f"Unsupported FusedMoe scheme: {scheme}")
+
+        layer_scheme = get_scheme(quant_config, prefix)
+        impl = get_impl(layer_scheme)
+        logger.debug("Apply %s to %s", impl.__class__.__name__, prefix)
+        return impl
 
     def get_fused_moe_quant_config(
         self, layer: torch.nn.Module
