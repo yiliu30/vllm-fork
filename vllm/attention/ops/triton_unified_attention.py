@@ -217,6 +217,12 @@ def kernel_unified_attention_2d(
         tile_start = tl.maximum(0, first_allowed_key // TILE_SIZE)
         tile_end = tl.minimum((last_allowed_key // TILE_SIZE) + 1, num_tiles)
 
+
+    Q_dtype = Q.dtype
+    Q = Q.to(tl.float8e4nv)
+    Q = Q.to(Q_dtype)
+    
+
     # iterate through tiles (now limited to the sliding window range)
     for j in range(tile_start, tile_end):
         seq_offset = j * TILE_SIZE + offs_t
@@ -274,7 +280,8 @@ def kernel_unified_attention_2d(
 
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
-
+        K = K.to(tl.float8e4nv)
+        K = K.to(Q.dtype)
         S += scale * tl.dot(Q, K)
 
         if USE_SOFTCAP:
@@ -331,7 +338,11 @@ def kernel_unified_attention_2d(
         M = m_j
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        acc += tl.dot(P.to(V.dtype), V)
+        P = P.to(tl.float8e4nv)
+        P = P.to(V.dtype)
+        V = V.to(tl.float8e4nv)
+        V = V.to(P.dtype)
+        acc += tl.dot(P, V)
 
     # epilogue
     acc = acc / L[:, None]
@@ -502,7 +513,9 @@ def kernel_unified_attention_3d(
     # cover the longest sequence prefix (due to causal masking, tiles beyond
     # this prefix can be skipped)
     num_tiles = cdiv_fn(max_seq_prefix_len, TILE_SIZE)
-
+    Q_dtype = Q.dtype
+    Q = Q.to(tl.float8e4nv)
+    Q = Q.to(Q_dtype)
     # iterate through tiles within current segment
     for j in range(
         segm_idx * tiles_per_segment,
@@ -563,6 +576,8 @@ def kernel_unified_attention_3d(
 
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
+        K = K.to(tl.float8e4nv)
+        K = K.to(Q.dtype)
         S += scale * tl.dot(Q, K)
 
         if USE_SOFTCAP:
@@ -619,7 +634,11 @@ def kernel_unified_attention_3d(
         M = m_j
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        acc += tl.dot(P.to(V.dtype), V)
+        P = P.to(tl.float8e4nv)
+        P = P.to(V.dtype)
+        V = V.to(tl.float8e4nv)
+        V = V.to(P.dtype)
+        acc += tl.dot(P, V)
 
     segm_output_offset = (
         query_offset_0[:, None].to(tl.int64)
