@@ -219,7 +219,11 @@ def kernel_unified_attention_2d(
 
 
     Q_dtype = Q.dtype
-    Q = Q.to(tl.float8e4nv)
+    # Q = Q.to(tl.float8e4nv)
+    # tmp = Q
+    # tmp = tl.floor(tmp.to(tl.float32) * 6.0)
+    # tmp = tmp / 6.0
+    # Q = tmp
     Q = Q.to(Q_dtype)
     
 
@@ -280,7 +284,11 @@ def kernel_unified_attention_2d(
 
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
-        K = K.to(tl.float8e4nv)
+        # K = K.to(tl.float8e4nv)
+        # tmpk = K
+        # tmpk = tl.floor(tmpk.to(tl.float32) * 6.0)
+        # tmpk = tmpk / 6.0
+        # K= tmpk
         K = K.to(Q.dtype)
         S += scale * tl.dot(Q, K)
 
@@ -338,9 +346,22 @@ def kernel_unified_attention_2d(
         M = m_j
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        P = P.to(tl.float8e4nv)
+        # P = P.to(tl.float8e4nv)
+        
+        p_scale = P.max(1)/ 8.0
+        tmpp = P  / p_scale[:, None]
+        tmpp = tl.floor(tmpp.to(tl.float32))
+        tmpp = tmpp * p_scale[:, None]
+        P= tmpp
+        
         P = P.to(V.dtype)
-        V = V.to(tl.float8e4nv)
+        # V = V.to(tl.float8e4nv)
+        
+        # tmpv = V
+        # tmpv = tl.floor(tmpv.to(tl.float32) * 6.0)
+        # tmpv = tmpv / 6.0
+        # V= tmpv
+        
         V = V.to(P.dtype)
         acc += tl.dot(P, V)
 
@@ -514,7 +535,11 @@ def kernel_unified_attention_3d(
     # this prefix can be skipped)
     num_tiles = cdiv_fn(max_seq_prefix_len, TILE_SIZE)
     Q_dtype = Q.dtype
-    Q = Q.to(tl.float8e4nv)
+    # Q = Q.to(tl.float8e4nv)
+    # tmp = Q
+    # tmp = tl.floor(tmp.to(tl.float32) * 6.0)
+    # tmp = tmp / 6.0
+    # Q = tmp
     Q = Q.to(Q_dtype)
     # iterate through tiles within current segment
     for j in range(
@@ -576,7 +601,14 @@ def kernel_unified_attention_3d(
 
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
-        K = K.to(tl.float8e4nv)
+        # K = K.to(tl.float8e4nv)
+        
+        # tmpk = K
+        # tmpk = tl.floor(tmpk.to(tl.float32) * 6.0)
+        # tmpk = tmpk / 6.0
+        # K= tmpk
+        
+        
         K = K.to(Q.dtype)
         S += scale * tl.dot(Q, K)
 
@@ -634,9 +666,21 @@ def kernel_unified_attention_3d(
         M = m_j
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        P = P.to(tl.float8e4nv)
+        # P = P.to(tl.float8e4nv)
+        
+        p_scale = P.max(1)/ 8.0
+        tmpp = P  / p_scale[:, None]
+        tmpp = tl.floor(tmpp.to(tl.float32))
+        tmpp = tmpp * p_scale[:, None]
+        P = tmpp
         P = P.to(V.dtype)
-        V = V.to(tl.float8e4nv)
+        # V = V.to(tl.float8e4nv)
+        
+        # tmpv = V
+        # tmpv = tl.floor(tmpv.to(tl.float32) * 6.0)
+        # tmpv = tmpv / 6.0
+        # V= tmpv
+        
         V = V.to(P.dtype)
         acc += tl.dot(P, V)
 
