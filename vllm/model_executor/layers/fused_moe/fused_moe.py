@@ -46,7 +46,7 @@ from vllm.model_executor.layers.fused_moe.utils import (
     disable_inplace,
     moe_kernel_quantize_input,
 )
-from vllm.model_executor.layers.quantization.utils.mxfp4_utils import dequant_mxfp4
+# from vllm.model_executor.layers.quantization.utils.mxfp4_utils import dequant_mxfp4
 from vllm.model_executor.layers.quantization.utils.mxfp6_utils import dequant_mxfp6
 from vllm.model_executor.layers.quantization.utils.ocp_mx_utils import OCP_MX_Scheme
 from vllm.model_executor.utils import maybe_disable_graph_partition
@@ -59,6 +59,14 @@ from .rocm_aiter_fused_moe import is_rocm_aiter_moe_enabled
 
 logger = init_logger(__name__)
 
+
+def dequant_mxfp4(
+    x: torch.Tensor, scale: torch.Tensor, float_dtype: torch.dtype
+) -> torch.Tensor:
+    if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+        return x.to(float_dtype)
+    else:
+        raise NotImplementedError("dequant_mxfp4 is not implemented yet.")
 
 @triton.jit
 def write_zeros_to_output(
@@ -1717,8 +1725,11 @@ def fused_experts_impl(
             "w_mxfp4_a_mxfp6_e3m2",
             "w_mxfp4_a_mxfp6_e2m3",
         }:
-            # 16bit activation and fp4x2 packed weight
-            assert hidden_states.size(1) == w1.size(2) * 2, "hidden size mismatch"
+            if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+                assert hidden_states.size(1) == w1.size(2), "hidden size mismatch"
+            else:
+                # 16bit activation and fp4x2 packed weight
+                assert hidden_states.size(1) == w1.size(2) * 2, "hidden size mismatch"
         elif ocp_mx_scheme in {
             "w_mxfp6_e3m2_a_mxfp6_e3m2",
             "w_mxfp6_e2m3_a_mxfp6_e2m3",

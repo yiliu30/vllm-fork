@@ -13,9 +13,9 @@ from vllm.model_executor.layers.quantization.utils.int8_utils import (
     per_token_group_quant_int8,
     per_token_quant_int8,
 )
-from vllm.model_executor.layers.quantization.utils.mxfp4_utils import (
-    quant_dequant_mxfp4,
-)
+# from vllm.model_executor.layers.quantization.utils.mxfp4_utils import (
+#     quant_dequant_mxfp4,
+# )
 from vllm.model_executor.layers.quantization.utils.mxfp6_utils import (
     quant_dequant_mxfp6,
 )
@@ -27,6 +27,13 @@ from vllm.utils.flashinfer import flashinfer_fp4_quantize
 from vllm.utils.math_utils import cdiv
 from vllm.utils.torch_utils import is_torch_equal_or_newer
 
+
+def quant_dequant_mxfp4(
+    x: torch.Tensor, scale_calculation_mode: str = "even"
+) -> torch.Tensor:
+    import auto_round_extension.vllm_ext.mxfp4_qdq_utils as mxfp4_utils
+    return mxfp4_utils.qdq_mxfp4(x)
+    
 
 @triton.jit
 def _count_expert_num_tokens(
