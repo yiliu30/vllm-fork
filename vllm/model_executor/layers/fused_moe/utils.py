@@ -267,6 +267,16 @@ def moe_kernel_quantize_input(
         return _mxfp6_e3m2_quantize(A, A_scale, per_act_token_quant, block_shape)
     elif quant_dtype == "mxfp6_e2m3":
         return _mxfp6_e2m3_quantize(A, A_scale, per_act_token_quant, block_shape)
+    elif quant_dtype == "mxfp8_e4m3":
+        from auto_round_extension.vllm_ext.mxfp8_qdq_utils import dequant_mx_fp8, quant_mx_fp8
+        x_scale, x_quant = quant_mx_fp8(A)
+        dequant_x = dequant_mx_fp8(
+            weight_fp8=x_quant,
+            scale_e8m0=x_scale,
+            block_size=32,
+            target_dtype=A.dtype,
+        )
+        return dequant_x, None
     else:
         return A, A_scale
 

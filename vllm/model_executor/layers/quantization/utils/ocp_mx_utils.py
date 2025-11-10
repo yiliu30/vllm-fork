@@ -25,6 +25,7 @@ class OCP_MX_Scheme(str, Enum):
     w_mxfp4_a_mxfp6_e2m3 = "w_mxfp4_a_mxfp6_e2m3"
     w_mxfp6_e3m2_a_mxfp6_e3m2 = "w_mxfp6_e3m2_a_mxfp6_e3m2"
     w_mxfp6_e2m3_a_mxfp6_e2m3 = "w_mxfp6_e2m3_a_mxfp6_e2m3"
+    w_mxfp8_e4m3_a_mxfp8_e4m3 = "w_mxfp8_e4m3_a_mxfp8_e4m3"
 
     @classmethod
     def from_quant_dtype(cls, input_dtype: str | None, weight_dtype: str | None):
@@ -40,6 +41,8 @@ class OCP_MX_Scheme(str, Enum):
             return cls.w_mxfp6_e3m2_a_mxfp6_e3m2
         elif input_dtype == "mxfp6_e2m3" and weight_dtype == "mxfp6_e2m3":
             return cls.w_mxfp6_e2m3_a_mxfp6_e2m3
+        elif input_dtype == "mxfp8_e4m3" and weight_dtype == "mxfp8_e4m3":
+            return cls.w_mxfp8_e4m3_a_mxfp8_e4m3
         else:
             logger.warning(
                 "input_dtype='%s' and"

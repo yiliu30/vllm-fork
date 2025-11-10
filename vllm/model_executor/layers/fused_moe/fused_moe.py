@@ -1686,6 +1686,8 @@ def _get_config_quant_dtype(
         return "mxfp6_e3m2"
     elif ocp_mx_scheme in {"w_mxfp4_a_mxfp6_e2m3", "w_mxfp6_e2m3_a_mxfp6_e2m3"}:
         return "mxfp6_e2m3"
+    elif ocp_mx_scheme in {"w_mxfp8_e4m3_a_mxfp8_e4m3"}:
+        return "mxfp8_e4m3"
     return None
 
 
@@ -1735,6 +1737,10 @@ def fused_experts_impl(
             "w_mxfp6_e2m3_a_mxfp6_e2m3",
         }:
             assert hidden_states.size(1) == (w1.size(2) * 4) // 3, (
+                "hidden size mismatch"
+            )
+        elif ocp_mx_scheme == "w_mxfp8_e4m3_a_mxfp8_e4m3":
+            assert hidden_states.size(1) == w1.size(2), (
                 "hidden size mismatch"
             )
         else:
@@ -1847,6 +1853,22 @@ def fused_experts_impl(
             w1_scale = None
             w2 = dequant_mxfp6(
                 w2, w2_scale, quant_dtype="fp6_e2m3", float_dtype=hidden_states.dtype
+            )
+            w2_scale = None
+        elif ocp_mx_scheme == OCP_MX_Scheme.w_mxfp8_e4m3_a_mxfp8_e4m3:
+            from auto_round_extension.vllm_ext.mxfp8_qdq_utils import dequant_mx_fp8
+            w1 = dequant_mx_fp8(
+                weight_fp8=w1,
+                scale_e8m0=w1_scale,
+                block_size=32,
+                target_dtype=hidden_states.dtype
+            )
+            w1_scale = None
+            w2 = dequant_mx_fp8(
+                weight_fp8=w2,
+                scale_e8m0=w2_scale,
+                block_size=32,
+                target_dtype=hidden_states.dtype
             )
             w2_scale = None
         else:
