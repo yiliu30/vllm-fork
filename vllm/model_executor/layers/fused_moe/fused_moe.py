@@ -1856,21 +1856,36 @@ def fused_experts_impl(
             )
             w2_scale = None
         elif ocp_mx_scheme == OCP_MX_Scheme.w_mxfp8_e4m3_a_mxfp8_e4m3:
-            from auto_round_extension.vllm_ext.mxfp8_qdq_utils import dequant_mx_fp8
-            w1 = dequant_mx_fp8(
-                weight_fp8=w1,
-                scale_e8m0=w1_scale,
-                block_size=32,
-                target_dtype=hidden_states.dtype
-            )
-            w1_scale = None
-            w2 = dequant_mx_fp8(
-                weight_fp8=w2,
-                scale_e8m0=w2_scale,
-                block_size=32,
-                target_dtype=hidden_states.dtype
-            )
-            w2_scale = None
+            if envs.VLLM_MXFP4_PRE_UNPACK_TO_FP8:
+                from auto_round_extension.vllm_ext.mxfp4_qdq_utils import mxfp4_fp8_weight_to_bf16
+                w1 = mxfp4_fp8_weight_to_bf16(
+                    weight_fp8=w1,
+                    scale_bf16=w1_scale,
+                )
+                w1 = w1.to(hidden_states.dtype)
+                w1_scale = None
+                w2 = mxfp4_fp8_weight_to_bf16(
+                    weight_fp8=w2,
+                    scale_bf16=w2_scale,
+                )
+                w2 = w2.to(hidden_states.dtype)
+                w2_scale = None
+            else:
+                from auto_round_extension.vllm_ext.mxfp8_qdq_utils import dequant_mx_fp8
+                w1 = dequant_mx_fp8(
+                    weight_fp8=w1,
+                    scale_e8m0=w1_scale,
+                    block_size=32,
+                    target_dtype=hidden_states.dtype
+                )
+                w1_scale = None
+                w2 = dequant_mx_fp8(
+                    weight_fp8=w2,
+                    scale_e8m0=w2_scale,
+                    block_size=32,
+                    target_dtype=hidden_states.dtype
+                )
+                w2_scale = None
         else:
             raise NotImplementedError(f"Unsupported ocp_mx_scheme={ocp_mx_scheme}")
 
