@@ -314,6 +314,10 @@ class FusedMoEQuantConfig:
                 self._ocp_mx_scheme = ocp_mx_scheme
 
         return self._ocp_mx_scheme
+    
+    @ocp_mx_scheme.setter
+    def ocp_mx_scheme(self, value: str | None) -> None:
+        self._ocp_mx_scheme = value
 
     @property
     def use_mxfp4_w4a16(self) -> bool:

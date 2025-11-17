@@ -267,10 +267,10 @@ def moe_kernel_quantize_input(
         return _mxfp6_e3m2_quantize(A, A_scale, per_act_token_quant, block_shape)
     elif quant_dtype == "mxfp6_e2m3":
         return _mxfp6_e2m3_quantize(A, A_scale, per_act_token_quant, block_shape)
-    elif quant_dtype == "mxfp8_e4m3":
+    elif quant_dtype == "mxfp8_e4m3_from_mxfp4":
         # !!! Note: here we are actually doing mxfp4 qdq(with pre-unpack to fp8)
-        if envs.VLLM_MXFP4_PRE_UNPACK_TO_FP8:
-            return _mxfp4_quantize(A, A_scale, per_act_token_quant, block_shape)
+        return _mxfp4_quantize(A, A_scale, per_act_token_quant, block_shape)
+    elif quant_dtype == "mxfp8_e4m3":
         from auto_round_extension.vllm_ext.mxfp8_qdq_utils import dequant_mx_fp8, quant_mx_fp8
         x_scale, x_quant = quant_mx_fp8(A)
         dequant_x = dequant_mx_fp8(
