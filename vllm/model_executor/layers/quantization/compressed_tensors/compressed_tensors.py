@@ -177,6 +177,7 @@ class CompressedTensorsConfig(QuantizationConfig):
             quant_format=quant_format,
             sparsity_scheme_map=sparsity_scheme_map,
             sparsity_ignore_list=sparsity_ignore_list,
+            kv_cache_scheme=config.pop("kv_cache_scheme", None),
             config=config,
             transform_config=transform_config,
         )
@@ -227,22 +228,30 @@ class CompressedTensorsConfig(QuantizationConfig):
         for _, quant_config in config_groups.items():
             targets = quant_config.get("targets")
             for target in targets:
+                logger.warning(f"parse target {target}")
                 target_scheme_map[target] = {}
-                target_scheme_map[target]["weights"] = QuantizationArgs.model_validate(
-                    quant_config.get("weights")
-                )
-
+                logger.warning(f"parse weights for target {target}")
+                quant_config_weigth = quant_config.get("weights")
+                logger.warning(f"quant_config_weigth: {quant_config_weigth}")
+                if quant_config_weigth is None:
+                    target_scheme_map[target]["weights"] = None
+                else:
+                    target_scheme_map[target]["weights"] = QuantizationArgs.model_validate(
+                        quant_config.get("weights")
+                    )
+                logger.warning(f"parse input_activations for target {target}")
                 target_scheme_map[target]["input_activations"] = None
                 target_scheme_map[target]["format"] = quant_config.get("format")
                 format = target_scheme_map[target].get("format")
                 # If no per-config format defined, use global format in config
                 act_quant_format = (
                     is_activation_quantization_format(format)
-                    if format is not None
+                    if format is not None 
                     else is_activation_quantization_format(quant_format)
                 )
                 # TODO(czhu): w4a8fp8 is in packed-quantized format
                 # but needs input activation quantization
+                logger.warning(f"act_quant_format: {act_quant_format}")
                 input_activations = quant_config.get("input_activations")
                 if act_quant_format or input_activations:
                     # The only case where we have activation quant supported
@@ -889,7 +898,6 @@ class CompressedTensorsKVCacheMethod(BaseKVCacheMethod):
 
         type_ = kv_cache_scheme.get("type")
         num_bits = kv_cache_scheme.get("num_bits")
-
         if type_ != "float" and num_bits != 8:
             raise NotImplementedError(
                 "Currently supported kv cache quantization is "
