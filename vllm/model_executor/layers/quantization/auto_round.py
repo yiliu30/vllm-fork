@@ -452,3 +452,23 @@ class AutoRoundConfig(QuantizationConfig):
             return self.apply_gptq_quant_layer(layer, prefix)
         if "awq" in self.packing_format or "awq" in self.backend:
             return self.apply_awq_quant_layer(layer, prefix)
+
+
+import os
+VLLM_ENABLE_AR_EXT = os.environ.get("VLLM_ENABLE_AR_EXT", "") in [
+    "1",
+    "true",
+    "True",
+]
+
+if VLLM_ENABLE_AR_EXT:
+    logger.warning_once("*****************************************************************************")
+    logger.warning_once(f"* !!! VLLM_ENABLE_AR_EXT is set to {VLLM_ENABLE_AR_EXT}, applying auto_round_vllm_extension *")
+    logger.warning_once("*****************************************************************************")
+
+    import vllm.model_executor.layers.quantization.auto_round as auto_round_module
+
+    from auto_round_extension.vllm_ext.auto_round_ext import AutoRoundExtensionConfig
+
+    auto_round_module.AutoRoundConfig = AutoRoundExtensionConfig
+    from auto_round_extension.vllm_ext.envs_ext import extra_environment_variables
