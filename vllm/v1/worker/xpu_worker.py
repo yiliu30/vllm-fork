@@ -54,19 +54,25 @@ class XPUWorker(Worker):
                 envs.VLLM_TORCH_PROFILER_WITH_STACK,
                 envs.VLLM_TORCH_PROFILER_WITH_FLOPS,
             )
-            self.profiler = torch.profiler.profile(
-                activities=[
-                    torch.profiler.ProfilerActivity.CPU,
-                    torch.profiler.ProfilerActivity.XPU,
-                ],
-                record_shapes=envs.VLLM_TORCH_PROFILER_RECORD_SHAPES,
-                profile_memory=envs.VLLM_TORCH_PROFILER_WITH_PROFILE_MEMORY,
-                with_stack=envs.VLLM_TORCH_PROFILER_WITH_STACK,
-                with_flops=envs.VLLM_TORCH_PROFILER_WITH_FLOPS,
-                on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                    torch_profiler_trace_dir, worker_name=worker_name, use_gzip=True
-                ),
+
+            worker_name = f"{vllm_config.instance_id}-rank-{self.rank}"
+            from vllm.profiler.xpu_profiler import XPUTorchProfilerWrapper
+            self.profiler = XPUTorchProfilerWrapper(
+                worker_name=worker_name, local_rank=self.local_rank
             )
+            # self.profiler = torch.profiler.profile(
+            #     activities=[
+            #         torch.profiler.ProfilerActivity.CPU,
+            #         torch.profiler.ProfilerActivity.XPU,
+            #     ],
+            #     record_shapes=envs.VLLM_TORCH_PROFILER_RECORD_SHAPES,
+            #     profile_memory=envs.VLLM_TORCH_PROFILER_WITH_PROFILE_MEMORY,
+            #     with_stack=envs.VLLM_TORCH_PROFILER_WITH_STACK,
+            #     with_flops=envs.VLLM_TORCH_PROFILER_WITH_FLOPS,
+            #     on_trace_ready=torch.profiler.tensorboard_trace_handler(
+            #         torch_profiler_trace_dir, worker_name=worker_name, use_gzip=True
+            #     ),
+            # )
         else:
             self.profiler = None
 
