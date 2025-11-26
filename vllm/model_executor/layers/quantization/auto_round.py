@@ -455,6 +455,7 @@ class AutoRoundConfig(QuantizationConfig):
 
 
 import os
+
 VLLM_ENABLE_AR_EXT = os.environ.get("VLLM_ENABLE_AR_EXT", "") in [
     "1",
     "true",
@@ -462,13 +463,6 @@ VLLM_ENABLE_AR_EXT = os.environ.get("VLLM_ENABLE_AR_EXT", "") in [
 ]
 
 if VLLM_ENABLE_AR_EXT:
-    logger.warning_once("*****************************************************************************")
-    logger.warning_once(f"* !!! VLLM_ENABLE_AR_EXT is set to {VLLM_ENABLE_AR_EXT}, applying auto_round_vllm_extension *")
-    logger.warning_once("*****************************************************************************")
+    from auto_round_extension.vllm_ext import apply as apply_ar_ext
 
-    import vllm.model_executor.layers.quantization.auto_round as auto_round_module
-
-    from auto_round_extension.vllm_ext.auto_round_ext import AutoRoundExtensionConfig
-
-    auto_round_module.AutoRoundConfig = AutoRoundExtensionConfig
-    from auto_round_extension.vllm_ext.envs_ext import extra_environment_variables
+    apply_ar_ext()
