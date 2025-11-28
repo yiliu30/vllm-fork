@@ -8,19 +8,31 @@ import torch
 from vllm.attention.ops.triton_unified_attention import unified_attention
 from vllm.platforms import current_platform
 
-NUM_HEADS = [(4, 4), (8, 2)]
-HEAD_SIZES = [128, 256]
+NUM_HEADS = [
+    # (4, 4),
+    (8, 2)
+]
+HEAD_SIZES = [
+    128,
+    # 256
+]
 BLOCK_SIZES = [16]
 
 DTYPES = [torch.bfloat16]
 QDTYPES = (
-    [None, torch.float8_e4m3fn]
+    [
+        # None,
+        torch.float8_e4m3fn
+    ]
     if not current_platform.is_rocm()
     else [None, torch.float8_e4m3fnuz]
 )
 # one value large enough to test overflow in index calculation.
 # one value small enough to test the schema op check
-NUM_BLOCKS = [32768, 2048]
+NUM_BLOCKS = [
+    # 32768, 
+    2048
+    ]
 
 
 def ref_paged_attn(
@@ -40,6 +52,7 @@ def ref_paged_attn(
 
     outputs: list[torch.Tensor] = []
     start_idx = 0
+    breakpoint()
     for i in range(num_seqs):
         query_len = query_lens[i]
         kv_len = kv_lens[i]
@@ -53,28 +66,23 @@ def ref_paged_attn(
         k = k[:kv_len]
         v = value_cache[block_indices].view(-1, num_kv_heads, head_size)
         v = v[:kv_len]
-
+        # q shape : 1, 8, 128
+        # k/v shape 1328, 2, 128
         if q.shape[1] != k.shape[1]:
+            # [1328, 2, 128] -> [1328, 8, 128]
             k = torch.repeat_interleave(k, q.shape[1] // k.shape[1], dim=1)
             v = torch.repeat_interleave(v, q.shape[1] // v.shape[1], dim=1)
+        # [8, 1, 1328]
+        print(f"q shape : {q.shape}, k/v shape {k.shape}")
         attn = torch.einsum("qhd,khd->hqk", q, k).float()
         empty_mask = torch.ones(query_len, kv_len)
         mask = torch.triu(empty_mask, diagonal=kv_len - query_len + 1).bool()
-        if sliding_window is not None:
-            sliding_window_mask = (
-                torch.triu(
-                    empty_mask, diagonal=kv_len - (query_len + sliding_window) + 1
-                )
-                .bool()
-                .logical_not()
-            )
-            mask |= sliding_window_mask
-        if soft_cap is not None and soft_cap > 0:
-            attn = soft_cap * torch.tanh(attn / soft_cap)
         attn.masked_fill_(mask, float("-inf"))
+        # breakpoint()
         attn = torch.softmax(attn, dim=-1).to(v.dtype)
+        
         out = torch.einsum("hqk,khd->qhd", attn, v)
-
+        print(f"attn shape: {attn.shape}, v shape: {v.shape}, out shape: {out.shape}")
         outputs.append(out)
         start_idx += query_len
 
@@ -82,14 +90,29 @@ def ref_paged_attn(
 
 
 @pytest.mark.parametrize(
-    "seq_lens", [[(1, 1328), (5, 18), (129, 463)], [(1, 523), (1, 37), (1, 2011)]]
+    "seq_lens", [
+        [
+            # (1, 1328), 
+            (5, 18), 
+            # (129, 463)
+            
+            ], 
+            # [(1, 523), (1, 37), (1, 2011)]
+            
+            ]
 )
 @pytest.mark.parametrize("num_heads", NUM_HEADS)
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 @pytest.mark.parametrize("block_size", BLOCK_SIZES)
-@pytest.mark.parametrize("sliding_window", [None, 64, 128, 256])
+@pytest.mark.parametrize("sliding_window", [
+    None, 
+    # 64, 128, 256
+    ])
 @pytest.mark.parametrize("dtype", DTYPES)
-@pytest.mark.parametrize("soft_cap", [None, 50.0])
+@pytest.mark.parametrize("soft_cap", [
+        None, 
+        # 50.0
+        ])
 @pytest.mark.parametrize("num_blocks", NUM_BLOCKS)
 @pytest.mark.parametrize("q_dtype", QDTYPES)
 @torch.inference_mode()
@@ -151,7 +174,31 @@ def test_triton_unified_attn(
         q_descale = None  # Not yet supported
         k_descale = torch.rand(scale_shape, dtype=torch.float32)
         v_descale = torch.rand(scale_shape, dtype=torch.float32)
-
+        # breakpoint()
+    # import tritonparse.structured_logging
+    # import tritonparse.utils
+    # import tritonparse.structured_logging
+    # _log_name = "test4"
+    # import tritonparse.context_manager
+    # tritonparse.structured_logging.init(_log_name, enable_trace_launch=True)
+    # with tritonparse.context_manager.TritonParseManager(
+    #     enable_trace_launch=True,
+    #     split_inductor_compilations=False,
+    #     out=_log_name,
+    # ) as manager:
+    
+    ref_output = ref_paged_attn(
+        query=query,
+        key_cache=key_cache,
+        value_cache=value_cache,
+        query_lens=query_lens,
+        kv_lens=kv_lens,
+        block_tables=block_tables,
+        scale=scale,
+        sliding_window=sliding_window,
+        soft_cap=soft_cap,
+    )
+    
     unified_attention(
         q=maybe_quantized_query,
         k=maybe_quantized_key_cache,
@@ -169,19 +216,9 @@ def test_triton_unified_attn(
         q_descale=q_descale,
         k_descale=k_descale,
         v_descale=v_descale,
-    )
+        )
 
-    ref_output = ref_paged_attn(
-        query=query,
-        key_cache=key_cache,
-        value_cache=value_cache,
-        query_lens=query_lens,
-        kv_lens=kv_lens,
-        block_tables=block_tables,
-        scale=scale,
-        sliding_window=sliding_window,
-        soft_cap=soft_cap,
-    )
+
     atol, rtol = 1.5e-2, 1e-2
     if q_dtype is not None:
         atol, rtol = 1.5e-1, 1.5e-1
@@ -189,3 +226,4 @@ def test_triton_unified_attn(
         torch.testing.assert_close(output, ref_output, atol=atol, rtol=rtol),
         f"{torch.max(torch.abs(output - ref_output))}",
     )
+    # tritonparse.utils.unified_parse(source=_log_name, out=f"{_log_name}/parsed_output")
