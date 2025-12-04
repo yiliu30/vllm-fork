@@ -104,7 +104,7 @@ def kernel_unified_attention_2d(
 ):
     q_block_global_idx = tl.program_id(0)
     kv_head_idx = tl.program_id(1)
-
+    print(f"q_block_global_idx: {q_block_global_idx}, kv_head_idx: {kv_head_idx}")
     seq_idx = find_seq_idx(
         query_start_len_ptr, q_block_global_idx, num_seqs, BLOCK_Q, True
     )
@@ -144,17 +144,15 @@ def kernel_unified_attention_2d(
         mask=dim_mask[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
         other=0.0,
     )
-
+    print(f"q_block_global_idx: {q_block_global_idx}, kv_head_idx: {kv_head_idx}")
+    print(f"query_offset_0: \n{query_offset_0}")
+    print(f"query_offset_1: \n{query_offset_1}")
+    print(f"query_offset: \n{query_offset}")
+    print(f"Q: \n{Q}")
     block_table_offset = seq_idx * block_table_stride
 
-    if not USE_SINKS:
-        M = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
-    else:
-        M = tl.load(
-            sink_ptr + query_offset_1,
-            mask=query_mask_1,
-            other=float("-inf"),
-        ).to(dtype=tl.float32)
+    M = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
+
 
     L = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, HEAD_SIZE_PADDED], dtype=tl.float32)
@@ -235,6 +233,12 @@ def kernel_unified_attention_2d(
             other=0.0,
         )
         # breakpoint()
+        print(f"q_block_global_idx: {q_block_global_idx}, kv_head_idx: {kv_head_idx}")
+        print(f"k_offset: \n{k_offset}")
+        print(f"K_load: \n{K_load}")
+        print(f"v_offset: \n{v_offset}")
+        print(f"V_load: \n{V_load}")
+        
         if V_load.dtype.is_fp8():
             if Q.dtype.is_fp8():
                 V = V_load
@@ -249,7 +253,7 @@ def kernel_unified_attention_2d(
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
 
         S += scale * tl.dot(Q, K)
-        print(tl.load(k_scale))
+        # print(tl.load(k_scale))
         breakpoint()
         S = tl.where(
             query_mask_1[:, None] & query_mask_0[:, None] & seq_mask, S, float("-inf")
@@ -276,12 +280,14 @@ def kernel_unified_attention_2d(
         acc = acc * alpha[:, None]
 
         # update constants
+        # L : (BLOCK_M,)
         L = L * alpha + l_j
         M = m_j
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
         acc += tl.dot(P.to(V.dtype), V)
 
     # epilogue
+    # [BLOCK_M, HEAD_SIZE_PADDED]
     acc = acc / L[:, None]
     if USE_FP8:
         acc = acc * tl.load(out_scale)
@@ -743,7 +749,7 @@ def unified_attention(
     # Assigning default tile sizes for prefill and decode.
     # Note: each tile size must be at least 32 for "fp8" (q.element_size() == 1)
     # and at least 16 for all other data types.
-    TILE_SIZE_PREFILL = 32
+    TILE_SIZE_PREFILL = 16
     TILE_SIZE_DECODE = 16 if q.element_size() >= 2 else 32
 
     # if batch contains a prefill

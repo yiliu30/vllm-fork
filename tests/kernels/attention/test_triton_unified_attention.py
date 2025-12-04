@@ -35,6 +35,50 @@ NUM_BLOCKS = [
     ]
 
 
+def _flash_attn_inner(
+        query, # [num_query_tokens, num_query_heads, head_size]
+        key, # [num_kv_tokens, num_kv_heads, head_size]
+        value, # [num_kv_tokens, num_kv_heads, head_size]
+        q_block_global_idx: int,
+        kv_head_idx: int,
+        tile_size: int,
+        block_m: int,
+        block_q: int,
+        ):
+    pass
+
+
+def flash_attn_ref(
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    query_lens: list[int],
+    kv_lens: list[int],
+    block_tables: torch.Tensor,
+    scale: float,
+):
+    num_seqs = len(query_lens)
+    block_tables = block_tables.cpu().numpy()
+    _, block_size, num_kv_heads, head_size = key_cache.shape
+
+    outputs: list[torch.Tensor] = []
+    start_idx = 0
+    breakpoint()
+    for i in range(num_seqs):
+        query_len = query_lens[i]
+        kv_len = kv_lens[i]
+        q = query[start_idx : start_idx + query_len]
+        q *= scale
+
+        num_kv_blocks = (kv_len + block_size - 1) // block_size
+        block_indices = block_tables[i, :num_kv_blocks]
+
+        k = key_cache[block_indices].view(-1, num_kv_heads, head_size)
+        k = k[:kv_len]
+        v = value_cache[block_indices].view(-1, num_kv_heads, head_size)
+        v = v[:kv_len]
+
+
 def ref_paged_attn(
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -66,6 +110,12 @@ def ref_paged_attn(
         k = k[:kv_len]
         v = value_cache[block_indices].view(-1, num_kv_heads, head_size)
         v = v[:kv_len]
+        
+        print(f"k shape: {k.shape}")
+        print(f" k data: \n{k.to(torch.float8_e4m3fn).view(torch.uint8)}")
+        print(f"v shape: {v.shape}")
+        print(f" v data: \n{v.to(torch.float8_e4m3fn).view(torch.uint8)}")
+        
         # q shape : 1, 8, 128
         # k/v shape 1328, 2, 128
         if q.shape[1] != k.shape[1]:
@@ -93,7 +143,7 @@ def ref_paged_attn(
     "seq_lens", [
         [
             # (1, 1328), 
-            (5, 18), 
+            (5, 7), 
             # (129, 463)
             
             ], 
@@ -102,7 +152,10 @@ def ref_paged_attn(
             ]
 )
 @pytest.mark.parametrize("num_heads", NUM_HEADS)
-@pytest.mark.parametrize("head_size", HEAD_SIZES)
+@pytest.mark.parametrize("head_size", 
+                            # HEAD_SIZES
+                            [8]
+                            )
 @pytest.mark.parametrize("block_size", BLOCK_SIZES)
 @pytest.mark.parametrize("sliding_window", [
     None, 
@@ -142,6 +195,21 @@ def test_triton_unified_attn(
     scale = head_size**-0.5
 
     query = torch.randn(sum(query_lens), num_query_heads, head_size, dtype=dtype)
+    fp8_max = torch.finfo(torch.float8_e4m3fn).max
+    # query = torch.arange(
+    #     start=-fp8_max,
+    #     end=fp8_max,
+    #     step=(2 * fp8_max) / query.numel(),
+    #     dtype=dtype,
+    #     device="cuda",
+    # ).reshape_as(query)
+    query_idx = torch.arange(
+        0,
+        sum(query_lens) * num_query_heads * head_size,
+        dtype=torch.int64,
+        device=query.device,
+    ).view_as(query)
+
     key_cache = torch.randn(
         num_blocks, block_size, num_kv_heads, head_size, dtype=dtype
     )
@@ -172,8 +240,8 @@ def test_triton_unified_attn(
 
         scale_shape = (num_seqs, num_kv_heads)
         q_descale = None  # Not yet supported
-        k_descale = torch.rand(scale_shape, dtype=torch.float32)
-        v_descale = torch.rand(scale_shape, dtype=torch.float32)
+        k_descale = torch.ones(scale_shape, dtype=torch.float32)
+        v_descale = torch.ones(scale_shape, dtype=torch.float32)
         # breakpoint()
     # import tritonparse.structured_logging
     # import tritonparse.utils
@@ -186,7 +254,12 @@ def test_triton_unified_attn(
     #     split_inductor_compilations=False,
     #     out=_log_name,
     # ) as manager:
-    
+    print("query shape:", query.shape)
+    print(f"query_idx: \n{query_idx}")
+    print(f"query_uint8: \n{maybe_quantized_query.view(torch.uint8)}")
+    # print(f"key_cache_uint8: \n{maybe_quantized_key_cache.view(torch.uint8)}")
+    # print(f"value_cache_uint8: \n{maybe_quantized_value_cache.view(torch.uint8)}")
+    breakpoint()
     ref_output = ref_paged_attn(
         query=query,
         key_cache=key_cache,
@@ -222,6 +295,7 @@ def test_triton_unified_attn(
     atol, rtol = 1.5e-2, 1e-2
     if q_dtype is not None:
         atol, rtol = 1.5e-1, 1.5e-1
+    breakpoint()
     (
         torch.testing.assert_close(output, ref_output, atol=atol, rtol=rtol),
         f"{torch.max(torch.abs(output - ref_output))}",
