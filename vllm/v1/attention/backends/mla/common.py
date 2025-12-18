@@ -1115,7 +1115,7 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         def get_layer_weight(layer):
-            WEIGHT_NAMES = ("weight", "qweight", "weight_packed")
+            WEIGHT_NAMES = ("weight_unpacked_fp8", "weight", "qweight", "weight_packed")
             for attr in WEIGHT_NAMES:
                 if hasattr(layer, attr):
                     return getattr(layer, attr)
@@ -1525,7 +1525,7 @@ class MLACommonImpl(MLACommonBaseImpl[M], Generic[M]):
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         def get_layer_weight(layer):
-            WEIGHT_NAMES = ("weight", "qweight", "weight_packed")
+            WEIGHT_NAMES = ("weight_unpacked_fp8", "weight", "qweight", "weight_packed")
             for attr in WEIGHT_NAMES:
                 if hasattr(layer, attr):
                     return getattr(layer, attr)
