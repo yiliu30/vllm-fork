@@ -23,9 +23,9 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-class AutoRoundConfig(QuantizationConfig):
-    """Config class for AutoRound.
-    Reference: https://arxiv.org/pdf/2309.05516
+class INCConfig(QuantizationConfig):
+    """Config class for Intel Neural Compressor (INC).
+    Repo: https://github.com/intel/neural-compressor
     """
 
     SUPPORTED_BITS = {2, 3, 4, 8}
@@ -90,7 +90,7 @@ class AutoRoundConfig(QuantizationConfig):
 
     def __repr__(self) -> str:
         return (
-            f"AutoRoundConfig(weight_bits={self.weight_bits}, "
+            f"INCConfig(weight_bits={self.weight_bits}, "
             f"group_size={self.group_size}, sym={self.sym})"
         )
 
@@ -111,7 +111,7 @@ class AutoRoundConfig(QuantizationConfig):
         return ["quantization_config.json"]
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "AutoRoundConfig":
+    def from_config(cls, config: dict[str, Any]) -> "INCConfig":
         return cls(
             weight_bits=cls.get_from_keys(config, ["bits"]),
             group_size=cls.get_from_keys(config, ["group_size"]),
