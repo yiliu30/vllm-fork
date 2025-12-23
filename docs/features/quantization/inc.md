@@ -1,50 +1,101 @@
-# FP8 INC
+# Intel® Neural Compressor (WIP)
 
-vLLM supports FP8 (8-bit floating point) weight and activation quantization using Intel® Neural Compressor (INC) on Intel® Gaudi® 2 and Intel® Gaudi® 3 AI accelerators.
-Currently, quantization is validated only in Llama models.
 
-Intel Gaudi supports quantization of various modules and functions, including, but not limited to `Linear`, `KVCache`, `Matmul` and `Softmax`. For more information, please refer to:
-[Supported Modules\\Supported Functions\\Custom Patched Modules](https://docs.habana.ai/en/latest/PyTorch/Inference_on_PyTorch/Quantization/Inference_Using_FP8.html#supported-modules).
+[Intel® Neural Compressor (INC)](https://github.com/intel/neural-compressor) is an open-source Python library that provides model compression techniques—especially quantization—across mainstream deep learning frameworks.
 
-!!! note
-    Measurement files are required to run quantized models with vLLM on Gaudi accelerators. The FP8 model calibration procedure is described in the [vLLM HPU extension](https://github.com/HabanaAI/vllm-hpu-extension/tree/main/calibration/README.md) package.
+Under the INC umbrella, [AutoRound](https://github.com/intel/auto-round) is Intel’s advanced weight-only quantization algorithm for transformer and large language models. It is designed to produce highly efficient **INT2, INT3, INT4, and INT8** quantized models, striking a balance between accuracy and inference performance.
 
-!!! note
-    `QUANT_CONFIG` is an environment variable that points to the measurement or quantization [JSON config file](https://docs.habana.ai/en/latest/PyTorch/Inference_on_PyTorch/Quantization/Inference_Using_FP8.html#supported-json-config-file-options).
-    The measurement configuration file is used during the calibration procedure to collect measurements for a given model. The quantization configuration is used during inference.
+Please refer to the [AutoRound guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md) for more details.
 
-## Run Online Inference Using FP8
+Key Features:
 
-Once you've completed the model calibration process and collected the measurements, you can run FP8 inference with vLLM using the following command:
+✅ **AutoRound, AutoAWQ, AutoGPTQ, and GGUF** are supported
+
+✅ **10+ vision-language models (VLMs)** are supported
+
+✅ **Per-layer mixed-bit quantization** for fine-grained control
+
+✅ **RTN (Round-To-Nearest) mode** for quick quantization with slight accuracy loss
+
+✅ **Multiple quantization recipes**: best, base, and light
+
+✅ Advanced utilities such as immediate packing and support for **10+ backends**
+
+## Installation
 
 ```bash
-export QUANT_CONFIG=/path/to/quant/config/inc/meta-llama-3.1-405b-instruct/maxabs_measure_g3.json
-vllm serve meta-llama/Llama-3.1-405B-Instruct --quantization inc --kv-cache-dtype fp8_inc --tensor_paralel_size 8
+uv pip install auto-round
 ```
 
-!!! tip
-    When using FP8 models, you may experience timeouts caused by the long compilation time of FP8 operations. To mitigate this problem, you can use the below environment variables:
-    `VLLM_ENGINE_ITERATION_TIMEOUT_S` - to adjust the vLLM server timeout. You can set the value in seconds, e.g., 600 equals 10 minutes.
-    `VLLM_RPC_TIMEOUT` - to adjust the RPC protocol timeout used by the OpenAI-compatible API. This value is in microseconds, e.g., 600000 equals 10 minutes.
+## Quantizing a model
 
-## Run Offline Inference Using FP8
+For VLMs, please change to `auto-round-mllm` in CLI usage and `AutoRoundMLLM` in API usage.
 
-To run offline inference (after completing the model calibration process):
+### CLI usage
 
-* Set the "QUANT_CONFIG" environment variable to point to a JSON configuration file with QUANTIZE mode.
-* Pass `quantization=inc` and `kv_cache_dtype=fp8_inc` as parameters to the `LLM` object.
-* Call shutdown method of the model_executor at the end of the run.
+```bash
+auto-round \
+    --model Qwen/Qwen3-0.6B \
+    --bits 4 \
+    --group_size 128 \
+    --format "auto_round" \
+    --output_dir ./tmp_autoround
+```
+
+```bash
+auto-round \
+    --model Qwen/Qwen3-0.6B \
+    --format "gguf:q4_k_m" \
+    --output_dir ./tmp_autoround
+```
+
+### API usage
 
 ```python
-from vllm import LLM
-llm = LLM("llama3.1/Meta-Llama-3.1-8B-Instruct", quantization="inc", kv_cache_dtype="fp8_inc")
-...
-# Call llm.generate on the required prompts and sampling params.
-...
-llm.llm_engine.model_executor.shutdown()
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from auto_round import AutoRound
+
+model_name = "Qwen/Qwen3-0.6B"
+model = AutoModelForCausalLM.from_pretrained(model_name, dtype="auto")
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+bits, group_size, sym = 4, 128, True
+autoround = AutoRound(model, tokenizer, bits=bits, group_size=group_size, sym=sym)
+
+# the best accuracy, 4-5X slower, low_gpu_mem_usage could save ~20G but ~30% slower
+# autoround = AutoRound(model, tokenizer, nsamples=512, iters=1000, low_gpu_mem_usage=True, bits=bits, group_size=group_size, sym=sym)
+
+# 2-3X speedup, slight accuracy drop at W4G128
+# autoround = AutoRound(model, tokenizer, nsamples=128, iters=50, lr=5e-3, bits=bits, group_size=group_size, sym=sym )
+
+output_dir = "./tmp_autoround"
+# format= 'auto_round'(default), 'auto_gptq', 'auto_awq'
+autoround.quantize_and_save(output_dir, format="auto_round")
 ```
 
-## Device for the Model's Weights Uploading
+## Running a quantized model with vLLM
 
-The unquantized weights are first loaded onto the CPU, then quantized and transferred to the target device (HPU) for model execution.
-This reduces the device memory footprint of model weights, as only quantized weights are stored in the device memory.
+Here is some example code to run auto-round format in vLLM:
+
+```python
+from vllm import LLM, SamplingParams
+
+prompts = [
+    "Hello, my name is",
+]
+sampling_params = SamplingParams(temperature=0.6, top_p=0.95)
+model_name = "Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound"
+llm = LLM(model=model_name)
+
+outputs = llm.generate(prompts, sampling_params)
+
+for output in outputs:
+    prompt = output.prompt
+    generated_text = output.outputs[0].text
+    print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
+```
+
+## Acknowledgement
+
+Special thanks to open-source low precision libraries such as AutoGPTQ, AutoAWQ, GPTQModel, Triton, Marlin, and
+ExLLaMAV2 for providing low-precision CUDA kernels, which are leveraged in AutoRound.
