@@ -5,7 +5,6 @@ Quantization trades off model precision for smaller memory footprint, allowing l
 Contents:
 
 - [AutoAWQ](auto_awq.md)
-- [AutoRound](auto_round.md)
 - [BitsAndBytes](bnb.md)
 - [BitBLAS](bitblas.md)
 - [GGUF](gguf.md)
