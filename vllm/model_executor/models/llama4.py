@@ -564,6 +564,11 @@ class Llama4Model(LlamaModel):
                 loaded_params.add(scale_name)
                 continue
 
+            if "scale" in name:
+                # Remapping the name of FP8 kv-scale.
+                name = maybe_remap_kv_scale_name(name, params_dict)
+                if name is None:
+                    continue
             # Iterate over stacked_params_mapping to check if the current weight
             # is one of the stacked parameters. If so, load the weight with the
             # corresponding shard id. Note that MoE weights are handled
