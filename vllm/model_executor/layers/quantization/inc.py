@@ -96,7 +96,7 @@ class INCConfig(QuantizationConfig):
 
     @classmethod
     def get_name(cls) -> QuantizationMethods:
-        return "auto-round"
+        return "inc"
 
     @classmethod
     def get_supported_act_dtypes(cls) -> list[torch.dtype]:
