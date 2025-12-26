@@ -61,6 +61,7 @@ auto-round \
 ### API usage
 
 ??? code
+
     ```python
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from auto_round import AutoRound
@@ -88,6 +89,7 @@ auto-round \
 Here is some example code to run auto-round format in vLLM:
 
 ??? code
+
     ```python
     from vllm import LLM, SamplingParams
 

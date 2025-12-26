@@ -10,7 +10,7 @@ Contents:
 - [BitBLAS](bitblas.md)
 - [GGUF](gguf.md)
 - [GPTQModel](gptqmodel.md)
-- [INC](inc.md)
+- [Intel Neural Compressor](inc.md)
 - [INT4 W4A16](int4.md)
 - [INT8 W8A8](int8.md)
 - [FP8 W8A8](fp8.md)
@@ -55,7 +55,7 @@ th:not(:first-child) {
 | bitsandbytes          | ✅︎      | ✅︎       | ✅︎       | ✅︎    | ✅︎       | ❌         | ❌          | ❌        |
 | DeepSpeedFP           | ✅︎      | ✅︎       | ✅︎       | ✅︎    | ✅︎       | ❌         | ❌          | ❌        |
 | GGUF                  | ✅︎      | ✅︎       | ✅︎       | ✅︎    | ✅︎       | ✅︎         | ❌          | ❌        |
-| INC                   | ❌      | ✅︎       | ✅︎       | ✅︎    | ✅︎       | ❌         | ✅︎          | ✅︎        |
+|Intel Neural Compressor| ❌      | ✅︎       | ✅︎       | ✅︎    | ✅︎       | ❌         | ✅︎          | ✅︎        |
 
 - Volta refers to SM 7.0, Turing to SM 7.5, Ampere to SM 8.0/8.6, Ada to SM 8.9, and Hopper to SM 9.0.
 - ✅︎ indicates that the quantization method is supported on the specified hardware.
