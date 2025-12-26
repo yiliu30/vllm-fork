@@ -1,10 +1,12 @@
 # Intel Neural Compressor
 
 
-[Intel Neural Compressor (INC)](https://github.com/intel/neural-compressor) is an open-source Python library for model compression, with a strong focus on quantization. It supports both Post-Training Quantization (PTQ) and Quantization-Aware Training (QAT) across a variety of tasks and architectures, including:
+[Intel Neural Compressor (INC)](https://github.com/intel/neural-compressor) is an open-source toolkit for model compression, with a strong focus on quantization. It supports both Post-Training Quantization (PTQ) and Quantization-Aware Training (QAT) across a variety of tasks and architectures, including:
+
     - Large Language Models (LLMs)
     - Vision-Language Models (VLMs)
     - Diffusion models
+
 Under the INC umbrella, [AutoRound](https://github.com/intel/auto-round) is Intel’s advanced quantization algorithm designed specifically for transformer and large language models. It is designed to produce highly efficient **INT2, INT3, INT4, INT8, MXFP4, NVFP4, and GGUF** quantized models, striking a balance between accuracy and inference performance. For a deeper introduction to AutoRound, see the [AutoRound step-by-step guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md).
 
 
