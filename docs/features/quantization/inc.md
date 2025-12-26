@@ -11,7 +11,8 @@ Under the INC umbrella, [AutoRound](https://github.com/intel/auto-round) is Inte
 
 INC provides multiple ways to quantize models and deploy them on Intel GPU, CPU, and Gaudi. For **Intel CPUs and GPUs**, we currently recommend using **AutoRound directly**.
 
-Intel Gaudi quantization support (such as `W8A8`, `W4A16`) has been migrated to [vLLM-Gaudi](https://github.com/vllm-project/vllm-gaudi). For details, see the [vLLM-Gaudi quantization documentation](https://docs.vllm.ai/projects/gaudi/en/latest/configuration/quantization/quantization.html).
+!!! note
+    Intel Gaudi quantization support (such as `W8A8`, `W4A16`) has been migrated to [vLLM-Gaudi](https://github.com/vllm-project/vllm-gaudi). For details, see the [vLLM-Gaudi quantization documentation](https://docs.vllm.ai/projects/gaudi/en/latest/configuration/quantization/quantization.html).
 
 
 Key Features:
@@ -59,49 +60,51 @@ auto-round \
 
 ### API usage
 
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from auto_round import AutoRound
+??? code
+    ```python
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from auto_round import AutoRound
 
-model_name = "Qwen/Qwen3-0.6B"
-model = AutoModelForCausalLM.from_pretrained(model_name, dtype="auto")
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model_name = "Qwen/Qwen3-0.6B"
+    model = AutoModelForCausalLM.from_pretrained(model_name, dtype="auto")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-bits, group_size, sym = 4, 128, True
-autoround = AutoRound(model, tokenizer, bits=bits, group_size=group_size, sym=sym)
+    bits, group_size, sym = 4, 128, True
+    autoround = AutoRound(model, tokenizer, bits=bits, group_size=group_size, sym=sym)
 
-# the best accuracy, 4-5X slower, low_gpu_mem_usage could save ~20G but ~30% slower
-# autoround = AutoRound(model, tokenizer, nsamples=512, iters=1000, low_gpu_mem_usage=True, bits=bits, group_size=group_size, sym=sym)
+    # the best accuracy, 4-5X slower, low_gpu_mem_usage could save ~20G but ~30% slower
+    # autoround = AutoRound(model, tokenizer, nsamples=512, iters=1000, low_gpu_mem_usage=True, bits=bits, group_size=group_size, sym=sym)
 
-# 2-3X speedup, slight accuracy drop at W4G128
-# autoround = AutoRound(model, tokenizer, nsamples=128, iters=50, lr=5e-3, bits=bits, group_size=group_size, sym=sym )
+    # 2-3X speedup, slight accuracy drop at W4G128
+    # autoround = AutoRound(model, tokenizer, nsamples=128, iters=50, lr=5e-3, bits=bits, group_size=group_size, sym=sym )
 
-output_dir = "./tmp_autoround"
-# format= 'auto_round'(default), 'auto_gptq', 'auto_awq'
-autoround.quantize_and_save(output_dir, format="auto_round")
-```
+    output_dir = "./tmp_autoround"
+    # format= 'auto_round'(default), 'auto_gptq', 'auto_awq'
+    autoround.quantize_and_save(output_dir, format="auto_round")
+    ```
 
 ## Running a quantized model with vLLM
 
 Here is some example code to run auto-round format in vLLM:
 
-```python
-from vllm import LLM, SamplingParams
+??? code
+    ```python
+    from vllm import LLM, SamplingParams
 
-prompts = [
-    "Hello, my name is",
-]
-sampling_params = SamplingParams(temperature=0.6, top_p=0.95)
-model_name = "Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound"
-llm = LLM(model=model_name)
+    prompts = [
+        "Hello, my name is",
+    ]
+    sampling_params = SamplingParams(temperature=0.6, top_p=0.95)
+    model_name = "Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound"
+    llm = LLM(model=model_name)
 
-outputs = llm.generate(prompts, sampling_params)
+    outputs = llm.generate(prompts, sampling_params)
 
-for output in outputs:
-    prompt = output.prompt
-    generated_text = output.outputs[0].text
-    print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
-```
+    for output in outputs:
+        prompt = output.prompt
+        generated_text = output.outputs[0].text
+        print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
+    ```
 
 ## Acknowledgement
 
