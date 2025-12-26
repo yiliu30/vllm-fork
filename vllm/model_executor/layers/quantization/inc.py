@@ -430,7 +430,7 @@ class INCConfig(QuantizationConfig):
             else:
                 raise ValueError(
                     f"ipex backend only supports awq "
-                    f"and gtpq format,but got {self.packing_format}"
+                    f"and gptq format,but got {self.packing_format}"
                 )
         else:
             return None
