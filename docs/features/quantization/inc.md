@@ -1,11 +1,17 @@
-# Intel® Neural Compressor (WIP)
+# Intel Neural Compressor
 
 
-[Intel® Neural Compressor (INC)](https://github.com/intel/neural-compressor) is an open-source Python library that provides model compression techniques—especially quantization—across mainstream deep learning frameworks.
+[Intel Neural Compressor (INC)](https://github.com/intel/neural-compressor) is an open-source Python library for model compression, with a strong focus on quantization. It supports both Post-Training Quantization (PTQ) and Quantization-Aware Training (QAT) across a variety of tasks and architectures, including:
+    - Large Language Models (LLMs)
+    - Vision-Language Models (VLMs)
+    - Diffusion models
+Under the INC umbrella, [AutoRound](https://github.com/intel/auto-round) is Intel’s advanced quantization algorithm designed specifically for transformer and large language models. It is designed to produce highly efficient **INT2, INT3, INT4, INT8, MXFP4, NVFP4, and GGUF** quantized models, striking a balance between accuracy and inference performance. For a deeper introduction to AutoRound, see the [AutoRound step-by-step guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md).
 
-Under the INC umbrella, [AutoRound](https://github.com/intel/auto-round) is Intel’s advanced weight-only quantization algorithm for transformer and large language models. It is designed to produce highly efficient **INT2, INT3, INT4, and INT8** quantized models, striking a balance between accuracy and inference performance.
 
-Please refer to the [AutoRound guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md) for more details.
+INC provides multiple ways to quantize models and deploy them on Intel GPU, CPU, and Gaudi. For **Intel CPUs and GPUs**, we currently recommend using **AutoRound directly**.
+
+Intel Gaudi quantization support (such as `W8A8`, `W4A16`) has been migrated to [vLLM-Gaudi](https://github.com/vllm-project/vllm-gaudi). For details, see the [vLLM-Gaudi quantization documentation](https://docs.vllm.ai/projects/gaudi/en/latest/configuration/quantization/quantization.html).
+
 
 Key Features:
 
@@ -20,6 +26,7 @@ Key Features:
 ✅ **Multiple quantization recipes**: best, base, and light
 
 ✅ Advanced utilities such as immediate packing and support for **10+ backends**
+
 
 ## Installation
 
