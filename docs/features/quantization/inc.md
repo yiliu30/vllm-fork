@@ -1,18 +1,7 @@
-# Intel Neural Compressor
+# Intel Quantization Support
 
+[AutoRound](https://github.com/intel/auto-round) is Intel’s advanced quantization algorithm designed for transformer and large language models. It produces highly efficient **INT2, INT3, INT4, INT8, MXFP8, MXFP4, NVFP4**, and **GGUF** quantized models, balancing accuracy and inference performance. AutoRound is also part of the [Intel Neural Compressor](https://github.com/intel/neural-compressor). For a deeper introduction, see the [AutoRound step-by-step guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md).
 
-[Intel Neural Compressor (INC)](https://github.com/intel/neural-compressor) is an open-source toolkit for model compression, with a strong focus on quantization. It supports both Post-Training Quantization (PTQ) and Quantization-Aware Training (QAT) across a variety of tasks and architectures, including:
-  - Large Language Models (LLMs)
-  - Vision-Language Models (VLMs)
-  - Diffusion models
-
-Under the INC umbrella, [AutoRound](https://github.com/intel/auto-round) is Intel’s advanced quantization algorithm designed specifically for transformer and large language models. It is designed to produce highly efficient **INT2, INT3, INT4, INT8, MXFP4, NVFP4, and GGUF** quantized models, striking a balance between accuracy and inference performance. For a deeper introduction to AutoRound, see the [AutoRound step-by-step guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md).
-
-
-INC provides multiple ways to quantize models and deploy them on Intel GPU, CPU, and Gaudi. For **Intel CPUs and GPUs**, we currently recommend using **AutoRound directly**.
-
-!!! note
-    Intel Gaudi quantization support (such as `W8A8`, `W4A16`) has been migrated to [vLLM-Gaudi](https://github.com/vllm-project/vllm-gaudi). For details, see the [vLLM-Gaudi quantization documentation](https://docs.vllm.ai/projects/gaudi/en/latest/configuration/quantization/quantization.html).
 
 
 Key Features:
@@ -29,6 +18,7 @@ Key Features:
 
 ✅ Advanced utilities such as immediate packing and support for **10+ backends**
 
+On Intel platforms, AutoRound recipes are being enabled progressively by format and hardware; currently,  the `wNa16` recipe was supported on Intel CPUs and Intel GPUs (weight-only, N-bit weights with 16-bit activations).
 
 ## Installation
 
@@ -51,12 +41,6 @@ auto-round \
     --output_dir ./tmp_autoround
 ```
 
-```bash
-auto-round \
-    --model Qwen/Qwen3-0.6B \
-    --format "gguf:q4_k_m" \
-    --output_dir ./tmp_autoround
-```
 
 ### API usage
 
@@ -107,8 +91,3 @@ Here is some example code to run auto-round format in vLLM:
         generated_text = output.outputs[0].text
         print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
     ```
-
-## Acknowledgement
-
-Special thanks to open-source low precision libraries such as AutoGPTQ, AutoAWQ, GPTQModel, Triton, Marlin, and
-ExLLaMAV2 for providing low-precision CUDA kernels, which are leveraged in AutoRound.
