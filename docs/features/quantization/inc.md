@@ -41,9 +41,8 @@ uv pip install auto-round
 ```bash
 auto-round \
     --model Qwen/Qwen3-0.6B \
-    --bits 4 \
-    --group_size 128 \
-    --format "auto_round" \
+    --scheme W4A16 \
+    --format auto_round \
     --output_dir ./tmp_autoround
 ```
 
@@ -54,11 +53,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from auto_round import AutoRound
 
 model_name = "Qwen/Qwen3-0.6B"
-model = AutoModelForCausalLM.from_pretrained(model_name, dtype="auto")
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-bits, group_size, sym = 4, 128, True
-autoround = AutoRound(model, tokenizer, bits=bits, group_size=group_size, sym=sym)
+autoround = AutoRound(model_name, scheme="W4A16")
 
 # the best accuracy, 4-5X slower, low_gpu_mem_usage could save ~20G but ~30% slower
 # autoround = AutoRound(model, tokenizer, nsamples=512, iters=1000, low_gpu_mem_usage=True, bits=bits, group_size=group_size, sym=sym)
@@ -86,7 +81,7 @@ vllm serve Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound \
 ## Evaluating the Quantized Model with vLLM
 ```bash
 lm_eval --model vllm \
-  --model_args pretrained="Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound,max_model_len=8192,max_num_batched_tokens=32768,max_num_seqs=128,gpu_memory_utilization=0.8,dtype=bfloat16,max_gen_toks=2048,enable_prefix_caching=False,enforce_eager=True" \
+  --model_args pretrained="Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound,max_model_len=8192,max_num_batched_tokens=32768,max_num_seqs=128,gpu_memory_utilization=0.8,dtype=bfloat16,max_gen_toks=2048,enforce_eager=True" \
   --tasks gsm8k \
   --num_fewshot 5 \
   --batch_size 128
