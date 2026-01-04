@@ -28,8 +28,6 @@ uv pip install auto-round
 
 ## Quantizing a model
 
-For VLMs, please change to `auto-round-mllm` in CLI usage and `AutoRoundMLLM` in API usage.
-
 ### Quantize with CLI
 
 ```bash
