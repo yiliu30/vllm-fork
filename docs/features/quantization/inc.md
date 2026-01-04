@@ -1,6 +1,6 @@
-# Intel Neural Compressor
+# AutoRound
 
-[AutoRound](https://github.com/intel/auto-round) is Intel's advanced quantization algorithm designed for transformer and large language models. It produces highly efficient **INT2, INT3, INT4, INT8, MXFP8, MXFP4, NVFP4**, and **GGUF** quantized models, balancing accuracy and inference performance. AutoRound is part of the [Intel Neural Compressor](https://github.com/intel/neural-compressor). For a deeper introduction, see the [AutoRound step-by-step guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md).
+vLLM can leverage [AutoRound](https://github.com/intel/auto-round), Intel's advanced quantization algorithm designed for transformer and large language models. It produces highly efficient **INT2, INT3, INT4, INT8, MXFP8, MXFP4, NVFP4**, and **GGUF** quantized models, balancing accuracy and inference performance. AutoRound is part of the [Intel Neural Compressor](https://github.com/intel/neural-compressor) toolkit. For a deeper introduction, see the [AutoRound step-by-step guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md).
 
 ## Key Features
 
@@ -18,17 +18,19 @@
 
 On Intel platforms, AutoRound recipes are being enabled progressively by format and hardware; currently, the `wNa16` recipe is supported on Intel CPUs and Intel GPUs (weight-only, N-bit weights with 16-bit activations).
 
-## Installation
+## AutoRound Installation
+
+Before quantizing models with AutoRound, you need to install it. The latest release can be installed with pip:
 
 ```bash
-uv pip install auto-round
+pip install auto-round
 ```
 
-## Quantizing a model
+## Quantization Process
 
-AutoRound supports both CLI and API usage for quantizing models. For vision-language models (VLMs), use `auto-round-mllm` in CLI and `AutoRoundMLLM` in API.
+After installing AutoRound, you can quantize models using either the CLI or Python API. AutoRound supports both CLI and API usage for quantizing models. For vision-language models (VLMs), use `auto-round-mllm` in CLI and `AutoRoundMLLM` in API.
 
-### CLI usage
+### Quantize with CLI
 
 ```bash
 auto-round \
@@ -40,7 +42,7 @@ auto-round \
 ```
 
 
-### API usage
+### Quantize with Python API
 
 ??? code
 
@@ -66,9 +68,9 @@ auto-round \
     autoround.quantize_and_save(output_dir, format="auto_round")
     ```
 
-## Running a quantized model with vLLM
+## Deploying AutoRound Quantized Models in vLLM
 
-To run an AutoRound quantized model with vLLM, you can use any AutoRound quantized model from Hugging Face. Here's an example:
+After quantizing a model with AutoRound, you can deploy it using vLLM. AutoRound quantized models from Hugging Face can be loaded directly through the LLM entrypoint:
 
 ??? code
 
