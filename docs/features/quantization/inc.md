@@ -73,4 +73,4 @@ vllm serve Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound \
 ```
 
 !!! note
-     To deploy `wNa16` quantized models on Intel GPU/CPU, please add `--enforce_eager` to the LLM initialization for now.
+     To deploy `wNa16` quantized models on Intel GPU/CPU, please add `--enforce_eager` for now.
