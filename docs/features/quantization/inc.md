@@ -1,4 +1,4 @@
-# AutoRound
+# Intel Quantization Support
 
 vLLM can leverage [AutoRound](https://github.com/intel/auto-round), Intel's advanced quantization algorithm designed for transformer and large language models. It produces highly efficient **INT2, INT3, INT4, INT8, MXFP8, MXFP4, NVFP4**, and **GGUF** quantized models, balancing accuracy and inference performance. AutoRound is part of the [Intel Neural Compressor](https://github.com/intel/neural-compressor) toolkit. For a deeper introduction, see the [AutoRound step-by-step guide](https://github.com/intel/auto-round/blob/main/docs/step_by_step.md).
 
