@@ -68,29 +68,11 @@ autoround.quantize_and_save(output_dir, format="auto_round")
 
 ## Deploying AutoRound Quantized Models in vLLM
 
-```python
-from vllm import LLM, SamplingParams
-
-
-def main():
-    prompts = [
-        "Hello, my name is",
-    ]
-    sampling_params = SamplingParams(temperature=0.6, top_p=0.95)
-    model_name = "Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound"
-    llm = LLM(model=model_name, enforce_eager=True, max_model_len=4192)
-
-    outputs = llm.generate(prompts, sampling_params)
-
-    for output in outputs:
-        prompt = output.prompt
-        generated_text = output.outputs[0].text
-        print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
-
-
-if __name__ == "__main__":
-    main()
+```bash
+vllm serve Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound \
+    --gpu-memory-utilization 0.8 \
+    --max-model-len 4096
 ```
 
 !!! note
-     To deploy `wNa16` quantized models on Intel GPU/CPU, please add `enforce_eager=True` to the LLM initialization for now.
+     To deploy `wNa16` quantized models on Intel GPU/CPU, please add `--enforce_eager` to the LLM initialization for now.
