@@ -18,15 +18,23 @@
 
 ✅ Advanced utilities such as immediate packing and support for **10+ backends**
 
-On Intel platforms, AutoRound recipes are being enabled progressively by format and hardware; currently, the `wNa16` recipe is supported on Intel GPUs and Intel CPUs (weight-only, N-bit weights with 16-bit activations).
 
-## Installation
+## Supported Recipes on Intel Platforms
+
+On Intel platforms, AutoRound recipes are being enabled progressively by format and hardware. Currently, vLLM supports:
+  - **`W4A16`**: weight-only, 4-bit weights with 16-bit activations
+  - **`W8A16`**: weight-only, 8-bit weights with 16-bit activations
+
+Additional recipes and formats will be supported in future releases.
+
+
+## Quantizing a Model
+
+### Installation
 
 ```bash
 uv pip install auto-round
 ```
-
-## Quantizing a Model
 
 ### Quantize with CLI
 
@@ -72,7 +80,7 @@ vllm serve Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound \
 ```
 
 !!! note
-     To deploy `wNa16` quantized models on Intel GPU/CPU, please add `--enforce_eager` for now.
+     To deploy `wNa16` models on Intel GPU/CPU, please add `--enforce-eager` for now.
      
      
 ## Evaluating the Quantized Model with vLLM
