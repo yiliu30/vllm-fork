@@ -6,7 +6,7 @@
 
 ## Key Features
 
-✅ **AutoRound, AutoAWQ, AutoGPTQ, and GGUF** are supported
+✅ Support for exporting **AutoRound, AutoAWQ, AutoGPTQ, and GGUF** formats
 
 ✅ **10+ vision-language models (VLMs)** are supported
 
@@ -26,7 +26,7 @@ On Intel platforms, AutoRound recipes are being enabled progressively by format 
 uv pip install auto-round
 ```
 
-## Quantizing a model
+## Quantizing a Model
 
 ### Quantize with CLI
 
@@ -38,7 +38,6 @@ auto-round \
     --format "auto_round" \
     --output_dir ./tmp_autoround
 ```
-
 
 ### Quantize with Python API
 
@@ -76,7 +75,7 @@ vllm serve Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound \
      To deploy `wNa16` quantized models on Intel GPU/CPU, please add `--enforce_eager` for now.
      
      
-## Evaluating the QUantized model using vLLM
+## Evaluating the Quantized Model with vLLM
 ```bash
 lm_eval --model vllm \
   --model_args pretrained="Intel/DeepSeek-R1-0528-Qwen3-8B-int4-AutoRound,max_model_len=8192,max_num_batched_tokens=32768,max_num_seqs=128,gpu_memory_utilization=0.8,dtype=bfloat16,max_gen_toks=2048,enable_prefix_caching=False,enforce_eager=True" \
