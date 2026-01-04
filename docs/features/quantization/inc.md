@@ -6,6 +6,10 @@
 
 ## Key Features
 
+✅ Superior Accuracy Delivers strong performance even at 2–3 bits [example models](https://huggingface.co/collections/OPEA/2-3-bits)
+
+✅ Fast Mixed `Bits`/`Dtypes` Scheme Generation Automatically configure in minutes
+
 ✅ Support for exporting **AutoRound, AutoAWQ, AutoGPTQ, and GGUF** formats
 
 ✅ **10+ vision-language models (VLMs)** are supported
