@@ -18,7 +18,7 @@ from compressed_tensors.quantization import (
 from compressed_tensors.transform import TransformConfig
 
 import vllm.envs as envs
-from vllm.attention.layer import Attention
+from vllm.attention.layer import Attention, MLAAttention
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.linear import (
@@ -176,6 +176,8 @@ class CompressedTensorsConfig(QuantizationConfig):
                 return quant_method
 
         if isinstance(layer, Attention):
+            return CompressedTensorsKVCacheMethod(self)
+        if isinstance(layer, MLAAttention):
             return CompressedTensorsKVCacheMethod(self)
         if isinstance(layer, FusedMoE):
             return CompressedTensorsMoEMethod.get_moe_method(
@@ -984,3 +986,15 @@ class CompressedTensorsKVCacheMethod(BaseKVCacheMethod):
                 "for compressed-tensors KV cache. "
                 f"However found symmetric: {is_symmetric}"
             )
+
+
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        super().process_weights_after_loading(layer)
+        max_kv_scale = max(layer._k_scale, layer._v_scale)
+        layer.impl.latent_cache_k.input_scale = max_kv_scale
+        layer.impl.latent_cache_k.output_scale = 1.0/max_kv_scale
+        layer.impl.matmul_qk.scale_input = layer._q_scale
+        layer.impl.matmul_qk.scale_other = max_kv_scale
+        # for a in a@v, we keep 1.0 as its scale
+        # layer.impl.matmul_av.scale_input = 1.0
+        layer.impl.matmul_av.output_scale =max_kv_scale
