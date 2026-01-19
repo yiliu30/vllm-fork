@@ -598,6 +598,12 @@ class Qwen3MoeModel(nn.Module):
                     # Skip loading extra parameters for GPTQ/modelopt models.
                     if name.endswith(ignore_suffixes) and name not in params_dict:
                         continue
+                    
+                    #FIXME: @yiliu30 Remapping the name of FP8 kv-scale.
+                    name = maybe_remap_kv_scale_name(name, params_dict)
+                    if name is None:
+                        continue
+
                     # Skip layers on other devices.
                     if is_pp_missing_parameter(name, self):
                         continue
