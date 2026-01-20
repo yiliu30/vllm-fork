@@ -61,7 +61,7 @@ FP4_DTYPE = torch.uint8
 logger = init_logger(__name__)
 
 trtllm_gen_workspace_buffer = None
-
+logger.warning_once(f"The FLASHINFER_WORKSPACE_BUFFER_SIZE is {FLASHINFER_WORKSPACE_BUFFER_SIZE}")
 
 def _get_trtllm_gen_workspace_buffer():
     global trtllm_gen_workspace_buffer
