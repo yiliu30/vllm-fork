@@ -660,6 +660,16 @@ class MLAAttention(nn.Module, AttentionLayerBase):
         return output_padded
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
+        def get_layer_weight(layer):
+            WEIGHT_NAMES = ("weight_unpacked_fp8", "weight", "qweight", "weight_packed")
+            for attr in WEIGHT_NAMES:
+                if hasattr(layer, attr):
+                    return getattr(layer, attr)
+            raise AttributeError(
+                f"Layer '{layer}' has no recognized weight attribute: {WEIGHT_NAMES}."
+            )
+
+        
         # we currently do not have quantized bmm's which are needed for
         # `W_UV` and `W_UK_T`, we just store fp16/bf16 copies and perform
         # the bmm's in 16-bit, the extra memory overhead of this is fairly low
@@ -1897,6 +1907,7 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
         self.indexer = indexer
         self.q_pad_num_heads = q_pad_num_heads
 
+
         if use_trtllm_ragged_deepseek_prefill():
             logger.info_once(
                 "Using TRT-LLM ragged DeepSeek prefill for MLA", scope="local"
@@ -2184,7 +2195,7 @@ class MLACommonImpl(MLAAttentionImpl[M], Generic[M]):
 
     def _concat_k_nope_k_pe(
         self, k_nope: torch.Tensor, k_pe: torch.Tensor
-    ) -> torch.Tensor:
+        ) -> torch.Tensor:
         """
         Efficiently concatenate k_nope and k_pe tensors along the last dimension.
 

@@ -356,6 +356,10 @@ class FusedMoEQuantConfig:
                 self._ocp_mx_scheme = ocp_mx_scheme
 
         return self._ocp_mx_scheme
+    
+    @ocp_mx_scheme.setter
+    def ocp_mx_scheme(self, value: str | None) -> None:
+        self._ocp_mx_scheme = value
 
     @property
     def use_mxfp4_w4a16(self) -> bool:
@@ -477,12 +481,14 @@ class FusedMoEQuantConfig:
             "mxfp4",
             "mxfp6_e3m2",
             "mxfp6_e2m3",
+            "mxfp8_e4m3",
         }
         assert not isinstance(weight_dtype, str) or weight_dtype in {
             "nvfp4",
             "mxfp4",
             "mxfp6_e3m2",
             "mxfp6_e2m3",
+            "mxfp8_e4m3",
             "int4",
         }
 

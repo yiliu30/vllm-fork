@@ -39,7 +39,7 @@ from vllm.model_executor.layers.fused_moe.utils import (
     disable_inplace,
     moe_kernel_quantize_input,
 )
-from vllm.model_executor.layers.quantization.utils.mxfp4_utils import dequant_mxfp4
+# from vllm.model_executor.layers.quantization.utils.mxfp4_utils import dequant_mxfp4
 from vllm.model_executor.layers.quantization.utils.mxfp6_utils import dequant_mxfp6
 from vllm.model_executor.layers.quantization.utils.ocp_mx_utils import OCP_MX_Scheme
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
@@ -57,6 +57,14 @@ from vllm.utils.torch_utils import direct_register_custom_op
 
 logger = init_logger(__name__)
 
+
+def dequant_mxfp4(
+    x: torch.Tensor, scale: torch.Tensor, float_dtype: torch.dtype
+) -> torch.Tensor:
+    if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+        return x.to(float_dtype)
+    else:
+        raise NotImplementedError("dequant_mxfp4 is not implemented yet.")
 
 @triton.jit
 def write_zeros_to_output(
@@ -1584,6 +1592,10 @@ def _get_config_quant_dtype(
         return "mxfp6_e3m2"
     elif ocp_mx_scheme in {"w_mxfp4_a_mxfp6_e2m3", "w_mxfp6_e2m3_a_mxfp6_e2m3"}:
         return "mxfp6_e2m3"
+    elif ocp_mx_scheme in {"w_mxfp8_e4m3_a_mxfp8_e4m3"}:
+        return "mxfp8_e4m3"
+    elif ocp_mx_scheme in {"w_mxfp8_e4m3_a_mxfp8_e4m3_from_mxfp4"}:
+        return "mxfp8_e4m3_from_mxfp4"
     return None
 
 
@@ -1623,13 +1635,24 @@ def fused_experts_impl(
             "w_mxfp4_a_mxfp6_e3m2",
             "w_mxfp4_a_mxfp6_e2m3",
         }:
-            # 16bit activation and fp4x2 packed weight
-            assert hidden_states.size(1) == w1.size(2) * 2, "hidden size mismatch"
+            if envs.VLLM_MXFP4_PRE_UNPACK_WEIGHTS:
+                assert hidden_states.size(1) == w1.size(2), "hidden size mismatch"
+            else:
+                # 16bit activation and fp4x2 packed weight
+                assert hidden_states.size(1) == w1.size(2) * 2, "hidden size mismatch"
         elif ocp_mx_scheme in {
             "w_mxfp6_e3m2_a_mxfp6_e3m2",
             "w_mxfp6_e2m3_a_mxfp6_e2m3",
         }:
             assert hidden_states.size(1) == (w1.size(2) * 4) // 3, (
+                "hidden size mismatch"
+            )
+        elif ocp_mx_scheme == "w_mxfp8_e4m3_a_mxfp8_e4m3":
+            assert hidden_states.size(1) == w1.size(2), (
+                "hidden size mismatch"
+            )
+        elif ocp_mx_scheme == "w_mxfp8_e4m3_a_mxfp8_e4m3_from_mxfp4":
+            assert hidden_states.size(1) == w1.size(2), (
                 "hidden size mismatch"
             )
         else:
@@ -1747,6 +1770,39 @@ def fused_experts_impl(
             w1_scale = None
             w2 = dequant_mxfp6(
                 w2, w2_scale, quant_dtype="fp6_e2m3", float_dtype=hidden_states.dtype
+            )
+            w2_scale = None
+        elif ocp_mx_scheme == OCP_MX_Scheme.w_mxfp8_e4m3_a_mxfp8_e4m3_from_mxfp4:
+            from auto_round_extension.vllm_ext.mxfp4_qdq_utils import (
+                mxfp4_fp8_weight_to_bf16,
+            )
+
+            w1 = mxfp4_fp8_weight_to_bf16(
+                weight_fp8=w1,
+                scale_bf16=w1_scale,
+            )
+            w1 = w1.to(hidden_states.dtype)
+            w1_scale = None
+            w2 = mxfp4_fp8_weight_to_bf16(
+                weight_fp8=w2,
+                scale_bf16=w2_scale,
+            )
+            w2 = w2.to(hidden_states.dtype)
+            w2_scale = None
+        elif ocp_mx_scheme == OCP_MX_Scheme.w_mxfp8_e4m3_a_mxfp8_e4m3:
+            from auto_round_extension.vllm_ext.mxfp8_qdq_utils import dequant_mx_fp8
+            w1 = dequant_mx_fp8(
+                weight_fp8=w1,
+                scale_e8m0=w1_scale,
+                block_size=32,
+                target_dtype=hidden_states.dtype
+            )
+            w1_scale = None
+            w2 = dequant_mx_fp8(
+                weight_fp8=w2,
+                scale_e8m0=w2_scale,
+                block_size=32,
+                target_dtype=hidden_states.dtype
             )
             w2_scale = None
         else:

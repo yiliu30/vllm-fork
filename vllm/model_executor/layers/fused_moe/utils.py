@@ -14,9 +14,9 @@ from vllm.model_executor.layers.quantization.utils.int8_utils import (
     per_token_group_quant_int8,
     per_token_quant_int8,
 )
-from vllm.model_executor.layers.quantization.utils.mxfp4_utils import (
-    quant_dequant_mxfp4,
-)
+# from vllm.model_executor.layers.quantization.utils.mxfp4_utils import (
+#     quant_dequant_mxfp4,
+# )
 from vllm.model_executor.layers.quantization.utils.mxfp6_utils import (
     quant_dequant_mxfp6,
 )
@@ -26,7 +26,14 @@ from vllm.model_executor.layers.quantization.utils.mxfp8_utils import (
 from vllm.triton_utils import tl, triton
 from vllm.utils.math_utils import cdiv
 from vllm.utils.torch_utils import is_torch_equal_or_newer
+import vllm.envs as envs
 
+def quant_dequant_mxfp4(
+    x: torch.Tensor, scale_calculation_mode: str = "even"
+) -> torch.Tensor:
+    import auto_round_extension.vllm_ext.mxfp4_qdq_utils as mxfp4_utils
+    return mxfp4_utils.qdq_mxfp4(x)
+    
 
 @triton.jit
 def _count_expert_num_tokens(
@@ -258,6 +265,19 @@ def moe_kernel_quantize_input(
         return _mxfp6_e3m2_quantize(A, A_scale, per_act_token_quant, block_shape)
     elif quant_dtype == "mxfp6_e2m3":
         return _mxfp6_e2m3_quantize(A, A_scale, per_act_token_quant, block_shape)
+    elif quant_dtype == "mxfp8_e4m3_from_mxfp4":
+        # !!! Note: here we are actually doing mxfp4 qdq(with pre-unpack to fp8)
+        return _mxfp4_quantize(A, A_scale, per_act_token_quant, block_shape)
+    elif quant_dtype == "mxfp8_e4m3":
+        from auto_round_extension.vllm_ext.mxfp8_qdq_utils import dequant_mx_fp8, quant_mx_fp8
+        x_scale, x_quant = quant_mx_fp8(A)
+        dequant_x = dequant_mx_fp8(
+            weight_fp8=x_quant,
+            scale_e8m0=x_scale,
+            block_size=32,
+            target_dtype=A.dtype,
+        )
+        return dequant_x, None
     else:
         return A, A_scale
 
