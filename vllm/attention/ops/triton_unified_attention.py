@@ -52,6 +52,138 @@ def find_seq_idx(
 
     return left - 1
 
+@triton.jit
+def mxfp4_qdq_mk(
+    query_block,
+    NUM_TOKENS: tl.constexpr,
+    HEAD_SIZE_PADDED: tl.constexpr,
+):
+    # query_block: []
+    x_block = query_block
+    orig_dtype = x_block.dtype
+    # Group elements in the block so reductions happen within fixed-size tiles
+    x_grouped = tl.reshape(x_block, (NUM_TOKENS * HEAD_SIZE_PADDED // 32, 32))
+
+    scales = tl.max(tl.abs(x_grouped), axis=-1, keep_dims=True)
+    scales = tl.where(scales == 0, 1.0, scales)
+    shared_exps = tl.exp2(tl.floor(tl.log2(scales)) - 2) / (3 / 4)
+    x_scaled = x_grouped / shared_exps
+
+    # quantize
+    x_scaled_abs = tl.abs(x_scaled)
+    x_scaled_sign = tl.where(
+        x_scaled > 0,
+        1,
+        -1,
+    )
+
+    x_fp4 = (
+        tl.where(
+            x_scaled_abs > 5,
+            6,
+            tl.where(
+                x_scaled_abs > 3.5,
+                4,
+                tl.where(
+                    x_scaled_abs > 2.5,
+                    3,
+                    tl.where(
+                        x_scaled_abs > 1.75,
+                        2,
+                        tl.where(
+                            x_scaled_abs > 1.25,
+                            1.5,
+                            tl.where(
+                                x_scaled_abs > 0.75,
+                                1,
+                                tl.where(
+                                    x_scaled_abs > 0.25,
+                                    0.5,
+                                    0,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        * x_scaled_sign
+    )
+
+    # dequantize
+    x_dequantized = x_fp4 * shared_exps
+    x_dequantized_flat = tl.reshape(x_dequantized, (NUM_TOKENS, HEAD_SIZE_PADDED)).to(
+        orig_dtype
+    )
+    return x_dequantized_flat
+
+
+
+@triton.jit
+def mxfp4_qdq_kn(
+    query_block,
+    HEAD_SIZE_PADDED: tl.constexpr,
+    NUM_TOKENS: tl.constexpr,
+):
+    # query_block: []
+    x_block = query_block
+    orig_dtype = x_block.dtype
+    # Group elements in the block so reductions happen within fixed-size tiles
+    x_grouped = tl.reshape(x_block, (32, NUM_TOKENS * HEAD_SIZE_PADDED // 32))
+
+    scales = tl.max(tl.abs(x_grouped), axis=0, keep_dims=True)
+    scales = tl.where(scales == 0, 1.0, scales)
+    shared_exps = tl.exp2(tl.floor(tl.log2(scales)) - 2) / (3 / 4)
+    x_scaled = x_grouped / shared_exps
+
+    # quantize
+    x_scaled_abs = tl.abs(x_scaled)
+    x_scaled_sign = tl.where(
+        x_scaled > 0,
+        1,
+        -1,
+    )
+
+    x_fp4 = (
+        tl.where(
+            x_scaled_abs > 5,
+            6,
+            tl.where(
+                x_scaled_abs > 3.5,
+                4,
+                tl.where(
+                    x_scaled_abs > 2.5,
+                    3,
+                    tl.where(
+                        x_scaled_abs > 1.75,
+                        2,
+                        tl.where(
+                            x_scaled_abs > 1.25,
+                            1.5,
+                            tl.where(
+                                x_scaled_abs > 0.75,
+                                1,
+                                tl.where(
+                                    x_scaled_abs > 0.25,
+                                    0.5,
+                                    0,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        * x_scaled_sign
+    )
+
+    # dequantize
+    x_dequantized = x_fp4 * shared_exps
+    x_dequantized_flat = tl.reshape(x_dequantized, (HEAD_SIZE_PADDED, NUM_TOKENS)).to(
+        orig_dtype
+    )
+    return x_dequantized_flat
+
 
 @triton.jit
 def kernel_unified_attention_2d(
@@ -144,7 +276,16 @@ def kernel_unified_attention_2d(
         mask=dim_mask[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
         other=0.0,
     )
-
+    # breakpoint()
+    # smooth Q along the token dimension without tl.mean helper
+    # Q_mean = tl.sum(Q, axis=0) / BLOCK_M
+    # Q_mean = Q_mean.to(Q.dtype)
+    # Q = Q - Q_mean[None, :]
+    # smooth Q along hidden dimension
+    # Q_mean = tl.sum(Q, axis=1) / HEAD_SIZE_PADDED
+    # Q_mean = Q_mean.to(Q.dtype)
+    # Q = Q - Q_mean[:, None]
+    Q = mxfp4_qdq_mk(Q, BLOCK_M, HEAD_SIZE_PADDED)
     block_table_offset = seq_idx * block_table_stride
 
     if not USE_SINKS:
@@ -274,7 +415,10 @@ def kernel_unified_attention_2d(
 
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
-
+        # breakpoint()
+        # Q: [BLOCK_M, HEAD_SIZE_PADDED]
+        # K: [HEAD_SIZE_PADDED, TILE_SIZE]
+        K = mxfp4_qdq_kn(K, HEAD_SIZE_PADDED, TILE_SIZE)
         S += scale * tl.dot(Q, K)
 
         if USE_SOFTCAP:
@@ -331,7 +475,13 @@ def kernel_unified_attention_2d(
         M = m_j
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        acc += tl.dot(P.to(V.dtype), V)
+        # breakpoint()
+        # P: [BLOCK_M, TILE_SIZE]
+        # V: [TILE_SIZE, HEAD_SIZE_PADDED]
+        P = P.to(V.dtype)
+        P = mxfp4_qdq_mk(P, BLOCK_M, TILE_SIZE)
+        V = mxfp4_qdq_kn(V, TILE_SIZE, HEAD_SIZE_PADDED)
+        acc += tl.dot(P, V)
 
     # epilogue
     acc = acc / L[:, None]
@@ -794,7 +944,8 @@ def unified_attention(
     TILE_SIZE_DECODE = 16 if q.element_size() >= 2 else 32
 
     # if batch contains a prefill
-    if max_seqlen_q > 1 or total_num_q_blocks * num_kv_heads > 128:
+    # breakpoint()
+    if 1 or max_seqlen_q > 1 or total_num_q_blocks * num_kv_heads > 128:
         kernel_unified_attention_2d[
             (
                 total_num_q_blocks,
@@ -802,9 +953,9 @@ def unified_attention(
             )
         ](
             output_ptr=out,
-            query_ptr=q,
-            key_cache_ptr=k,
-            value_cache_ptr=v,
+            query_ptr=q,        # [num_tokens, num_query_heads, head_size]
+            key_cache_ptr=k,    # [num_blocks, block_size, num_kv_heads, head_size]
+            value_cache_ptr=v,  # [num_blocks, block_size, num_kv_heads, head_size]
             sink_ptr=sinks,
             block_tables_ptr=block_table,
             seq_lens_ptr=seqused_k,
@@ -824,7 +975,7 @@ def unified_attention(
             output_stride_1=out.stride(1),
             qq_bias_stride_0=qq_bias.stride(0) if use_qq_bias else 0,
             BLOCK_SIZE=block_size,
-            TILE_SIZE=TILE_SIZE_PREFILL,
+            TILE_SIZE=TILE_SIZE_PREFILL, # 32
             HEAD_SIZE=head_size,
             HEAD_SIZE_PADDED=triton.next_power_of_2(head_size),
             USE_ALIBI_SLOPES=use_alibi_slopes,
@@ -841,7 +992,7 @@ def unified_attention(
             stride_v_cache_2=v.stride(2),
             stride_v_cache_3=v.stride(3),
             query_start_len_ptr=cu_seqlens_q,
-            BLOCK_Q=BLOCK_Q,
+            BLOCK_Q=BLOCK_Q,    # 4
             num_seqs=num_seqs,
             BLOCK_M=BLOCK_M,
             USE_FP8=output_scale is not None,

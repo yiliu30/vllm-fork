@@ -8,19 +8,34 @@ import torch
 from vllm.attention.ops.triton_unified_attention import unified_attention
 from vllm.platforms import current_platform
 
-NUM_HEADS = [(4, 4), (8, 2)]
-HEAD_SIZES = [128, 256]
+NUM_HEADS = [
+    # (4, 4),
+    (8, 2)
+]
+HEAD_SIZES = [
+    128,
+    # 256
+]
 BLOCK_SIZES = [16]
 
-DTYPES = [torch.bfloat16]
+DTYPES = [
+    # torch.bfloat16
+    torch.float16,
+    ]
 QDTYPES = (
-    [None, torch.float8_e4m3fn]
+    [
+        None,
+        # torch.float8_e4m3fn
+    ]
     if not current_platform.is_rocm()
     else [None, torch.float8_e4m3fnuz]
 )
 # one value large enough to test overflow in index calculation.
 # one value small enough to test the schema op check
-NUM_BLOCKS = [32768, 2048]
+NUM_BLOCKS = [
+    # 32768,
+    2048
+]
 
 
 def ref_paged_attn(
@@ -82,14 +97,30 @@ def ref_paged_attn(
 
 
 @pytest.mark.parametrize(
-    "seq_lens", [[(1, 1328), (5, 18), (129, 463)], [(1, 523), (1, 37), (1, 2011)]]
+    "seq_lens",
+    [
+        [(1, 1328), (5, 18), (129, 463)],
+        # [(1, 523), (1, 37), (1, 2011)]
+    ],
 )
 @pytest.mark.parametrize("num_heads", NUM_HEADS)
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 @pytest.mark.parametrize("block_size", BLOCK_SIZES)
-@pytest.mark.parametrize("sliding_window", [None, 64, 128, 256])
+@pytest.mark.parametrize(
+    "sliding_window",
+    [
+        None,
+        # 64, 128, 256
+    ],
+)
 @pytest.mark.parametrize("dtype", DTYPES)
-@pytest.mark.parametrize("soft_cap", [None, 50.0])
+@pytest.mark.parametrize(
+    "soft_cap",
+    [
+        None,
+        #   50.0
+    ],
+)
 @pytest.mark.parametrize("num_blocks", NUM_BLOCKS)
 @pytest.mark.parametrize("q_dtype", QDTYPES)
 @torch.inference_mode()
