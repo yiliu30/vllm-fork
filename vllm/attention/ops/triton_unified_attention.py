@@ -104,7 +104,7 @@ def kernel_unified_attention_2d(
 ):
     q_block_global_idx = tl.program_id(0)
     kv_head_idx = tl.program_id(1)
-
+    print(f"q_block_global_idx: {q_block_global_idx}, kv_head_idx: {kv_head_idx}")
     seq_idx = find_seq_idx(
         query_start_len_ptr, q_block_global_idx, num_seqs, BLOCK_Q, True
     )
@@ -144,17 +144,15 @@ def kernel_unified_attention_2d(
         mask=dim_mask[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
         other=0.0,
     )
-
+    print(f"q_block_global_idx: {q_block_global_idx}, kv_head_idx: {kv_head_idx}")
+    print(f"query_offset_0: \n{query_offset_0}")
+    print(f"query_offset_1: \n{query_offset_1}")
+    print(f"query_offset: \n{query_offset}")
+    print(f"Q: \n{Q}")
     block_table_offset = seq_idx * block_table_stride
 
-    if not USE_SINKS:
-        M = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
-    else:
-        M = tl.load(
-            sink_ptr + query_offset_1,
-            mask=query_mask_1,
-            other=float("-inf"),
-        ).to(dtype=tl.float32)
+    M = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
+
 
     L = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, HEAD_SIZE_PADDED], dtype=tl.float32)
@@ -165,17 +163,6 @@ def kernel_unified_attention_2d(
     # context length for this particular sequences
     context_len = seq_len - cur_batch_query_len
 
-    # alibi slope for this head
-    if USE_ALIBI_SLOPES:
-        alibi_slope = tl.load(
-            alibi_slopes_ptr + query_offset_1, mask=query_mask_1, other=0.0
-        )
-
-    # query-query attention bias
-    if USE_QQ_BIAS:
-        qq_bias_row_ptrs = (
-            qq_bias_ptr + query_pos[:, None] * qq_bias_stride_0
-        )  # shape: [BLOCK_M]
 
     # compute the length of the longest sequence prefix spanned by any
     # query token in the current q_block (q_block_local_idx)
@@ -199,23 +186,7 @@ def kernel_unified_attention_2d(
     # Default: keep previous global behavior
     tile_start = 0
     tile_end = num_tiles
-    if SLIDING_WINDOW > 0:
-        # Query rows covered by this Q-block
-        qpos_lo = q_block_local_idx * BLOCK_Q
-        qpos_hi = tl.minimum(
-            qpos_lo + (BLOCK_M - 1) // num_queries_per_kv,
-            cur_batch_query_len - 1,
-        )
-        # For sliding window, each query position q can only attend to
-        # keys in the range [q_abs - SLIDING_WINDOW + 1, q_abs]
-        # where q_abs = context_len + q
-        # The union of allowed key positions for this Q-block is:
-        # [context_len + qpos_lo - SLIDING_WINDOW + 1, context_len + qpos_hi]
-        first_allowed_key = context_len + qpos_lo - SLIDING_WINDOW + 1
-        last_allowed_key = context_len + qpos_hi
-        # Convert to tile indices and clamp
-        tile_start = tl.maximum(0, first_allowed_key // TILE_SIZE)
-        tile_end = tl.minimum((last_allowed_key // TILE_SIZE) + 1, num_tiles)
+
 
     # iterate through tiles (now limited to the sliding window range)
     for j in range(tile_start, tile_end):
@@ -239,7 +210,7 @@ def kernel_unified_attention_2d(
             + offs_d[:, None] * stride_k_cache_3
             + (seq_offset % BLOCK_SIZE)[None, :] * stride_k_cache_1
         )
-
+        # Q : (BLOCK_M, HEAD_SIZE_PADDED)
         # K : (HEAD_SIZE, TILE_SIZE)
         K_load = tl.load(
             key_cache_ptr + k_offset,
@@ -261,7 +232,13 @@ def kernel_unified_attention_2d(
             mask=dim_mask[None, :] & tile_mask[:, None],
             other=0.0,
         )
-
+        # breakpoint()
+        print(f"q_block_global_idx: {q_block_global_idx}, kv_head_idx: {kv_head_idx}")
+        print(f"k_offset: \n{k_offset}")
+        print(f"K_load: \n{K_load}")
+        print(f"v_offset: \n{v_offset}")
+        print(f"V_load: \n{V_load}")
+        
         if V_load.dtype.is_fp8():
             if Q.dtype.is_fp8():
                 V = V_load
@@ -276,35 +253,11 @@ def kernel_unified_attention_2d(
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
 
         S += scale * tl.dot(Q, K)
-
-        if USE_SOFTCAP:
-            S = apply_softcap(S, softcap)
-
+        # print(tl.load(k_scale))
+        breakpoint()
         S = tl.where(
             query_mask_1[:, None] & query_mask_0[:, None] & seq_mask, S, float("-inf")
         )
-
-        if SLIDING_WINDOW > 0:
-            S = tl.where(
-                (context_len + query_pos[:, None] - seq_offset) < SLIDING_WINDOW,
-                S,
-                float("-inf"),
-            )
-
-        if USE_ALIBI_SLOPES:
-            S += alibi_slope[:, None] * (seq_offset - context_len)
-
-        if USE_QQ_BIAS:
-            # compute key positions relative to query section
-            key_rel_pos = seq_offset - context_len  # shape: [BLOCK_SIZE]
-            # load bias only for keys that correspond to queries
-            is_query_key = key_rel_pos >= 0 and key_rel_pos < qq_bias_stride_0
-            qq_bias = tl.load(
-                qq_bias_row_ptrs + key_rel_pos[None, :],
-                mask=is_query_key[None, :],  # avoid OOB for context keys
-                other=0.0,
-            )
-            S += qq_bias
 
         # compute running maximum
         # m_j : (BLOCK_M,)
@@ -327,13 +280,14 @@ def kernel_unified_attention_2d(
         acc = acc * alpha[:, None]
 
         # update constants
+        # L : (BLOCK_M,)
         L = L * alpha + l_j
         M = m_j
-
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
         acc += tl.dot(P.to(V.dtype), V)
 
     # epilogue
+    # [BLOCK_M, HEAD_SIZE_PADDED]
     acc = acc / L[:, None]
     if USE_FP8:
         acc = acc * tl.load(out_scale)
@@ -775,6 +729,11 @@ def unified_attention(
         16 if num_queries_per_kv <= 16 else triton.next_power_of_2(num_queries_per_kv)
     )
     BLOCK_Q = BLOCK_M // num_queries_per_kv
+    print(f"num_seqs={num_seqs}, num_query_heads={num_query_heads}, num_kv_heads={num_kv_heads}")
+    print(f"num_queries_per_kv={num_queries_per_kv}, head_size={head_size}")
+    print(f"Using BLOCK_M={BLOCK_M}, BLOCK_Q={BLOCK_Q}")
+    # print(f"num_queries_per_kv={num_queries_per_kv}")
+    
 
     # Ideally we would launch with kernel with:
     # \sum_i[ceil(query_len[i] / BLOCK_Q)] blocks.
@@ -790,11 +749,13 @@ def unified_attention(
     # Assigning default tile sizes for prefill and decode.
     # Note: each tile size must be at least 32 for "fp8" (q.element_size() == 1)
     # and at least 16 for all other data types.
-    TILE_SIZE_PREFILL = 32
+    TILE_SIZE_PREFILL = 16
     TILE_SIZE_DECODE = 16 if q.element_size() >= 2 else 32
 
     # if batch contains a prefill
     if max_seqlen_q > 1 or total_num_q_blocks * num_kv_heads > 128:
+        breakpoint()
+        print(f"Launch parameters: total_num_q_blocks={total_num_q_blocks}, num_kv_heads={num_kv_heads}")
         kernel_unified_attention_2d[
             (
                 total_num_q_blocks,
