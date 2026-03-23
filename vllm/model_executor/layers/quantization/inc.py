@@ -35,19 +35,31 @@ logger = init_logger(__name__)
 class INCXPULinearMethod(LinearMethodBase):
     """XPU linear method for INC w4a16 quantization (symmetric & asymmetric).
 
-    Calls torch.ops._xpu_C.int4_gemm_w4a16 directly with weights repacked
-    from AWQ interleaved format to CompressedTensors sequential format.
+    Supports both AWQ and GPTQ packing formats from AutoRound checkpoints.
+    Calls torch.ops._xpu_C.int4_gemm_w4a16 with weights normalized to
+    CompressedTensors [out, in_packed] layout.
+
+    AWQ format: qweight [in, out_packed] with interleaved nibble order.
+    GPTQ format: qweight [in_packed, out] with sequential nibble order.
     """
 
     # AWQ packs 8 nibbles per int32 in interleaved order: [0,4,1,5,2,6,3,7]
     # The reverse order maps nibble positions back to sequential output columns.
     AWQ_REVERSE_ORDER = [0, 4, 1, 5, 2, 6, 3, 7]
 
-    def __init__(self, weight_bits: int, group_size: int, sym: bool):
+    def __init__(
+        self,
+        weight_bits: int,
+        group_size: int,
+        sym: bool,
+        packing_format: str = "auto_round:auto_awq",
+    ):
         self.weight_bits = weight_bits
         self.group_size = group_size
         self.sym = sym
         self.pack_factor = 32 // weight_bits
+        self.packing_format = packing_format
+        self.is_awq_format = "awq" in packing_format
 
     def create_weights(
         self,
@@ -65,19 +77,34 @@ class INCXPULinearMethod(LinearMethodBase):
         group_size = self.group_size if self.group_size != -1 else input_size
         scales_and_zp_size = input_size_per_partition // group_size
 
-        # qweight: [in, out // pack_factor] int32 — AWQ packing
-        qweight = PackedvLLMParameter(
-            data=torch.empty(
-                input_size_per_partition,
-                output_size_per_partition // self.pack_factor,
-                dtype=torch.int32,
-            ),
-            input_dim=0,
-            output_dim=1,
-            packed_dim=1,
-            packed_factor=self.pack_factor,
-            weight_loader=weight_loader,
-        )
+        if self.is_awq_format:
+            # AWQ: qweight [in, out // pack_factor] packed along output dim
+            qweight = PackedvLLMParameter(
+                data=torch.empty(
+                    input_size_per_partition,
+                    output_size_per_partition // self.pack_factor,
+                    dtype=torch.int32,
+                ),
+                input_dim=0,
+                output_dim=1,
+                packed_dim=1,
+                packed_factor=self.pack_factor,
+                weight_loader=weight_loader,
+            )
+        else:
+            # GPTQ: qweight [in // pack_factor, out] packed along input dim
+            qweight = PackedvLLMParameter(
+                data=torch.empty(
+                    input_size_per_partition // self.pack_factor,
+                    output_size_per_partition,
+                    dtype=torch.int32,
+                ),
+                input_dim=0,
+                output_dim=1,
+                packed_dim=0,
+                packed_factor=self.pack_factor,
+                weight_loader=weight_loader,
+            )
         # scales: [num_groups, out] params_dtype
         scales = GroupQuantScaleParameter(
             data=torch.empty(
@@ -109,18 +136,65 @@ class INCXPULinearMethod(LinearMethodBase):
         layer.register_parameter("qzeros", qzeros)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        # Repack qweight from AWQ interleaved layout [in, out_packed] to
-        # CompressedTensors sequential layout [out, in_packed] for the XPU
-        # kernel.
-        #
-        # AWQ stores 8 nibbles per int32 in interleaved order [0,4,1,5,2,6,3,7]
-        # rather than sequential [0,1,2,3,4,5,6,7]. We must reverse this
-        # ordering during unpacking.
+        device = layer.qweight.data.device
+
+        if self.is_awq_format:
+            self._process_awq_weights(layer, device)
+        else:
+            self._process_gptq_weights(layer, device)
+
+    def _process_gptq_weights(
+        self, layer: torch.nn.Module, device: torch.device,
+    ) -> None:
+        """Repack GPTQ weights [in_packed, out] → CT [out, in_packed].
+
+        GPTQ uses sequential nibble ordering, so no nibble reordering is
+        needed — just transpose the packed weight matrix.
+        """
+        # qweight is [in_packed, out] with sequential packing — transpose to CT
+        layer.qweight = Parameter(
+            layer.qweight.data.t().contiguous(), requires_grad=False,
+        )
+
+        # Scales: [num_groups, out] — no change needed
+        layer.scales = Parameter(layer.scales.data, requires_grad=False)
+
+        if self.sym:
+            # Symmetric: GPTQ v1 stores qzeros=7, effective zp = 7+1 = 8
+            # Kernel expects int8 scalar = 8
+            layer.qzeros = Parameter(
+                torch.tensor([8], dtype=torch.int8, device=device),
+                requires_grad=False,
+            )
+        else:
+            # Asymmetric: unpack qzeros [ngroups, out_packed] → [ngroups, out]
+            # GPTQ v1: effective_zp = stored_zp + 1
+            qzeros = layer.qzeros.data
+            mask = (1 << self.weight_bits) - 1
+            shifts = torch.arange(
+                0, 32, self.weight_bits, dtype=torch.int32, device=device,
+            )
+            zp_unpacked = torch.bitwise_right_shift(
+                qzeros[:, :, None], shifts[None, None, :]
+            ).to(torch.int32)
+            zp_unpacked = (zp_unpacked.view(qzeros.shape[0], -1) & mask) + 1
+            layer.qzeros = Parameter(
+                zp_unpacked.to(torch.int32).contiguous(),
+                requires_grad=False,
+            )
+
+    def _process_awq_weights(
+        self, layer: torch.nn.Module, device: torch.device,
+    ) -> None:
+        """Repack AWQ weights [in, out_packed] → CT [out, in_packed].
+
+        AWQ stores 8 nibbles per int32 in interleaved order
+        [0,4,1,5,2,6,3,7]. We must reverse this ordering during unpacking.
+        """
         qweight = layer.qweight.data
         in_size = qweight.shape[0]
         out_packed = qweight.shape[1]
         out_size = out_packed * self.pack_factor
-        device = qweight.device
 
         # Step 1: Unpack AWQ columnwise → [in, out] with interleaved columns
         mask = (1 << self.weight_bits) - 1
@@ -602,6 +676,7 @@ class INCConfig(QuantizationConfig):
                     weight_bits=weight_bits,
                     group_size=group_size,
                     sym=sym,
+                    packing_format=self.packing_format,
                 )
             return None
 
