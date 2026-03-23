@@ -22,6 +22,7 @@ from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.model_executor.parameter import (
     GroupQuantScaleParameter,
     PackedvLLMParameter,
+    RowvLLMParameter,
 )
 from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
@@ -134,6 +135,23 @@ class INCXPULinearMethod(LinearMethodBase):
         layer.register_parameter("qweight", qweight)
         layer.register_parameter("scales", scales)
         layer.register_parameter("qzeros", qzeros)
+
+        # GPTQ checkpoints may include g_idx for activation reordering.
+        # Register it so the weight loader doesn't error on unexpected keys.
+        if not self.is_awq_format:
+            g_idx = RowvLLMParameter(
+                data=torch.tensor(
+                    [
+                        i // (self.group_size if self.group_size != -1
+                              else input_size)
+                        for i in range(input_size_per_partition)
+                    ],
+                    dtype=torch.int32,
+                ),
+                input_dim=0,
+                weight_loader=weight_loader,
+            )
+            layer.register_parameter("g_idx", g_idx)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         device = layer.qweight.data.device
