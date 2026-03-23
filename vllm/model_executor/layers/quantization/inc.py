@@ -6,14 +6,23 @@ from typing import TYPE_CHECKING, Any
 
 import regex as re
 import torch
+from torch.nn.parameter import Parameter
 
 from vllm.logger import init_logger
-from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
+from vllm.model_executor.layers.linear import (
+    LinearBase,
+    LinearMethodBase,
+    UnquantizedLinearMethod,
+)
 from vllm.model_executor.layers.quantization import (
     QuantizationConfig,
     QuantizationMethods,
 )
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+from vllm.model_executor.parameter import (
+    GroupQuantScaleParameter,
+    PackedvLLMParameter,
+)
 from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
 
@@ -21,6 +30,183 @@ if TYPE_CHECKING:
     from vllm.model_executor.models.utils import WeightsMapper
 
 logger = init_logger(__name__)
+
+
+class INCXPULinearMethod(LinearMethodBase):
+    """XPU linear method for INC w4a16 quantization (symmetric & asymmetric).
+
+    Calls torch.ops._xpu_C.int4_gemm_w4a16 directly with weights repacked
+    from AWQ interleaved format to CompressedTensors sequential format.
+    """
+
+    # AWQ packs 8 nibbles per int32 in interleaved order: [0,4,1,5,2,6,3,7]
+    # The reverse order maps nibble positions back to sequential output columns.
+    AWQ_REVERSE_ORDER = [0, 4, 1, 5, 2, 6, 3, 7]
+
+    def __init__(self, weight_bits: int, group_size: int, sym: bool):
+        self.weight_bits = weight_bits
+        self.group_size = group_size
+        self.sym = sym
+        self.pack_factor = 32 // weight_bits
+
+    def create_weights(
+        self,
+        layer: torch.nn.Module,
+        input_size_per_partition: int,
+        output_partition_sizes: list[int],
+        input_size: int,
+        output_size: int,
+        params_dtype: torch.dtype,
+        **extra_weight_attrs,
+    ):
+        del output_size  # Unused.
+        output_size_per_partition = sum(output_partition_sizes)
+        weight_loader = extra_weight_attrs.get("weight_loader")
+        group_size = self.group_size if self.group_size != -1 else input_size
+        scales_and_zp_size = input_size_per_partition // group_size
+
+        # qweight: [in, out // pack_factor] int32 — AWQ packing
+        qweight = PackedvLLMParameter(
+            data=torch.empty(
+                input_size_per_partition,
+                output_size_per_partition // self.pack_factor,
+                dtype=torch.int32,
+            ),
+            input_dim=0,
+            output_dim=1,
+            packed_dim=1,
+            packed_factor=self.pack_factor,
+            weight_loader=weight_loader,
+        )
+        # scales: [num_groups, out] params_dtype
+        scales = GroupQuantScaleParameter(
+            data=torch.empty(
+                scales_and_zp_size,
+                output_size_per_partition,
+                dtype=params_dtype,
+            ),
+            input_dim=0,
+            output_dim=1,
+            weight_loader=weight_loader,
+        )
+        # qzeros: [num_groups, out // pack_factor] int32
+        # Both sym and asym models store qzeros in AWQ-packed checkpoints
+        qzeros = PackedvLLMParameter(
+            data=torch.empty(
+                scales_and_zp_size,
+                output_size_per_partition // self.pack_factor,
+                dtype=torch.int32,
+            ),
+            input_dim=0,
+            output_dim=1,
+            packed_dim=1,
+            packed_factor=self.pack_factor,
+            weight_loader=weight_loader,
+        )
+
+        layer.register_parameter("qweight", qweight)
+        layer.register_parameter("scales", scales)
+        layer.register_parameter("qzeros", qzeros)
+
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        # Repack qweight from AWQ interleaved layout [in, out_packed] to
+        # CompressedTensors sequential layout [out, in_packed] for the XPU
+        # kernel.
+        #
+        # AWQ stores 8 nibbles per int32 in interleaved order [0,4,1,5,2,6,3,7]
+        # rather than sequential [0,1,2,3,4,5,6,7]. We must reverse this
+        # ordering during unpacking.
+        qweight = layer.qweight.data
+        in_size = qweight.shape[0]
+        out_packed = qweight.shape[1]
+        out_size = out_packed * self.pack_factor
+        device = qweight.device
+
+        # Step 1: Unpack AWQ columnwise → [in, out] with interleaved columns
+        mask = (1 << self.weight_bits) - 1
+        shifts = torch.arange(
+            0, 32, self.weight_bits, dtype=torch.int32, device=device,
+        )
+        unpacked = torch.bitwise_right_shift(
+            qweight[:, :, None], shifts[None, None, :]
+        ).to(torch.int32)
+        unpacked = unpacked.view(in_size, -1)  # [in, out]
+
+        # Step 2: Reverse AWQ interleaved nibble order → sequential
+        reverse_order = torch.arange(
+            out_size, dtype=torch.int32, device=device,
+        )
+        reverse_order = reverse_order.view(-1, self.pack_factor)
+        reverse_order = reverse_order[:, self.AWQ_REVERSE_ORDER]
+        reverse_order = reverse_order.view(-1)
+        unpacked = unpacked[:, reverse_order] & mask
+
+        # Step 3: Transpose → [out, in]
+        unpacked = unpacked.t().contiguous()
+
+        # Step 4: Repack along input dim → [out, in_packed] (CT sequential)
+        in_packed = in_size // self.pack_factor
+        repacked = torch.zeros(
+            (out_size, in_packed), dtype=torch.int32, device=device,
+        )
+        for i in range(self.pack_factor):
+            repacked |= (unpacked[:, i::self.pack_factor] & mask) << (
+                self.weight_bits * i
+            )
+
+        layer.qweight = Parameter(repacked.contiguous(), requires_grad=False)
+
+        # Scales stay in [num_groups, out] layout — no transpose needed
+        layer.scales = Parameter(layer.scales.data, requires_grad=False)
+
+        if self.sym:
+            # Symmetric: replace packed qzeros with scalar int8 zero point = 8
+            layer.qzeros = Parameter(
+                torch.tensor([8], dtype=torch.int8, device=device),
+                requires_grad=False,
+            )
+        else:
+            # Asymmetric: unpack and reverse qzeros the same way
+            qzeros = layer.qzeros.data
+            zp_unpacked = torch.bitwise_right_shift(
+                qzeros[:, :, None], shifts[None, None, :]
+            ).to(torch.int32)
+            zp_unpacked = zp_unpacked.view(qzeros.shape[0], -1)
+            zp_reverse = torch.arange(
+                zp_unpacked.shape[1], dtype=torch.int32, device=device,
+            )
+            zp_reverse = zp_reverse.view(-1, self.pack_factor)
+            zp_reverse = zp_reverse[:, self.AWQ_REVERSE_ORDER]
+            zp_reverse = zp_reverse.view(-1)
+            zp_unpacked = zp_unpacked[:, zp_reverse] & mask
+            layer.qzeros = Parameter(
+                zp_unpacked.to(torch.int32).contiguous(),
+                requires_grad=False,
+            )
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        # After process_weights_after_loading, qweight is in CT layout
+        # [out, in_packed]. The kernel expects q_weight as [in_packed, out]
+        # (passed via .t()), and returns [M, N] where N = q_weight.size(1).
+        out_shape = x.shape[:-1] + (layer.qweight.shape[0],)
+        reshaped_x = x.reshape(-1, x.shape[-1])
+        out = torch.ops._xpu_C.int4_gemm_w4a16(
+            reshaped_x,
+            layer.qweight.t(),
+            None,  # bias handled below (kernel doesn't support fused bias)
+            layer.scales,
+            layer.qzeros,
+            self.group_size,
+            None,  # g_idx
+        )
+        if bias is not None:
+            out = out + bias
+        return out.reshape(out_shape)
 
 
 class INCConfig(QuantizationConfig):
@@ -409,8 +595,19 @@ class INCConfig(QuantizationConfig):
                 return UnquantizedLinearMethod()
             else:
                 return None
+
+        if current_platform.is_xpu() and weight_bits == 4:
+            if isinstance(layer, (LinearBase, ParallelLMHead)):
+                return INCXPULinearMethod(
+                    weight_bits=weight_bits,
+                    group_size=group_size,
+                    sym=sym,
+                )
+            return None
+
         raise NotImplementedError(
-            "INC quantization is not supported during xpu kernel migration."
+            "INC quantization is not supported on this platform/config "
+            "during xpu kernel migration."
         )
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
