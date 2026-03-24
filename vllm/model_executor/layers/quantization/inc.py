@@ -34,12 +34,14 @@ logger = init_logger(__name__)
 
 
 class INCXPULinearMethod(LinearMethodBase):
-    """XPU linear method for INC w4a16 GPTQ quantization (symmetric & asymmetric).
+    """XPU linear method for INC w4a16 GPTQ quantization (symmetric only).
 
     Repacks GPTQ weights from [in_packed, out] to CompressedTensors [out, in_packed]
     layout and calls torch.ops._xpu_C.int4_gemm_w4a16.
 
     GPTQ format: qweight [in_packed, out] with sequential nibble order.
+
+    Note: Asymmetric quantization (sym=false) is not for now.
     """
 
     def __init__(self, weight_bits: int, group_size: int, sym: bool):
@@ -138,29 +140,18 @@ class INCXPULinearMethod(LinearMethodBase):
         # Scales: [num_groups, out] — no change needed
         layer.scales = Parameter(layer.scales.data, requires_grad=False)
 
-        if self.sym:
-            # Symmetric: GPTQ v1 stores qzeros=7, effective zp = 7+1 = 8
-            # Kernel expects int8 scalar = 8
-            layer.qzeros = Parameter(
-                torch.tensor([8], dtype=torch.int8, device=device),
-                requires_grad=False,
+        if not self.sym:
+            # Should never reach here — caught in apply_ipex_quant_layer
+            raise NotImplementedError(
+                "Asymmetric quantization is not supported for now"
             )
-        else:
-            # Asymmetric: unpack qzeros [ngroups, out_packed] → [ngroups, out]
-            # GPTQ v1: effective_zp = stored_zp + 1
-            qzeros = layer.qzeros.data
-            mask = (1 << self.weight_bits) - 1
-            shifts = torch.arange(
-                0, 32, self.weight_bits, dtype=torch.int32, device=device,
-            )
-            zp_unpacked = torch.bitwise_right_shift(
-                qzeros[:, :, None], shifts[None, None, :]
-            ).to(torch.int32)
-            zp_unpacked = (zp_unpacked.view(qzeros.shape[0], -1) & mask) + 1
-            layer.qzeros = Parameter(
-                zp_unpacked.to(torch.int32).contiguous(),
-                requires_grad=False,
-            )
+
+        # Symmetric: GPTQ v1 stores qzeros=7, effective zp = 7+1 = 8
+        # Kernel expects int8 scalar = 8
+        layer.qzeros = Parameter(
+            torch.tensor([8], dtype=torch.int8, device=device),
+            requires_grad=False,
+        )
 
     def apply(
         self,
@@ -575,6 +566,10 @@ class INCConfig(QuantizationConfig):
                 return None
 
         if current_platform.is_xpu() and weight_bits == 4:
+            if not sym:
+                raise NotImplementedError(
+                    "INC W4A16 on XPU only supports symmetric quantization for now"
+                )
             if isinstance(layer, (LinearBase, ParallelLMHead)):
                 return INCXPULinearMethod(
                     weight_bits=weight_bits,
