@@ -140,12 +140,6 @@ class INCXPULinearMethod(LinearMethodBase):
         # Scales: [num_groups, out] — no change needed
         layer.scales = Parameter(layer.scales.data, requires_grad=False)
 
-        if not self.sym:
-            # Should never reach here — caught in apply_ipex_quant_layer
-            raise NotImplementedError(
-                "Asymmetric quantization is not supported for now"
-            )
-
         # Symmetric: GPTQ v1 stores qzeros=7, effective zp = 7+1 = 8
         # Kernel expects int8 scalar = 8
         layer.qzeros = Parameter(
@@ -557,7 +551,7 @@ class INCConfig(QuantizationConfig):
 
         return None
 
-    def apply_ipex_quant_layer(self, layer, prefix: str):
+    def apply_xpu_w4a16_quant_layer(self, layer, prefix: str):
         weight_bits, group_size, sym = self.get_layer_config(layer, prefix)
         if not self.check_quantized(weight_bits):
             if isinstance(layer, (LinearBase, ParallelLMHead)):
@@ -565,23 +559,23 @@ class INCConfig(QuantizationConfig):
             else:
                 return None
 
-        if current_platform.is_xpu() and weight_bits == 4:
-            if not sym:
-                raise NotImplementedError(
-                    "INC W4A16 on XPU only supports symmetric quantization for now"
-                )
-            if isinstance(layer, (LinearBase, ParallelLMHead)):
-                return INCXPULinearMethod(
-                    weight_bits=weight_bits,
-                    group_size=group_size,
-                    sym=sym,
-                )
-            return None
-
-        raise NotImplementedError(
-            "INC quantization is not supported on this platform/config "
-            "during xpu kernel migration."
-        )
+        if weight_bits != 4:
+            raise NotImplementedError(
+                f"INC on XPU only supports 4-bit quantization, "
+                f"got weight_bits={weight_bits}."
+            )
+        if not sym:
+            raise NotImplementedError(
+                "INC W4A16 on XPU only supports symmetric quantization "
+                "for now."
+            )
+        if isinstance(layer, (LinearBase, ParallelLMHead)):
+            return INCXPULinearMethod(
+                weight_bits=weight_bits,
+                group_size=group_size,
+                sym=sym,
+            )
+        return None
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         if prefix and self.extra_config:
@@ -590,12 +584,8 @@ class INCConfig(QuantizationConfig):
                     layer_name == prefix or layer_name == f"model.{prefix}"
                 ) and self.extra_config[layer_name].get("bits", 16) >= 16:
                     return UnquantizedLinearMethod()
-        if (
-            current_platform.is_cpu()
-            or current_platform.is_xpu()
-            or self.backend == "ipex"
-        ):
-            return self.apply_ipex_quant_layer(layer, prefix)
+        if current_platform.is_xpu():
+            return self.apply_xpu_w4a16_quant_layer(layer, prefix)
         if "gptq" in self.packing_format or "gptq" in self.backend:
             return self.apply_gptq_quant_layer(layer, prefix)
         if "awq" in self.packing_format or "awq" in self.backend:
