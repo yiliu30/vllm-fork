@@ -125,17 +125,20 @@ class INCXPULinearMethod(LinearMethodBase):
         layer.register_parameter("g_idx", g_idx)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        """Repack GPTQ weights [in_packed, out] → CT [out, in_packed].
+        """Repack GPTQ weights into kernel-ready NT layout.
 
-        GPTQ uses sequential nibble ordering, so no nibble reordering is
-        needed — just transpose the packed weight matrix.
+        GPTQ checkpoint: qweight [K_packed, N] contiguous.
+        oneDNN kernel needs NT format: a .t() view of [N, K_packed] contiguous,
+        i.e. logical shape [K_packed, N] with strides (1, K_packed).
+
+        We transpose to [N, K_packed] contiguous (CT), then store the .t()
+        view so apply() can pass it directly without per-call transpose.
         """
         device = layer.qweight.data.device
 
-        # qweight is [in_packed, out] with sequential packing — transpose to CT
-        layer.qweight = Parameter(
-            layer.qweight.data.t().contiguous(), requires_grad=False,
-        )
+        # GPTQ [K_packed, N] → CT [N, K_packed] contiguous → NT view [K_packed, N]
+        qweight_ct = layer.qweight.data.t().contiguous()
+        layer.qweight = Parameter(qweight_ct.t(), requires_grad=False)
 
         # Scales: [num_groups, out] — no change needed
         layer.scales = Parameter(layer.scales.data, requires_grad=False)
@@ -153,14 +156,13 @@ class INCXPULinearMethod(LinearMethodBase):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # After process_weights_after_loading, qweight is in CT layout
-        # [out, in_packed]. The kernel expects q_weight as [in_packed, out]
-        # (passed via .t()), and returns [M, N] where N = q_weight.size(1).
-        out_shape = x.shape[:-1] + (layer.qweight.shape[0],)
+        # qweight is already in NT layout [K_packed, N] (strides (1, K_packed))
+        # from process_weights_after_loading — pass directly to kernel.
+        out_shape = x.shape[:-1] + (layer.qweight.shape[1],)
         reshaped_x = x.reshape(-1, x.shape[-1])
         out = torch.ops._xpu_C.int4_gemm_w4a16(
             reshaped_x,
-            layer.qweight.t(),
+            layer.qweight,
             None,  # bias handled below (kernel doesn't support fused bias)
             layer.scales,
             layer.qzeros,
