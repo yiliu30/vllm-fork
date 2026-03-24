@@ -163,14 +163,12 @@ class INCXPULinearMethod(LinearMethodBase):
         out = torch.ops._xpu_C.int4_gemm_w4a16(
             reshaped_x,
             layer.qweight,
-            None,  # bias handled below (kernel doesn't support fused bias)
+            bias,
             layer.scales,
             layer.qzeros,
             self.group_size,
-            None,  # g_idx
+            layer.g_idx,
         )
-        if bias is not None:
-            out = out + bias
         return out.reshape(out_shape)
 
 
