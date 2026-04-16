@@ -3,6 +3,8 @@
 
 import pytest
 
+from vllm.model_executor.layers.fused_moe import FusedMoE
+from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
 from vllm.model_executor.layers.quantization.inc.config_builders import (
     build_awq_config,
     build_awq_marlin_config,
@@ -312,3 +314,40 @@ def test_inc_linear_method_delegates() -> None:
         "process_weights_after_loading",
         "apply_weights",
     ]
+
+
+def test_inc_get_quant_method_unquantized_linear_returns_unquantized() -> None:
+    config = make_config(extra_config={"layer": {"bits": 16}})
+    layer = object.__new__(LinearBase)
+
+    method = config.get_quant_method(layer, "layer")
+
+    assert isinstance(method, UnquantizedLinearMethod)
+
+
+def test_inc_get_quant_method_unquantized_moe_returns_none() -> None:
+    config = make_config(extra_config={"layer": {"bits": 16}})
+    layer = object.__new__(FusedMoE)
+
+    method = config.get_quant_method(layer, "layer")
+
+    assert method is None
+
+
+def test_inc_get_quant_method_linear_uses_resolved_scheme(monkeypatch) -> None:
+    config = make_config()
+    layer = object.__new__(LinearBase)
+    sentinel = object()
+
+    class DummyScheme:
+        def get_linear_method(self, _config, _layer, _prefix, _layer_config):
+            return sentinel
+
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.factory.resolve_scheme",
+        lambda _layer_config: DummyScheme(),
+    )
+
+    method = config.get_quant_method(layer, "layer")
+
+    assert method is sentinel

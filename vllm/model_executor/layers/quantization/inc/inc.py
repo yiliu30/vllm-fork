@@ -379,12 +379,20 @@ class INCConfig(QuantizationConfig):
         return None
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
-        if prefix and self.extra_config:
-            for layer_name in self.extra_config:
-                if (
-                    layer_name == prefix or layer_name == f"model.{prefix}"
-                ) and self.extra_config[layer_name].get("bits", 16) >= 16:
-                    return UnquantizedLinearMethod()
+        from vllm.model_executor.layers.fused_moe import FusedMoE
+
+        from .schemes.factory import resolve_scheme
+
+        layer_config = self.resolver.resolve(layer, prefix)
+        if isinstance(layer, (LinearBase, ParallelLMHead)):
+            if not layer_config.quantized:
+                return UnquantizedLinearMethod()
+            scheme = resolve_scheme(layer_config)
+            return scheme.get_linear_method(self, layer, prefix, layer_config)
+
+        if isinstance(layer, FusedMoE) and not layer_config.quantized:
+            return None
+
         if current_platform.is_xpu():
             return self.apply_xpu_w4a16_quant_layer(layer, prefix)
         is_gptq = "gptq" in self.packing_format or "gptq" in self.backend
