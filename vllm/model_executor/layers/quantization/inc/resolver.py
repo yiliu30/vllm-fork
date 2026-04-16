@@ -36,6 +36,14 @@ class INCLayerConfig:
     def is_wna16_int(self) -> bool:
         return self.data_type == "int" and self.quantized
 
+    @property
+    def is_mxfp4(self) -> bool:
+        return self.data_type == "mx_fp" and self.bits == 4
+
+    @property
+    def is_mxfp8(self) -> bool:
+        return self.data_type == "mx_fp" and self.bits == 8
+
 
 class INCConfigResolver:
     def __init__(self, config: "INCConfig") -> None:
