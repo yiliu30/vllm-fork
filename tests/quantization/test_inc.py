@@ -12,11 +12,13 @@ from vllm.model_executor.layers.quantization.inc.config_builders import (
     build_moe_wna16_gptq_dict,
 )
 from vllm.model_executor.layers.quantization.inc import INCConfig
+from vllm.model_executor.layers.quantization.inc.inc_linear import INCLinearMethod
 from vllm.model_executor.layers.quantization.inc.resolver import INCLayerConfig
 from vllm.model_executor.layers.quantization.inc.schemes import (
     INCWna16Scheme,
     resolve_scheme,
 )
+from vllm.model_executor.layers.quantization.inc.schemes.base import INCLinearScheme
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 
 
@@ -267,3 +269,46 @@ def test_inc_resolve_scheme_selects_wna16() -> None:
     scheme = resolve_scheme(layer_config)
 
     assert isinstance(scheme, INCWna16Scheme)
+
+
+class DummyLinearScheme(INCLinearScheme):
+    def __init__(self) -> None:
+        self.calls = []
+
+    @classmethod
+    def get_min_capability(cls) -> int:
+        return 0
+
+    def create_weights(self, *args, **kwargs) -> None:
+        self.calls.append(("create_weights", args, kwargs))
+
+    def process_weights_after_loading(self, layer) -> None:
+        self.calls.append(("process_weights_after_loading", layer))
+
+    def apply_weights(self, layer, x, bias=None):
+        self.calls.append(("apply_weights", layer, x, bias))
+        return "applied"
+
+
+def test_inc_linear_method_delegates() -> None:
+    scheme = DummyLinearScheme()
+    method = INCLinearMethod(scheme)
+    layer = DummyLayer()
+
+    method.create_weights(
+        layer,
+        input_size_per_partition=1,
+        output_partition_sizes=[2],
+        input_size=1,
+        output_size=2,
+        params_dtype=None,
+    )
+    method.process_weights_after_loading(layer)
+    result = method.apply(layer, "x", "b")
+
+    assert result == "applied"
+    assert [call[0] for call in scheme.calls] == [
+        "create_weights",
+        "process_weights_after_loading",
+        "apply_weights",
+    ]
