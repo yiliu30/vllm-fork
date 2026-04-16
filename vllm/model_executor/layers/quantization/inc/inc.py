@@ -5,12 +5,10 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
 import torch
-from torch.nn.parameter import Parameter
 
 from vllm.logger import init_logger
 from vllm.model_executor.layers.linear import (
     LinearBase,
-    LinearMethodBase,
     UnquantizedLinearMethod,
 )
 from vllm.model_executor.layers.quantization import (
@@ -18,13 +16,6 @@ from vllm.model_executor.layers.quantization import (
     QuantizationMethods,
 )
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from vllm.model_executor.parameter import (
-    GroupQuantScaleParameter,
-    PackedvLLMParameter,
-    RowvLLMParameter,
-)
-from vllm.platforms import current_platform
-from vllm.scalar_type import scalar_types
 
 from .resolver import INCConfigResolver
 
@@ -141,9 +132,6 @@ class INCConfig(QuantizationConfig):
     def get_layer_config(self, layer, layer_name: str):
         return self.resolver.get_layer_config(layer, layer_name)
 
-    def check_quantized(self, weight_bits: int) -> bool:
-        return weight_bits < 16
-
     def apply_vllm_mapper(self, hf_to_vllm_mapper: "WeightsMapper"):
         if self.block_name_to_quantize is not None:
             self.block_name_to_quantize = hf_to_vllm_mapper.apply_list(
@@ -152,263 +140,23 @@ class INCConfig(QuantizationConfig):
         if self.extra_config is not None:
             self.extra_config = hf_to_vllm_mapper.apply_dict(self.extra_config)
 
-    def apply_awq_quant_layer(self, layer, prefix: str, backend: str = "auto"):
-        from vllm.model_executor.layers.fused_moe import FusedMoE
-        from vllm.model_executor.layers.quantization.utils.marlin_utils import (
-            check_marlin_supported,
-            check_moe_marlin_supports_layer,
-        )
-
-        weight_bits, group_size, sym = self.get_layer_config(layer, prefix)
-        if not self.check_quantized(weight_bits):
-            if isinstance(layer, (LinearBase, ParallelLMHead)):
-                return UnquantizedLinearMethod()
-            else:
-                return None
-
-        logger.debug(
-            "[%s] Type: %s, Bits: %s, Group Size: %s, Sym: %s",
-            prefix,
-            layer.__class__.__name__,
-            weight_bits,
-            group_size,
-            sym,
-        )
-        if backend == "auto" or "marlin" in backend:
-            AWQ_TYPE_MAP = {
-                4: scalar_types.uint4,
-                8: scalar_types.uint8,
-            }
-            use_marlin = (weight_bits in AWQ_TYPE_MAP) and check_marlin_supported(
-                AWQ_TYPE_MAP[weight_bits], group_size, not sym
-            )
-
-            if isinstance(layer, FusedMoE):
-                use_marlin = use_marlin and check_moe_marlin_supports_layer(
-                    layer, group_size
-                )
-
-        else:
-            use_marlin = False
-        if use_marlin:
-            from vllm.model_executor.layers.quantization.awq_marlin import (
-                AWQMarlinConfig,
-                AWQMarlinLinearMethod,
-                AWQMarlinMoEMethod,
-            )
-
-            quant_args_marlin = AWQMarlinConfig(
-                weight_bits=weight_bits,
-                group_size=group_size,
-                zero_point=not sym,
-                lm_head_quantized=False,
-                full_config={},
-                modules_to_not_convert=[],
-            )
-        else:
-            from vllm.model_executor.layers.quantization.awq import (
-                AWQConfig,
-                AWQLinearMethod,
-            )
-
-            quant_args = AWQConfig(
-                weight_bits=weight_bits,
-                group_size=group_size,
-                zero_point=not sym,
-            )
-
-        if isinstance(layer, FusedMoE):
-            if use_marlin:
-                return AWQMarlinMoEMethod(quant_args_marlin, layer.moe_config)
-            from vllm.model_executor.layers.quantization.moe_wna16 import MoeWNA16Config
-
-            config = {
-                "quant_method": "awq",
-                "bits": weight_bits,
-                "group_size": group_size,
-                "zero_point": not sym,
-                "lm_head": False,
-            }
-            return MoeWNA16Config.from_config(config).get_quant_method(layer, prefix)
-
-        if isinstance(layer, (LinearBase, ParallelLMHead)):
-            if use_marlin:
-                return AWQMarlinLinearMethod(quant_args_marlin)
-            else:
-                return AWQLinearMethod(quant_args)
-        return None
-
-    def apply_gptq_quant_layer(self, layer, prefix: str, backend: str = "auto"):
-        from vllm.model_executor.layers.fused_moe import FusedMoE
-        from vllm.model_executor.layers.quantization.utils.marlin_utils import (
-            check_marlin_supported,
-            check_moe_marlin_supports_layer,
-        )
-
-        weight_bits, group_size, sym = self.get_layer_config(layer, prefix)
-        if not self.check_quantized(weight_bits):
-            if isinstance(layer, (LinearBase, ParallelLMHead)):
-                return UnquantizedLinearMethod()
-            else:
-                return None
-
-        logger.debug(
-            "[%s] Type: %s, Bits: %s, Group Size: %s, Sym: %s",
-            prefix,
-            layer.__class__.__name__,
-            weight_bits,
-            group_size,
-            sym,
-        )
-        if backend == "auto" or "marlin" in backend:
-            GPTQ_TYPE_MAP = {
-                (4, True): scalar_types.uint4b8,
-                (8, True): scalar_types.uint8b128,
-            }
-            use_marlin = (weight_bits, sym) in GPTQ_TYPE_MAP and check_marlin_supported(
-                GPTQ_TYPE_MAP[(weight_bits, sym)], group_size, has_zp=not sym
-            )
-            if isinstance(layer, FusedMoE):
-                use_marlin = use_marlin and check_moe_marlin_supports_layer(
-                    layer, group_size
-                )
-        else:
-            use_marlin = False
-        if use_marlin:
-            from vllm.model_executor.layers.quantization.gptq_marlin import (
-                GPTQMarlinConfig,
-                GPTQMarlinLinearMethod,
-                GPTQMarlinMoEMethod,
-            )
-
-            quant_args_marlin = GPTQMarlinConfig(
-                weight_bits=weight_bits,
-                group_size=group_size,
-                is_sym=sym,
-                lm_head_quantized=False,
-                desc_act=False,
-                dynamic={},
-                full_config={},
-            )
-        else:
-            from vllm.model_executor.layers.quantization.gptq import (
-                GPTQConfig,
-                GPTQLinearMethod,
-            )
-
-            quant_args = GPTQConfig(
-                weight_bits=weight_bits,
-                group_size=group_size,
-                lm_head_quantized=False,
-                desc_act=False,
-                dynamic={},
-            )
-
-        if isinstance(layer, FusedMoE):
-            if use_marlin:
-                return GPTQMarlinMoEMethod(quant_args_marlin, layer.moe_config)
-            else:
-                from vllm.model_executor.layers.quantization.moe_wna16 import (
-                    MoeWNA16Config,
-                )
-
-                config = {
-                    "quant_method": "gptq",
-                    "bits": weight_bits,
-                    "group_size": group_size,
-                    "sym": sym,
-                    "lm_head": False,
-                }
-                return MoeWNA16Config.from_config(config).get_quant_method(
-                    layer, prefix
-                )
-
-        if isinstance(layer, (LinearBase, ParallelLMHead)):
-            if use_marlin:
-                return GPTQMarlinLinearMethod(quant_args_marlin)
-            else:
-                return GPTQLinearMethod(quant_args)
-
-        return None
-
-    def apply_xpu_w4a16_quant_layer(self, layer, prefix: str):
-        weight_bits, group_size, sym = self.get_layer_config(layer, prefix)
-
-        if not self.check_quantized(weight_bits):
-            if isinstance(layer, (LinearBase, ParallelLMHead)):
-                return UnquantizedLinearMethod()
-            else:
-                return None
-
-        if weight_bits != 4:
-            raise NotImplementedError(
-                f"INC on XPU only supports 4-bit quantization, "
-                f"got weight_bits={weight_bits}."
-            )
-        if not sym:
-            raise NotImplementedError(
-                "INC W4A16 on XPU only supports symmetric quantization for now."
-            )
-        if isinstance(layer, (LinearBase, ParallelLMHead)):
-            return INCXPULinearMethod(
-                weight_bits=weight_bits,
-                group_size=group_size,
-                sym=sym,
-            )
-        return None
-
-    def apply_cpu_w4a16_quant_layer(self, layer, prefix: str):
-        weight_bits, group_size, sym = self.get_layer_config(layer, prefix)
-        if not self.check_quantized(weight_bits):
-            if isinstance(layer, (LinearBase, ParallelLMHead)):
-                return UnquantizedLinearMethod()
-            else:
-                return None
-
-        if weight_bits != 4:
-            raise NotImplementedError(
-                f"INC on CPU only supports 4-bit quantization, "
-                f"got weight_bits={weight_bits}."
-            )
-        if not sym:
-            raise NotImplementedError(
-                "INC W4A16 on CPU only supports symmetric quantization for now."
-            )
-        if isinstance(layer, (LinearBase, ParallelLMHead)):
-            return self.apply_gptq_quant_layer(layer, prefix)
-        return None
-
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         from vllm.model_executor.layers.fused_moe import FusedMoE
 
         from .schemes.factory import resolve_scheme
 
         layer_config = self.resolver.resolve(layer, prefix)
-        if isinstance(layer, (LinearBase, ParallelLMHead)):
-            if not layer_config.quantized:
+        if not layer_config.quantized:
+            if isinstance(layer, (LinearBase, ParallelLMHead)):
                 return UnquantizedLinearMethod()
-            scheme = resolve_scheme(layer_config)
-            return scheme.get_linear_method(self, layer, prefix, layer_config)
-
-        if isinstance(layer, FusedMoE) and not layer_config.quantized:
             return None
 
-        if current_platform.is_xpu():
-            return self.apply_xpu_w4a16_quant_layer(layer, prefix)
-        is_gptq = "gptq" in self.packing_format or "gptq" in self.backend
-        if current_platform.is_cpu() and is_gptq:
-            return self.apply_cpu_w4a16_quant_layer(layer, prefix)
-        if is_gptq:
-            return self.apply_gptq_quant_layer(layer, prefix)
-        if "awq" in self.packing_format or "awq" in self.backend:
-            return self.apply_awq_quant_layer(layer, prefix)
-
-        raise NotImplementedError(
-            f"Unsupported quantization configuration for layer '{prefix}'. "
-            f"Platform: CPU={current_platform.is_cpu()}. "
-            f"Platform: XPU={current_platform.is_xpu()}. "
-            f"Format: {self.packing_format}, Backend: {self.backend}."
-        )
+        scheme = resolve_scheme(layer_config)
+        if isinstance(layer, (LinearBase, ParallelLMHead)):
+            return scheme.get_linear_method(self, layer, prefix, layer_config)
+        if isinstance(layer, FusedMoE):
+            return scheme.get_moe_method(self, layer, prefix, layer_config)
+        return None
 
     @classmethod
     def override_quantization_method(
@@ -419,136 +167,3 @@ class INCConfig(QuantizationConfig):
         if is_auto_round_format:
             return cls.get_name()
         return None
-
-
-class INCXPULinearMethod(LinearMethodBase):
-    """XPU linear method for INC w4a16 GPTQ quantization (symmetric only).
-
-    Repacks GPTQ weights from [in_packed, out] to oneDNN [out, in_packed]
-    layout and calls torch.ops._xpu_C.int4_gemm_w4a16.
-
-    GPTQ format: qweight [in_packed, out] with sequential nibble order.
-
-    Note: Asymmetric quantization (sym=false) is not for now.
-
-    FIXME(yiliu30): Refine the implementation to reuse XPUwNa16LinearKernel.
-    """
-
-    def __init__(self, weight_bits: int, group_size: int, sym: bool):
-        self.weight_bits = weight_bits
-        self.group_size = group_size
-        self.sym = sym
-        self.pack_factor = 32 // weight_bits
-
-    def create_weights(
-        self,
-        layer: torch.nn.Module,
-        input_size_per_partition: int,
-        output_partition_sizes: list[int],
-        input_size: int,
-        output_size: int,
-        params_dtype: torch.dtype,
-        **extra_weight_attrs,
-    ):
-        del output_size  # Unused.
-        output_size_per_partition = sum(output_partition_sizes)
-        weight_loader = extra_weight_attrs.get("weight_loader")
-        scales_and_zp_size = input_size_per_partition // self.group_size
-
-        # GPTQ: qweight [in // pack_factor, out] packed along input dim
-        qweight = PackedvLLMParameter(
-            data=torch.empty(
-                input_size_per_partition // self.pack_factor,
-                output_size_per_partition,
-                dtype=torch.int32,
-            ),
-            input_dim=0,
-            output_dim=1,
-            packed_dim=0,
-            packed_factor=self.pack_factor,
-            weight_loader=weight_loader,
-        )
-        # scales: [num_groups, out] params_dtype
-        scales = GroupQuantScaleParameter(
-            data=torch.empty(
-                scales_and_zp_size,
-                output_size_per_partition,
-                dtype=params_dtype,
-            ),
-            input_dim=0,
-            output_dim=1,
-            weight_loader=weight_loader,
-        )
-        # qzeros: [num_groups, out // pack_factor] int32
-        qzeros = PackedvLLMParameter(
-            data=torch.empty(
-                scales_and_zp_size,
-                output_size_per_partition // self.pack_factor,
-                dtype=torch.int32,
-            ),
-            input_dim=0,
-            output_dim=1,
-            packed_dim=1,
-            packed_factor=self.pack_factor,
-            weight_loader=weight_loader,
-        )
-
-        layer.register_parameter("qweight", qweight)
-        layer.register_parameter("scales", scales)
-        layer.register_parameter("qzeros", qzeros)
-
-        # GPTQ checkpoints may include g_idx for activation reordering.
-        # Register it so the weight loader doesn't error on unexpected keys.
-        g_idx = RowvLLMParameter(
-            data=torch.tensor(
-                [i // self.group_size for i in range(input_size_per_partition)],
-                dtype=torch.int32,
-            ),
-            input_dim=0,
-            weight_loader=weight_loader,
-        )
-        layer.register_parameter("g_idx", g_idx)
-
-    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        """Repack GPTQ weights into kernel-ready NT layout."""
-        device = layer.qweight.data.device
-
-        # oneDNN int4 kernel requires strides[0]==1 ("NT format"), but GPTQ
-        # checkpoint is [K_packed, N] contiguous with strides (N, 1).
-        # Two transposes are needed — neither alone can achieve this:
-        #   1. .t().contiguous() → [N, K_packed] contiguous in memory
-        #   2. .t()              → [K_packed, N] view with strides (1, K_packed)
-        # The result has the same logical shape but strides[0]==1 as required.
-        qweight_ct = layer.qweight.data.t().contiguous()
-        layer.qweight = Parameter(qweight_ct.t(), requires_grad=False)
-
-        # Scales: [num_groups, out] — no change needed
-        layer.scales = Parameter(layer.scales.data, requires_grad=False)
-
-        # Symmetric: GPTQ v1 stores qzeros=7, effective zp = 7+1 = 8
-        # Kernel expects int8 scalar = 8
-        layer.qzeros = Parameter(
-            torch.tensor([8], dtype=torch.int8, device=device),
-            requires_grad=False,
-        )
-
-    def apply(
-        self,
-        layer: torch.nn.Module,
-        x: torch.Tensor,
-        bias: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        # qweight is already in NT layout [K_packed, N] (strides (1, K_packed))
-        # from process_weights_after_loading — pass directly to kernel.
-        out_shape = x.shape[:-1] + (layer.qweight.shape[1],)
-        reshaped_x = x.reshape(-1, x.shape[-1])
-        out = torch.ops._xpu_C.int4_gemm_w4a16(
-            reshaped_x,
-            layer.qweight,
-            bias,
-            layer.scales,
-            layer.qzeros,
-            self.group_size,
-            None,  # g_idx not needed: desc_act is always False for INC models
-        )
-        return out.reshape(out_shape)
