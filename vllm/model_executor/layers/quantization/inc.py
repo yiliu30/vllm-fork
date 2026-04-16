@@ -433,7 +433,7 @@ class INCConfig(QuantizationConfig):
 
         if isinstance(layer, (LinearBase, ParallelLMHead)):
             try:
-                return INCXPULinearARKMethod(
+                return INCW4A16LinearARKMethod(
                     weight_bits=weight_bits,
                     group_size=group_size,
                     sym=sym,
@@ -471,6 +471,19 @@ class INCConfig(QuantizationConfig):
                 "INC W4A16 on CPU only supports symmetric quantization for now."
             )
         if isinstance(layer, (LinearBase, ParallelLMHead)):
+            try:
+                return INCW4A16LinearARKMethod(
+                    weight_bits=weight_bits,
+                    group_size=group_size,
+                    sym=sym,
+                )
+            except ImportError as error:
+                logger.warning(
+                    "Failed to initialize ARK backend for layer %s; "
+                    "falling back to the default cpu INC path. Error: %s",
+                    prefix,
+                    error,
+                )
             return self.apply_gptq_quant_layer(layer, prefix)
         return None
 
@@ -592,8 +605,8 @@ def _get_ark_type_str(dtype: torch.dtype) -> str:
         raise ValueError(f"Unsupported dtype for ARK: {dtype}")
 
 
-class INCXPULinearARKMethod(LinearMethodBase):
-    """XPU linear method for INC quantization utilizing the ARK backend.
+class INCW4A16LinearARKMethod(LinearMethodBase):
+    """XPU & CPU linear for INC quantization utilizing the ARK backend.
 
     Repacks GPTQ/INC weights into ARK's layout.
     """
@@ -691,7 +704,12 @@ class INCXPULinearARKMethod(LinearMethodBase):
         # along the K dimension.
         unpacked_w = unpacked_w.transpose(1, 2).reshape(-1, N).contiguous()
 
-        scale = layer.scales.data.contiguous()
+        is_cpu = unpacked_w.device.type == "cpu"
+        if is_cpu:
+            scale = layer.scales.data.float().contiguous()
+            scale_type = "fp32"
+        else:
+            scale = layer.scales.data.contiguous()
 
         if self.asym:
             qz = layer.qzeros.data  # [groups, N // pack_factor]
@@ -739,26 +757,40 @@ class INCXPULinearARKMethod(LinearMethodBase):
         out_shape = x.shape[:-1] + (layer.out_features,)
         reshaped_x = x.reshape(-1, x.shape[-1]).contiguous()
 
-        # Ensure bias has no grad requirement and is contiguous to avoid C++
-        # pointer handling issues.
-        if bias is not None:
-            safe_bias = bias.detach().contiguous()
+        is_cpu = x.device.type == "cpu"
+        print(f"  x.device.type :{ x.device.type}")
+        if is_cpu:
+            compute_x = reshaped_x.float()
+            if bias is not None:
+                safe_bias = bias.float().reshape(1, -1).contiguous()
+            else:
+                safe_bias = torch.zeros(
+                    (1, layer.out_features), dtype=torch.float32, device=x.device
+                )
         else:
-            safe_bias = torch.empty(0, dtype=x.dtype, device=x.device)
+            compute_x = reshaped_x
+            if bias is not None:
+                safe_bias = bias.detach().contiguous()
+            else:
+                safe_bias = torch.empty(0, dtype=x.dtype, device=x.device)
 
         assert self.ark is not None
+
         out = self.ark.woqgemm(
-            reshaped_x,  # Input activations [M, K]
-            layer.packed_weight,  # Repacked low-level weight buffer
-            safe_bias,  # Bias [1, N] or empty
-            layer.out_features,  # N
-            layer.in_features,  # K
-            self.group_size,  # Block size
+            compute_x,  # [M, K]
+            layer.packed_weight,
+            safe_bias,  # [1, N] 或 empty(0)
+            layer.out_features,
+            layer.in_features,
+            self.group_size,
             layer.compute_type,  # fp16 / bf16
             self.weight_type,  # int4
             layer.scale_type,  # fp16 / bf16
-            self.asym,  # False
+            self.asym,
         )
+
+        if is_cpu:
+            out = out.to(x.dtype)
 
         return out.reshape(out_shape)
 
