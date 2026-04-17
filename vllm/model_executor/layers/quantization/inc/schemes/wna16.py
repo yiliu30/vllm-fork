@@ -60,6 +60,6 @@ class INCWna16Scheme(INCScheme):
         layer_config: "INCLayerConfig",
     ):
         del config, prefix
-        from .wna16_moe import resolve_wna16_moe
+        from .wna16_moe import INCWNA16MoE
 
-        return resolve_wna16_moe(layer, layer_config)
+        return INCWNA16MoE.get_moe_method(layer, layer_config)

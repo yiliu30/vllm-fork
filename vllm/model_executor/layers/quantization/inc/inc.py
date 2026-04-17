@@ -141,7 +141,11 @@ class INCConfig(QuantizationConfig):
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         from vllm.model_executor.layers.fused_moe import FusedMoE
 
+        from .inc_moe import INCMoEMethod
         from .schemes.factory import resolve_scheme
+
+        if isinstance(layer, FusedMoE):
+            return INCMoEMethod.get_moe_method(self, layer, prefix)
 
         layer_config = self.resolver.resolve(layer, prefix)
         if not layer_config.quantized:
@@ -156,15 +160,6 @@ class INCConfig(QuantizationConfig):
                 raise NotImplementedError(
                     "INC scheme "
                     f"{scheme.__class__.__name__} does not support Linear "
-                    f"for layer config: {layer_config}"
-                )
-            return method
-        if isinstance(layer, FusedMoE):
-            method = scheme.get_moe_method(self, layer, prefix, layer_config)
-            if method is None:
-                raise NotImplementedError(
-                    "INC scheme "
-                    f"{scheme.__class__.__name__} does not support FusedMoE "
                     f"for layer config: {layer_config}"
                 )
             return method
