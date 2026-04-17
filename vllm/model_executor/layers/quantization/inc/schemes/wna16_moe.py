@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 class INCWNA16MoE(FusedMoEMethodBase):
     @staticmethod
-    def get_moe_method(
+    def get_method(
         layer: "torch.nn.Module",
         layer_config: "INCLayerConfig",
     ) -> "FusedMoEMethodBase":
@@ -113,9 +113,3 @@ class INCWNA16MoE(FusedMoEMethodBase):
         )
         return MoeWNA16Method(moe_config, layer.moe_config)
 
-
-def resolve_wna16_moe(
-    layer: "torch.nn.Module",
-    layer_config: "INCLayerConfig",
-) -> "FusedMoEMethodBase":
-    return INCWNA16MoE.get_moe_method(layer, layer_config)
