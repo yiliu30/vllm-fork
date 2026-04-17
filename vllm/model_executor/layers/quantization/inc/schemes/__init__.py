@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from .base import INCLinearScheme, INCScheme
-from .factory import resolve_scheme
-from .wna16 import INCWna16Scheme
+from .base import INCLinearScheme
+from .factory import resolve_linear_scheme, resolve_moe_method
 
 __all__ = [
-    "INCScheme",
     "INCLinearScheme",
-    "INCWna16Scheme",
-    "resolve_scheme",
+    "resolve_linear_scheme",
+    "resolve_moe_method",
 ]

@@ -3,78 +3,40 @@
 
 from typing import TYPE_CHECKING
 
-from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
 
-from ..config_builders import (
+from ...config_builders import (
     build_awq_marlin_config,
     build_gptq_marlin_config,
     build_moe_wna16_awq_dict,
     build_moe_wna16_gptq_dict,
 )
-from ..inc_linear import INCLinearMethod
-from .base import INCScheme
 
 if TYPE_CHECKING:
     import torch
 
-    from ..inc import INCConfig
-    from ..resolver import INCLayerConfig
+    from vllm.model_executor.layers.fused_moe.layer import FusedMoEMethodBase
+
+    from ...resolver import INCLayerConfig
 
 
-class INCWna16Scheme(INCScheme):
-    @staticmethod
-    def can_handle(layer_config: "INCLayerConfig") -> bool:
-        return layer_config.is_wna16_int
-
-    def get_linear_method(
-        self,
-        config: "INCConfig",
-        layer: "torch.nn.Module",
-        prefix: str,
-        layer_config: "INCLayerConfig",
-    ):
-        del config, layer, prefix
-        if current_platform.is_xpu():
-            if layer_config.bits == 4 and layer_config.sym:
-                from .xpu_w4a16_linear import INCXPUW4A16LinearScheme
-
-                return INCLinearMethod(INCXPUW4A16LinearScheme(layer_config))
-            raise NotImplementedError(
-                f"INC on XPU: unsupported config {layer_config}"
-            )
-
-        if current_platform.is_cpu() and layer_config.is_gptq:
-            if layer_config.bits == 4 and layer_config.sym:
-                from .wna16_linear import INCWNA16LinearScheme
-
-                return INCLinearMethod(INCWNA16LinearScheme(layer_config))
-            raise NotImplementedError(
-                f"INC on CPU: unsupported config {layer_config}"
-            )
-
-        from .wna16_linear import INCWNA16LinearScheme
-
-        return INCLinearMethod(INCWNA16LinearScheme(layer_config))
-
-    def get_moe_method(
-        self,
-        config: "INCConfig",
-        layer: "torch.nn.Module",
-        prefix: str,
-        layer_config: "INCLayerConfig",
-    ):
-        del config, prefix
-        if layer_config.is_gptq:
-            return _resolve_gptq_moe(layer, layer_config)
-        if layer_config.is_awq:
-            return _resolve_awq_moe(layer, layer_config)
-        raise NotImplementedError(
-            f"WNA16 MoE does not support config {layer_config}"
-        )
+def resolve_wna16_moe(
+    layer: "torch.nn.Module",
+    layer_config: "INCLayerConfig",
+) -> "FusedMoEMethodBase":
+    if layer_config.is_gptq:
+        return _resolve_gptq_moe(layer, layer_config)
+    if layer_config.is_awq:
+        return _resolve_awq_moe(layer, layer_config)
+    raise NotImplementedError(
+        f"WNA16 MoE does not support config {layer_config}"
+    )
 
 
-def _resolve_gptq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
+def _resolve_gptq_moe(
+    layer: "torch.nn.Module",
+    layer_config: "INCLayerConfig",
+) -> "FusedMoEMethodBase":
     from vllm.model_executor.layers.quantization.gptq_marlin import (
         GPTQMarlinMoEMethod,
     )
@@ -105,11 +67,16 @@ def _resolve_gptq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
             layer.moe_config,
         )
 
-    moe_config = MoeWNA16Config.from_config(build_moe_wna16_gptq_dict(layer_config))
+    moe_config = MoeWNA16Config.from_config(
+        build_moe_wna16_gptq_dict(layer_config)
+    )
     return MoeWNA16Method(moe_config, layer.moe_config)
 
 
-def _resolve_awq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
+def _resolve_awq_moe(
+    layer: "torch.nn.Module",
+    layer_config: "INCLayerConfig",
+) -> "FusedMoEMethodBase":
     from vllm.model_executor.layers.quantization.awq_marlin import AWQMarlinMoEMethod
     from vllm.model_executor.layers.quantization.moe_wna16 import (
         MoeWNA16Config,
@@ -138,5 +105,7 @@ def _resolve_awq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
             layer.moe_config,
         )
 
-    moe_config = MoeWNA16Config.from_config(build_moe_wna16_awq_dict(layer_config))
+    moe_config = MoeWNA16Config.from_config(
+        build_moe_wna16_awq_dict(layer_config)
+    )
     return MoeWNA16Method(moe_config, layer.moe_config)

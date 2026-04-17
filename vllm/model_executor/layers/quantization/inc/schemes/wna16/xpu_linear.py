@@ -12,10 +12,10 @@ from vllm.model_executor.parameter import (
     RowvLLMParameter,
 )
 
-from .base import INCLinearScheme
+from ..base import INCLinearScheme
 
 if TYPE_CHECKING:
-    from ..resolver import INCLayerConfig
+    from ...resolver import INCLayerConfig
 
 
 class INCXPUW4A16LinearScheme(INCLinearScheme):
