@@ -9,24 +9,24 @@ from vllm.model_executor.layers.quantization.utils.marlin_utils import (
 from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
 
-from ...config_builders import (
+from ..config_builders import (
     build_awq_config,
     build_awq_marlin_config,
     build_gptq_config,
     build_gptq_marlin_config,
 )
-from ..base import INCLinearScheme
+from .base import INCLinearScheme
 
 if TYPE_CHECKING:
     import torch
 
-    from ...resolver import INCLayerConfig
+    from ..resolver import INCLayerConfig
 
 
 def resolve_wna16_linear(layer_config: "INCLayerConfig") -> "INCLinearScheme":
     if current_platform.is_xpu():
         if layer_config.bits == 4 and layer_config.sym:
-            from .xpu_linear import INCXPUW4A16LinearScheme
+            from .xpu_w4a16_linear import INCXPUW4A16LinearScheme
 
             return INCXPUW4A16LinearScheme(layer_config)
         raise NotImplementedError(f"INC on XPU: unsupported config {layer_config}")

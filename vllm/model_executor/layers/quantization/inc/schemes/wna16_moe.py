@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from vllm.scalar_type import scalar_types
 
-from ...config_builders import (
+from ..config_builders import (
     build_awq_marlin_config,
     build_gptq_marlin_config,
     build_moe_wna16_awq_dict,
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from vllm.model_executor.layers.fused_moe.layer import FusedMoEMethodBase
 
-    from ...resolver import INCLayerConfig
+    from ..resolver import INCLayerConfig
 
 
 def resolve_wna16_moe(

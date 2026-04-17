@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 def resolve_linear_scheme(layer_config: "INCLayerConfig") -> "INCLinearScheme":
     if layer_config.is_wna16_int:
-        from .wna16.linear import resolve_wna16_linear
+        from .wna16_linear import resolve_wna16_linear
 
         return resolve_wna16_linear(layer_config)
 
@@ -28,7 +28,7 @@ def resolve_moe_method(
     layer_config: "INCLayerConfig",
 ) -> "FusedMoEMethodBase":
     if layer_config.is_wna16_int:
-        from .wna16.moe import resolve_wna16_moe
+        from .wna16_moe import resolve_wna16_moe
 
         return resolve_wna16_moe(layer, layer_config)
 
