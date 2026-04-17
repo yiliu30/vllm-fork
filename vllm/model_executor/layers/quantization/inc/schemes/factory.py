@@ -8,14 +8,16 @@ if TYPE_CHECKING:
     from .base import INCScheme
 
 
+_SCHEME_REGISTRY: list[type["INCScheme"]] = []
+
+
+def register_scheme(cls: type["INCScheme"]) -> type["INCScheme"]:
+    _SCHEME_REGISTRY.append(cls)
+    return cls
+
+
 def resolve_scheme(layer_config: "INCLayerConfig") -> "INCScheme":
-    from .wna16 import INCWna16Scheme
-
-    scheme_list: list[type[INCScheme]] = [
-        INCWna16Scheme,
-    ]
-
-    for scheme_cls in scheme_list:
+    for scheme_cls in _SCHEME_REGISTRY:
         if scheme_cls.can_handle(layer_config):
             return scheme_cls()
 

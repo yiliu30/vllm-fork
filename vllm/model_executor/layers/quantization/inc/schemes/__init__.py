@@ -3,7 +3,9 @@
 
 from .base import INCLinearScheme, INCScheme
 from .factory import resolve_scheme
-from .wna16 import INCWna16Scheme
+from . import wna16
+
+INCWna16Scheme = wna16.INCWna16Scheme
 
 __all__ = [
     "INCScheme",

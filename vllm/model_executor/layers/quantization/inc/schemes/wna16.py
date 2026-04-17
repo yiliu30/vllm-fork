@@ -7,6 +7,7 @@ from vllm.platforms import current_platform
 
 from ..inc_linear import INCLinearMethod
 from .base import INCScheme
+from .factory import register_scheme
 
 if TYPE_CHECKING:
     import torch
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from ..resolver import INCLayerConfig
 
 
+@register_scheme
 class INCWna16Scheme(INCScheme):
     @staticmethod
     def can_handle(layer_config: "INCLayerConfig") -> bool:
