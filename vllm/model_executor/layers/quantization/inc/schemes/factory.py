@@ -4,34 +4,21 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import torch
-
-    from vllm.model_executor.layers.fused_moe.layer import FusedMoEMethodBase
-
     from ..resolver import INCLayerConfig
-    from .base import INCLinearScheme
+    from .base import INCScheme
 
 
-def resolve_linear_scheme(layer_config: "INCLayerConfig") -> "INCLinearScheme":
-    if layer_config.is_wna16_int:
-        from .wna16_linear import resolve_wna16_linear
+def resolve_scheme(layer_config: "INCLayerConfig") -> "INCScheme":
+    from .wna16 import INCWna16Scheme
 
-        return resolve_wna16_linear(layer_config)
+    scheme_list: list[type[INCScheme]] = [
+        INCWna16Scheme,
+    ]
 
-    raise NotImplementedError(
-        f"No INC linear scheme found for layer config: {layer_config}"
-    )
-
-
-def resolve_moe_method(
-    layer: "torch.nn.Module",
-    layer_config: "INCLayerConfig",
-) -> "FusedMoEMethodBase":
-    if layer_config.is_wna16_int:
-        from .wna16_moe import resolve_wna16_moe
-
-        return resolve_wna16_moe(layer, layer_config)
+    for scheme_cls in scheme_list:
+        if scheme_cls.can_handle(layer_config):
+            return scheme_cls()
 
     raise NotImplementedError(
-        f"No INC MoE method found for layer config: {layer_config}"
+        f"No INC scheme found for layer config: {layer_config}"
     )
