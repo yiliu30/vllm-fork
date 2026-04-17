@@ -3,6 +3,7 @@
 
 from typing import TYPE_CHECKING
 
+from vllm.model_executor.layers.fused_moe.layer import FusedMoEMethodBase
 from vllm.scalar_type import scalar_types
 
 from ..config_builders import (
@@ -15,25 +16,28 @@ from ..config_builders import (
 if TYPE_CHECKING:
     import torch
 
-    from vllm.model_executor.layers.fused_moe.layer import FusedMoEMethodBase
-
     from ..resolver import INCLayerConfig
 
 
-class INCWNA16MoE:
-    def __init__(self, layer_config: "INCLayerConfig") -> None:
-        self.layer_config = layer_config
-
-    def build_method(self, layer: "torch.nn.Module") -> "FusedMoEMethodBase":
-        if self.layer_config.is_gptq:
-            return self._build_gptq(layer)
-        if self.layer_config.is_awq:
-            return self._build_awq(layer)
+class INCWNA16MoE(FusedMoEMethodBase):
+    @staticmethod
+    def get_moe_method(
+        layer: "torch.nn.Module",
+        layer_config: "INCLayerConfig",
+    ) -> "FusedMoEMethodBase":
+        if layer_config.is_gptq:
+            return INCWNA16MoE._get_gptq_moe_method(layer, layer_config)
+        if layer_config.is_awq:
+            return INCWNA16MoE._get_awq_moe_method(layer, layer_config)
         raise NotImplementedError(
-            f"WNA16 MoE does not support config {self.layer_config}"
+            f"WNA16 MoE does not support config {layer_config}"
         )
 
-    def _build_gptq(self, layer: "torch.nn.Module") -> "FusedMoEMethodBase":
+    @staticmethod
+    def _get_gptq_moe_method(
+        layer: "torch.nn.Module",
+        layer_config: "INCLayerConfig",
+    ) -> "FusedMoEMethodBase":
         from vllm.model_executor.layers.quantization.gptq_marlin import (
             GPTQMarlinMoEMethod,
         )
@@ -50,7 +54,6 @@ class INCWNA16MoE:
             (4, True): scalar_types.uint4b8,
             (8, True): scalar_types.uint8b128,
         }
-        layer_config = self.layer_config
         use_marlin = (layer_config.bits, layer_config.sym) in gptq_type_map
         if use_marlin:
             use_marlin = check_marlin_supported(
@@ -70,7 +73,11 @@ class INCWNA16MoE:
         )
         return MoeWNA16Method(moe_config, layer.moe_config)
 
-    def _build_awq(self, layer: "torch.nn.Module") -> "FusedMoEMethodBase":
+    @staticmethod
+    def _get_awq_moe_method(
+        layer: "torch.nn.Module",
+        layer_config: "INCLayerConfig",
+    ) -> "FusedMoEMethodBase":
         from vllm.model_executor.layers.quantization.awq_marlin import (
             AWQMarlinMoEMethod,
         )
@@ -87,7 +94,6 @@ class INCWNA16MoE:
             4: scalar_types.uint4,
             8: scalar_types.uint8,
         }
-        layer_config = self.layer_config
         use_marlin = layer_config.bits in awq_type_map
         if use_marlin:
             use_marlin = check_marlin_supported(
@@ -112,4 +118,4 @@ def resolve_wna16_moe(
     layer: "torch.nn.Module",
     layer_config: "INCLayerConfig",
 ) -> "FusedMoEMethodBase":
-    return INCWNA16MoE(layer_config).build_method(layer)
+    return INCWNA16MoE.get_moe_method(layer, layer_config)
