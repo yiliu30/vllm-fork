@@ -117,6 +117,13 @@ def _fused_marlin_moe(
 
     a_scales1 = None
     gate_up_input = hidden_states
+
+    # QDQ injection for accuracy study (enable with VLLM_MXFP4_INPUT_QDQ=1)
+    from vllm.model_executor.layers.quantization.utils.mxfp4_qdq import (
+        MXFP4_INPUT_QDQ_ENABLED, mxfp4_qdq)
+    if MXFP4_INPUT_QDQ_ENABLED and input_dtype is None:
+        gate_up_input = mxfp4_qdq(gate_up_input, group_size=32)
+
     if input_dtype == torch.int8:
         gate_up_input, a_scales1 = marlin_quant_input(hidden_states, input_dtype)
         if input_global_scale1 is not None:
@@ -165,6 +172,10 @@ def _fused_marlin_moe(
         output.zero_()
 
     a_scales2 = None
+    # QDQ on intermediate before down proj
+    if MXFP4_INPUT_QDQ_ENABLED and input_dtype is None:
+        intermediate_cache2 = mxfp4_qdq(intermediate_cache2, group_size=32)
+
     if input_dtype == torch.int8:
         intermediate_cache2, a_scales2 = marlin_quant_input(
             intermediate_cache2, input_dtype

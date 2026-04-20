@@ -169,6 +169,13 @@ def apply_fp4_marlin_linear(
     )
 
     inputs = reshaped_x
+
+    # QDQ injection for accuracy study (enable with VLLM_MXFP4_INPUT_QDQ=1)
+    from vllm.model_executor.layers.quantization.utils.mxfp4_qdq import (
+        MXFP4_INPUT_QDQ_ENABLED, mxfp4_qdq)
+    if MXFP4_INPUT_QDQ_ENABLED:
+        inputs = mxfp4_qdq(inputs, group_size=32)
+
     a_scales = None
     is_nvfp4 = weight_global_scale is not None
     if input_dtype is not None and input_dtype.itemsize == 1:
