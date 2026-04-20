@@ -14,6 +14,7 @@ from vllm.model_executor.layers.linear import (
     LinearBase,
     LinearMethodBase,
     UnquantizedLinearMethod,
+    set_weight_attrs,
 )
 from vllm.model_executor.layers.quantization import (
     QuantizationConfig,
@@ -40,7 +41,7 @@ class INCConfig(QuantizationConfig):
     """
 
     SUPPORTED_BITS = {2, 3, 4, 8}
-    SUPPORTED_DTYPES = {"int"}
+    SUPPORTED_DTYPES = {"int", "fp"}
     SUPPORTED_FORMATS = {"auto_round:auto_gptq", "auto_round:auto_awq"}
     SUPPORTED_BACKENDS = {
         "auto",
@@ -421,9 +422,9 @@ class INCConfig(QuantizationConfig):
             else:
                 return None
 
-        if weight_bits != 4:
+        if weight_bits != 4 and weight_bits != 8:
             raise NotImplementedError(
-                f"INC on XPU only supports 4-bit quantization, "
+                f"INC on XPU only supports 4-bit or 8-bit quantization, "
                 f"got weight_bits={weight_bits}."
             )
         if not sym:
@@ -434,7 +435,12 @@ class INCConfig(QuantizationConfig):
         if isinstance(layer, (LinearBase, ParallelLMHead)):
             is_ark_available, ark_error, _ = _get_auto_round_ark_state()
             if is_ark_available:
-                return INCXPULinearARKMethod(
+                # return INCXPULinearARKMethod(
+                #     weight_bits=weight_bits,
+                #     group_size=group_size,
+                #     sym=sym,
+                # )
+                return INCXPUFP8LinearARKMethod(
                     weight_bits=weight_bits,
                     group_size=group_size,
                     sym=sym,
@@ -811,4 +817,196 @@ class INCXPULinearMethod(_INCXPULinearBase):
             self.group_size,
             None,  # g_idx not needed: desc_act is always False for INC models
         )
+        return out.reshape(out_shape)
+
+
+class INCXPUFP8LinearARKMethod(_INCXPULinearBase):
+    """XPU linear method for INC FP8 quantization using the ARK backend."""
+
+    def __init__(
+        self, weight_bits: int, group_size: int, sym: bool, data_type: str = "fp8_e4m3"
+    ):
+        super().__init__(weight_bits=weight_bits, group_size=group_size, sym=sym)
+
+        data_type = str(data_type).lower()
+        if data_type not in ["fp8_e4m3", "fp8_e5m2", "fp8"]:
+            data_type = "fp8_e4m3"
+        if data_type == "fp8":
+            data_type = "fp8_e4m3"
+
+        self.weight_type = data_type
+
+        if self.weight_type == "fp8_e5m2":
+            self.torch_fp8_dtype = torch.float8_e5m2
+        else:
+            self.torch_fp8_dtype = torch.float8_e4m3fn
+
+        self.ark = _get_auto_round_ark_instance()
+
+    def create_weights(
+        self,
+        layer: torch.nn.Module,
+        input_size_per_partition: int,
+        output_partition_sizes: list[int],
+        input_size: int,
+        output_size: int,
+        params_dtype: torch.dtype,
+        **extra_weight_attrs,
+    ):
+        output_size_per_partition = sum(output_partition_sizes)
+        default_weight_loader = extra_weight_attrs.get("weight_loader")
+        assert default_weight_loader is not None
+
+        layer.in_features = input_size_per_partition
+        layer.out_features = output_size_per_partition
+        layer.params_dtype = params_dtype
+
+        # 1. Weight: keep 2D [N, K]
+        weight = torch.nn.Parameter(
+            torch.empty(
+                output_size_per_partition,
+                input_size_per_partition,
+                dtype=self.torch_fp8_dtype,
+            ),
+            requires_grad=False,
+        )
+
+        set_weight_attrs(
+            weight,
+            {
+                "input_dim": 1,
+                "output_dim": 0,
+                "weight_loader": default_weight_loader,
+                "logical_widths": output_partition_sizes,
+            },
+        )
+        layer.register_parameter("weight", weight)
+
+        total_k_groups = input_size // self.group_size
+        scales_and_zp_size = input_size_per_partition // self.group_size
+
+        # [N, K_groups]
+        weight_scale = torch.nn.Parameter(
+            torch.empty(
+                output_size_per_partition,  # N
+                scales_and_zp_size,  # K_groups
+                dtype=params_dtype,
+            ),
+            requires_grad=False,
+        )
+
+        def scale_loader(param, loaded_weight, *args, **kwargs):
+            if loaded_weight.dim() == 1:
+                loaded_weight = loaded_weight.view(-1, total_k_groups)
+            elif loaded_weight.dim() == 2 and loaded_weight.shape[0] == total_k_groups:
+                loaded_weight = loaded_weight.t().contiguous()
+
+            default_weight_loader(param, loaded_weight, *args, **kwargs)
+
+        set_weight_attrs(
+            weight_scale,
+            {
+                "input_dim": 1,
+                "output_dim": 0,
+                "weight_loader": scale_loader,
+                "logical_widths": output_partition_sizes,
+            },
+        )
+        layer.register_parameter("weight_scale", weight_scale)
+
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        device = layer.weight.device
+
+        compute_type = _get_ark_type_str(layer.params_dtype)
+        scale_type = _get_ark_type_str(layer.weight_scale.dtype)
+
+        is_cpu = device.type == "cpu"
+        if is_cpu:
+            compute_type = "fp32"
+            scale_type = "fp32"
+            target_dtype = torch.float32
+        else:
+            if compute_type == "bf16":
+                compute_type = "fp16"
+            if scale_type == "bf16":
+                scale_type = "fp16"
+            target_dtype = torch.float16
+
+        # vLLM is (N, K)
+        qw_fp8 = layer.weight.data.contiguous()
+
+        #  (N, K_groups) -> (K_groups, N)
+        qw_fp8_t = qw_fp8.t().contiguous()
+        qw_uint8 = qw_fp8_t.view(torch.uint8)
+
+        # vLLM is (N, K_groups)
+        scale_data = layer.weight_scale.data.contiguous()
+        if scale_data.dim() == 2:
+            #  (N, K_groups) -> (K_groups, N)
+            scale_for_cpp = scale_data.t().contiguous()
+        else:
+            scale_for_cpp = scale_data.contiguous()
+
+        if scale_for_cpp.dtype != target_dtype:
+            scale_for_cpp = scale_for_cpp.to(target_dtype)
+
+        zp = torch.empty(0, dtype=torch.uint8, device=device)
+
+        assert self.ark is not None
+        packw = self.ark.repack_quantized_weight(
+            qw_uint8,
+            scale_for_cpp,
+            zp,
+            self.group_size,
+            compute_type,  # "fp16" or "bf16"
+            self.weight_type,  # "fp8_e4m3" or "fp8_e5m2"
+            scale_type,  # "fp16"
+            False,  # self.asym False
+        )
+
+        layer.packed_weight = Parameter(packw, requires_grad=False)
+
+        if hasattr(layer, "bias") and layer.bias is not None:
+            layer.safe_bias = layer.bias.data.detach().contiguous()
+        else:
+            layer.safe_bias = torch.empty(0, dtype=layer.params_dtype, device=device)
+
+        if layer.safe_bias.numel() > 0 and layer.safe_bias.dtype != target_dtype:
+            layer.safe_bias = layer.safe_bias.to(target_dtype)
+
+        layer.compute_type = compute_type
+        layer.scale_type = scale_type
+        layer.target_dtype = target_dtype
+
+        del layer.weight
+        del layer.weight_scale
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        out_shape = x.shape[:-1] + (layer.out_features,)
+        reshaped_x = x.reshape(-1, x.shape[-1]).contiguous()
+
+        if reshaped_x.dtype != layer.target_dtype:
+            reshaped_x = reshaped_x.to(layer.target_dtype)
+
+        assert self.ark is not None
+        out = self.ark.woqgemm(
+            reshaped_x,
+            layer.packed_weight,
+            layer.safe_bias,
+            layer.out_features,
+            layer.in_features,
+            self.group_size,
+            layer.compute_type,
+            self.weight_type,
+            layer.scale_type,
+            False,  # self.asym False
+        )
+
+        if out.dtype != layer.params_dtype:
+            out = out.to(layer.params_dtype)
         return out.reshape(out_shape)
