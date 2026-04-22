@@ -3,15 +3,11 @@
 
 from typing import TYPE_CHECKING
 
+from vllm.model_executor.layers.quantization.awq_marlin import AWQMarlinConfig
+from vllm.model_executor.layers.quantization.gptq_marlin import GPTQMarlinConfig
 from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
 
-from ..config_builders import (
-    build_awq_marlin_config,
-    build_gptq_marlin_config,
-    build_moe_wna16_awq_dict,
-    build_moe_wna16_gptq_dict,
-)
 from ..inc_linear import INCLinearMethod
 from .base import INCScheme
 
@@ -98,11 +94,25 @@ def _resolve_gptq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
 
     if use_marlin:
         return GPTQMarlinMoEMethod(
-            build_gptq_marlin_config(layer_config),
+            GPTQMarlinConfig(
+                weight_bits=layer_config.bits,
+                group_size=layer_config.group_size,
+                desc_act=False,
+                is_sym=layer_config.sym,
+                lm_head_quantized=False,
+                dynamic={},
+                full_config={},
+            ),
             layer.moe_config,
         )
 
-    moe_config = MoeWNA16Config.from_config(build_moe_wna16_gptq_dict(layer_config))
+    moe_config = MoeWNA16Config.from_config({
+        "quant_method": "gptq",
+        "bits": layer_config.bits,
+        "group_size": layer_config.group_size,
+        "sym": layer_config.sym,
+        "lm_head": False,
+    })
     return MoeWNA16Method(moe_config, layer.moe_config)
 
 
@@ -131,9 +141,22 @@ def _resolve_awq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
 
     if use_marlin:
         return AWQMarlinMoEMethod(
-            build_awq_marlin_config(layer_config),
+            AWQMarlinConfig(
+                weight_bits=layer_config.bits,
+                group_size=layer_config.group_size,
+                zero_point=not layer_config.sym,
+                lm_head_quantized=False,
+                modules_to_not_convert=[],
+                full_config={},
+            ),
             layer.moe_config,
         )
 
-    moe_config = MoeWNA16Config.from_config(build_moe_wna16_awq_dict(layer_config))
+    moe_config = MoeWNA16Config.from_config({
+        "quant_method": "awq",
+        "bits": layer_config.bits,
+        "group_size": layer_config.group_size,
+        "zero_point": not layer_config.sym,
+        "lm_head": False,
+    })
     return MoeWNA16Method(moe_config, layer.moe_config)

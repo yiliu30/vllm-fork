@@ -6,14 +6,6 @@ import pytest
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
 from vllm.model_executor.layers.quantization.inc import INCConfig
-from vllm.model_executor.layers.quantization.inc.config_builders import (
-    build_awq_config,
-    build_awq_marlin_config,
-    build_gptq_config,
-    build_gptq_marlin_config,
-    build_moe_wna16_awq_dict,
-    build_moe_wna16_gptq_dict,
-)
 from vllm.model_executor.layers.quantization.inc.inc_linear import INCLinearMethod
 from vllm.model_executor.layers.quantization.inc.resolver import INCLayerConfig
 from vllm.model_executor.layers.quantization.inc.schemes import (
@@ -215,79 +207,6 @@ def test_inc_layer_config_mx_fp_helpers() -> None:
     assert layer_config.is_mxfp8 is False
 
 
-def test_inc_config_builders_gptq_defaults() -> None:
-    layer_config = INCLayerConfig(
-        bits=4,
-        group_size=128,
-        sym=True,
-        packing_format="auto_round:auto_gptq",
-        backend="auto",
-        data_type="int",
-        quantized=True,
-    )
-
-    gptq_config = build_gptq_config(layer_config)
-    marlin_config = build_gptq_marlin_config(layer_config)
-    moe_config = build_moe_wna16_gptq_dict(layer_config)
-
-    assert gptq_config.weight_bits == 4
-    assert gptq_config.group_size == 128
-    assert gptq_config.desc_act is False
-    assert gptq_config.lm_head_quantized is False
-    assert gptq_config.dynamic == {}
-
-    assert marlin_config.weight_bits == 4
-    assert marlin_config.group_size == 128
-    assert marlin_config.is_sym is True
-    assert marlin_config.lm_head_quantized is False
-    assert marlin_config.dynamic == {}
-    assert marlin_config.full_config == {}
-
-    assert moe_config == {
-        "quant_method": "gptq",
-        "bits": 4,
-        "group_size": 128,
-        "sym": True,
-        "lm_head": False,
-    }
-
-
-def test_inc_config_builders_awq_defaults() -> None:
-    layer_config = INCLayerConfig(
-        bits=4,
-        group_size=128,
-        sym=False,
-        packing_format="auto_round:auto_awq",
-        backend="auto",
-        data_type="int",
-        quantized=True,
-    )
-
-    awq_config = build_awq_config(layer_config)
-    marlin_config = build_awq_marlin_config(layer_config)
-    moe_config = build_moe_wna16_awq_dict(layer_config)
-
-    assert awq_config.weight_bits == 4
-    assert awq_config.group_size == 128
-    assert awq_config.zero_point is True
-    assert awq_config.modules_to_not_convert == []
-
-    assert marlin_config.weight_bits == 4
-    assert marlin_config.group_size == 128
-    assert marlin_config.zero_point is True
-    assert marlin_config.lm_head_quantized is False
-    assert marlin_config.modules_to_not_convert == []
-    assert marlin_config.full_config == {}
-
-    assert moe_config == {
-        "quant_method": "awq",
-        "bits": 4,
-        "group_size": 128,
-        "zero_point": True,
-        "lm_head": False,
-    }
-
-
 def test_inc_resolve_scheme_selects_wna16() -> None:
     layer_config = INCLayerConfig(
         bits=4,
@@ -447,7 +366,13 @@ def test_resolve_gptq_moe_falls_back_to_moe_wna16(monkeypatch) -> None:
 
     _resolve_gptq_moe(DummyLayer(), layer_config)
 
-    assert captured["from_config"] == build_moe_wna16_gptq_dict(layer_config)
+    assert captured["from_config"] == {
+        "quant_method": "gptq",
+        "bits": 4,
+        "group_size": 128,
+        "sym": True,
+        "lm_head": False,
+    }
     assert captured["cfg"] is built_config
     assert captured["moe"] is DummyLayer.moe_config
 

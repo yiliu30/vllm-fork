@@ -1,6 +1,6 @@
-# INC Quantization Package
+# INC Quantization Support
 
-## High-Level Architecture
+## High-Level Architecture and Call Flow
 
 ```
                         ┌─────────────────────────────┐
@@ -55,24 +55,6 @@ resolve config → resolve scheme → scheme.get_xxx_method()
 - **Linear**: `INCLinearScheme` defines a different lifecycle API (`create_weights`/`process_weights_after_loading`/`apply_weights`) than `LinearMethodBase`, so `INCLinearMethod` bridges them.
 - **MoE**: Concrete methods already implement `FusedMoEMethodBase` directly. Wrapping would break class identity checks in vLLM's MoE layer.
 
-## Architecture (compact)
-
-```
-INCConfig.get_quant_method(layer, prefix)
-  → resolver.resolve()     → INCLayerConfig
-  → factory.resolve_scheme() → INCScheme subclass
-  → scheme.get_linear_method() or scheme.get_moe_method()
-```
-
-**Key classes:**
-
-| Class | Role |
-|-------|------|
-| `INCScheme` | One per quant type. `can_handle()` + `get_linear_method()` + optional `get_moe_method()` |
-| `INCLinearScheme` | Weight lifecycle: `create_weights` / `process_weights_after_loading` / `apply_weights` |
-| `INCLinearMethod` | Thin adapter: `LinearMethodBase` → `INCLinearScheme` |
-
-MoE methods are returned **directly** (no wrapper) — concrete `FusedMoEMethodBase` subclasses preserve their class identity.
 
 ## Package layout
 
@@ -80,7 +62,6 @@ MoE methods are returned **directly** (no wrapper) — concrete `FusedMoEMethodB
 inc/
 ├── inc.py              # INCConfig (entry point + dispatch)
 ├── resolver.py         # INCLayerConfig + INCConfigResolver
-├── config_builders.py  # Shared GPTQ/AWQ/Marlin config helpers
 ├── inc_linear.py       # INCLinearMethod
 └── schemes/
     ├── base.py         # INCScheme ABC + INCLinearScheme ABC
