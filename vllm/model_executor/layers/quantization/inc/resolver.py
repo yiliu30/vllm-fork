@@ -67,18 +67,6 @@ class INCConfigResolver:
         layer_config = self.resolve(layer, layer_name)
         return layer_config.bits, layer_config.group_size, layer_config.sym
 
-    def _lookup_extra_config(self, name: str) -> dict | None:
-        """Look up name in extra_config, trying both bare and model.-prefixed."""
-        ec = self._config.extra_config
-        if not ec:
-            return None
-        if name in ec:
-            return ec[name]
-        prefixed = f"model.{name}"
-        if prefixed in ec:
-            return ec[prefixed]
-        return None
-
     def _resolve_raw(
         self, layer: "torch.nn.Module", layer_name: str
     ) -> tuple[int, int, bool]:
@@ -90,8 +78,8 @@ class INCConfigResolver:
                     self._config.sym if quantized else True,
                 )
 
-            cfg = self._lookup_extra_config(name)
-            if cfg is not None:
+            if name in self._config.extra_config:
+                cfg = self._config.extra_config[name]
                 return (
                     cfg.get("bits", self._config.weight_bits if quantized else 16),
                     cfg.get(
@@ -130,10 +118,7 @@ class INCConfigResolver:
                 self._config.sym if quantized else True,
             )
 
-        if (
-            self._config.extra_config
-            and self._lookup_extra_config(layer_name) is not None
-        ):
+        if self._config.extra_config and layer_name in self._config.extra_config:
             return get_config(layer_name)
 
         quantized = not isinstance(layer, ParallelLMHead)

@@ -62,31 +62,21 @@ def test_inc_resolver_exact_match() -> None:
     assert layer_config.quantized is True
 
 
-def test_inc_resolver_model_prefix_fallback() -> None:
-    """extra_config keys may use model. prefix while vLLM passes bare names."""
+def test_inc_model_prefix_early_exit() -> None:
+    """extra_config keys with model. prefix trigger early unquantized return."""
     config = make_config(
         extra_config={
-            "model.layers.0.self_attn.q_proj": {
-                "bits": 8,
-                "group_size": 64,
-                "sym": False,
-            },
             "model.layers.1.mlp.gate_proj": {
                 "bits": 16,
             },
         }
     )
 
-    # Bare name resolves via model. prefix fallback
-    lc = config.resolver.resolve(DummyLayer(), "layers.0.self_attn.q_proj")
-    assert lc.bits == 8
-    assert lc.group_size == 64
-    assert lc.quantized is True
-
-    # bits=16 → unquantized
-    lc2 = config.resolver.resolve(DummyLayer(), "layers.1.mlp.gate_proj")
-    assert lc2.bits == 16
-    assert lc2.quantized is False
+    # get_quant_method checks model. prefix for unquantized early-exit
+    result = config.get_quant_method(
+        DummyLayer(), "layers.1.mlp.gate_proj"
+    )
+    assert isinstance(result, UnquantizedLinearMethod)
 
 
 def test_inc_resolver_regex_match() -> None:
@@ -275,13 +265,15 @@ def test_inc_get_quant_method_unquantized_linear_returns_unquantized() -> None:
     assert isinstance(method, UnquantizedLinearMethod)
 
 
-def test_inc_get_quant_method_unquantized_moe_returns_none() -> None:
+def test_inc_get_quant_method_unquantized_moe_returns_unquantized() -> None:
+    """Original behavior: early-exit returns UnquantizedLinearMethod for any
+    layer type when extra_config has bits >= 16."""
     config = make_config(extra_config={"layer": {"bits": 16}})
     layer = object.__new__(FusedMoE)
 
     method = config.get_quant_method(layer, "layer")
 
-    assert method is None
+    assert isinstance(method, UnquantizedLinearMethod)
 
 
 def test_inc_get_quant_method_linear_uses_resolved_scheme(monkeypatch) -> None:
