@@ -158,7 +158,7 @@ def test_triton_unified_attn(
         maybe_quantized_value_cache = value_cache.to(q_dtype)
 
         scale_shape = (num_seqs, num_kv_heads)
-        q_descale = None  # Not yet supported
+        q_descale = torch.ones(1, dtype=torch.float32)
         k_descale = torch.rand(scale_shape, dtype=torch.float32)
         v_descale = torch.rand(scale_shape, dtype=torch.float32)
 

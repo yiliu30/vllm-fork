@@ -1048,7 +1048,14 @@ def unified_attention(
     v_scale_cache=None,  # [num_blocks, block_size, num_kv_heads] float32
 ):
     assert causal, "Only causal attention is supported"
-    assert q_descale is None, "Q scales not supported"
+    # Fold per-tensor q_descale into softmax_scale so the triton kernels
+    # don't need an extra parameter.  Works because q_descale is a single
+    # scalar shared across all query tokens.
+    if q_descale is not None:
+        if isinstance(q_descale, (int, float)):
+            softmax_scale = softmax_scale * q_descale
+        else:
+            softmax_scale = softmax_scale * q_descale.item()
 
     if sinks is not None:
         assert sinks.shape[0] == q.shape[1], "Sinks must be num_query_heads size"
