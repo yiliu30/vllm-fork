@@ -222,16 +222,28 @@ def test_accuracy(q_descale_val: float):
 # ──────────────────────────────────────────────
 
 
-def benchmark_q_descale():
-    """Compare performance with and without q_descale."""
+def benchmark_fp8_query():
+    """Compare bf16 Q+KV vs bf16 Q + fp8 KV vs fp8 Q + fp8 KV.
+
+    The real benefit of FP8 query comes from:
+    1. Halved Q memory bandwidth (1 byte vs 2 bytes per element)
+    2. FP8 tensor core throughput (2x on H100 vs bf16)
+
+    When Q is bf16 and KV is fp8, the kernel dequantizes K to bf16 before
+    tl.dot(Q_bf16, K_bf16). When Q is fp8, tl.dot(Q_fp8, K_fp8) runs
+    natively — no dequant needed, and the dot itself is faster on fp8 cores.
+    """
     torch.set_default_device("cuda")
     set_random_seed(0)
 
     configs = [
         # (batch, query_len, kv_len, num_q_heads, num_kv_heads, head_size)
         (32, 1, 2048, 32, 8, 128),  # decode
+        (64, 1, 4096, 32, 8, 128),  # decode large batch
+        (128, 1, 2048, 32, 8, 128),  # decode very large batch
         (4, 128, 2048, 32, 8, 128),  # prefill
         (1, 512, 4096, 32, 8, 128),  # long prefill
+        (1, 1024, 8192, 32, 8, 128),  # very long prefill
     ]
 
     block_size = 16
@@ -245,13 +257,16 @@ def benchmark_q_descale():
         kv_lens = [kvlen] * batch
         total_q = sum(query_lens)
 
-        query = torch.randn(total_q, nqh, hs, dtype=torch.bfloat16).to(FP8_DTYPE)
-        key_cache = torch.randn(
-            num_blocks, block_size, nkvh, hs, dtype=torch.bfloat16
-        ).to(FP8_DTYPE)
-        value_cache = torch.randn(
-            num_blocks, block_size, nkvh, hs, dtype=torch.bfloat16
-        ).to(FP8_DTYPE)
+        # Create bf16 and fp8 versions of query
+        q_bf16 = torch.randn(total_q, nqh, hs, dtype=torch.bfloat16)
+        q_fp8 = q_bf16.to(FP8_DTYPE)
+
+        # KV caches: bf16 and fp8
+        kc_bf16 = torch.randn(num_blocks, block_size, nkvh, hs, dtype=torch.bfloat16)
+        vc_bf16 = torch.randn(num_blocks, block_size, nkvh, hs, dtype=torch.bfloat16)
+        kc_fp8 = kc_bf16.to(FP8_DTYPE)
+        vc_fp8 = vc_bf16.to(FP8_DTYPE)
+
         output = torch.empty(total_q, nqh, hs, dtype=torch.bfloat16)
 
         cu_query_lens = torch.tensor([0] + query_lens, dtype=torch.int32).cumsum(
@@ -266,7 +281,6 @@ def benchmark_q_descale():
         scale_shape = (batch, nkvh)
         k_descale = torch.ones(scale_shape, dtype=torch.float32)
         v_descale = torch.ones(scale_shape, dtype=torch.float32)
-        q_descale_tensor = torch.tensor([0.85], dtype=torch.float32)
 
         seq_threshold_3D = 0
         softmax_segm_output = torch.empty(
@@ -285,10 +299,12 @@ def benchmark_q_descale():
         scale = hs**-0.5
 
         def run(
+            q_tensor,
+            kc_tensor,
+            vc_tensor,
             q_desc,
-            _q=query,
-            _kc=key_cache,
-            _vc=value_cache,
+            kd,
+            vd,
             _out=output,
             _cu=cu_query_lens,
             _kvt=kv_lens_tensor,
@@ -296,17 +312,15 @@ def benchmark_q_descale():
             _kvl=kvlen,
             _sc=scale,
             _bt=block_tables,
-            _kd=k_descale,
-            _vd=v_descale,
             _st3d=seq_threshold_3D,
             _sso=softmax_segm_output,
             _ssm=softmax_segm_max,
             _sse=softmax_segm_expsum,
         ):
             unified_attention(
-                q=_q,
-                k=_kc,
-                v=_vc,
+                q=q_tensor,
+                k=kc_tensor,
+                v=vc_tensor,
                 out=_out,
                 cu_seqlens_q=_cu,
                 seqused_k=_kvt,
@@ -318,8 +332,8 @@ def benchmark_q_descale():
                 block_table=_bt,
                 softcap=0,
                 q_descale=q_desc,
-                k_descale=_kd,
-                v_descale=_vd,
+                k_descale=kd,
+                v_descale=vd,
                 seq_threshold_3D=_st3d,
                 num_par_softmax_segments=16,
                 softmax_segm_output=_sso,
@@ -327,35 +341,51 @@ def benchmark_q_descale():
                 softmax_segm_expsum=_sse,
             )
 
-        # Warmup
-        for _ in range(10):
-            run(None)
-            run(q_descale_tensor)
-        torch.accelerator.synchronize()
+        # Three scenarios to compare:
+        scenarios = [
+            ("bf16 Q+KV", q_bf16, kc_bf16, vc_bf16, None, None, None),
+            (
+                "bf16 Q + fp8 KV",
+                q_bf16,
+                kc_fp8,
+                vc_fp8,
+                None,
+                k_descale,
+                v_descale,
+            ),
+            (
+                "fp8 Q + fp8 KV",
+                q_fp8,
+                kc_fp8,
+                vc_fp8,
+                0.85,
+                k_descale,
+                v_descale,
+            ),
+        ]
 
-        # Benchmark without q_descale
-        n_iters = 100
-        torch.accelerator.synchronize()
-        t0 = time.perf_counter()
-        for _ in range(n_iters):
-            run(None)
-        torch.accelerator.synchronize()
-        t_no_qdesc = (time.perf_counter() - t0) / n_iters * 1000
-
-        # Benchmark with q_descale
-        torch.accelerator.synchronize()
-        t0 = time.perf_counter()
-        for _ in range(n_iters):
-            run(q_descale_tensor)
-        torch.accelerator.synchronize()
-        t_qdesc = (time.perf_counter() - t0) / n_iters * 1000
-
-        overhead = (t_qdesc - t_no_qdesc) / t_no_qdesc * 100
         config_str = f"B={batch}, Q={qlen}, KV={kvlen}, H={nqh}/{nkvh}, D={hs}"
         print(f"  {config_str}")
-        print(f"    no q_descale: {t_no_qdesc:.3f} ms")
-        print(f"    w/ q_descale: {t_qdesc:.3f} ms")
-        print(f"    overhead:     {overhead:+.2f}%")
+
+        n_iters = 200
+        times = {}
+        for label, q, kc, vc, qd, kd, vd in scenarios:
+            # Warmup
+            for _ in range(20):
+                run(q, kc, vc, qd, kd, vd)
+            torch.accelerator.synchronize()
+
+            t0 = time.perf_counter()
+            for _ in range(n_iters):
+                run(q, kc, vc, qd, kd, vd)
+            torch.accelerator.synchronize()
+            t_ms = (time.perf_counter() - t0) / n_iters * 1000
+            times[label] = t_ms
+
+        t_bf16 = times["bf16 Q+KV"]
+        for label, t_ms in times.items():
+            speedup = t_bf16 / t_ms
+            print(f"    {label:20s}: {t_ms:.3f} ms ({speedup:.2f}x vs bf16)")
         print()
 
 
@@ -376,6 +406,6 @@ if __name__ == "__main__":
 
     print()
     print("=" * 60)
-    print("PERFORMANCE BENCHMARK: q_descale overhead")
+    print("PERFORMANCE BENCHMARK: bf16 vs fp8 query")
     print("=" * 60)
-    benchmark_q_descale()
+    benchmark_fp8_query()
