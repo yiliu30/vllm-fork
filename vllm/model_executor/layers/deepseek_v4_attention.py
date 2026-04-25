@@ -5,6 +5,8 @@ DeepseekV4 MLA Attention Layer
 """
 
 from dataclasses import dataclass
+import json
+import os
 from typing import TYPE_CHECKING
 
 import torch
@@ -22,6 +24,7 @@ from vllm.v1.attention.ops.deepseek_v4_ops import (
     combine_topk_swa_indices,
     compute_global_topk_indices_and_lens,
     dequantize_and_gather_k_cache,
+    dequantize_global_slots_k_cache,
     fused_indexer_q_rope_quant,
     fused_inv_rope_fp8_quant,
     fused_q_kv_rmsnorm,
@@ -71,6 +74,209 @@ from vllm.v1.kv_cache_interface import KVCacheSpec, MLAAttentionSpec
 from vllm.v1.worker.workspace import current_workspace_manager
 
 logger = init_logger(__name__)
+
+_TRITON_MLA_SPARSE_ENV = "VLLM_TRITON_MLA_SPARSE"
+_TRITON_MLA_SPARSE_DUMP_ENV = "VLLM_TRITON_MLA_SPARSE_DUMP"
+_TRITON_MLA_SPARSE_DUMP_PATH_ENV = "VLLM_TRITON_MLA_SPARSE_DUMP_PATH"
+_TRITON_MLA_SPARSE_TOPK_CHUNK_ENV = "VLLM_TRITON_MLA_SPARSE_TOPK_CHUNK_SIZE"
+_TRITON_MLA_SPARSE_QUERY_CHUNK_ENV = "VLLM_TRITON_MLA_SPARSE_QUERY_CHUNK_SIZE"
+
+_LEGACY_SM120_ATTENTION_DUMP_ENV = "VLLM_SM120_DUMP_DEEPSEEK_V4_ATTENTION"
+_LEGACY_SM120_ATTENTION_DUMP_PATH_ENV = "VLLM_SM120_ATTENTION_DUMP_PATH"
+_LEGACY_SM120_REFERENCE_ATTENTION_ENV = (
+    "VLLM_SM120_REFERENCE_DEEPSEEK_V4_ATTENTION"
+)
+_LEGACY_SM120_REFERENCE_TOPK_CHUNK_ENV = "VLLM_SM120_REFERENCE_TOPK_CHUNK_SIZE"
+_LEGACY_SM120_REFERENCE_QUERY_CHUNK_ENV = "VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE"
+_ENV_TRUE_VALUES = {"1", "true", "yes", "on"}
+_ENV_FALSE_VALUES = {"0", "false", "no", "off"}
+
+
+def _optional_env_flag(name: str) -> bool | None:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return None
+    value = raw_value.lower()
+    if value in _ENV_TRUE_VALUES:
+        return True
+    if value in _ENV_FALSE_VALUES:
+        return False
+    return None
+
+
+def _is_sm12x_device(device: torch.device) -> bool:
+    if not torch.cuda.is_available():
+        return False
+    index = device.index if device.index is not None else torch.cuda.current_device()
+    return torch.cuda.get_device_capability(index)[0] == 12
+
+
+def _is_sparse_mla_attention_dump_enabled() -> bool:
+    configured = _optional_env_flag(_TRITON_MLA_SPARSE_DUMP_ENV)
+    if configured is not None:
+        return configured
+    return _optional_env_flag(_LEGACY_SM120_ATTENTION_DUMP_ENV) or False
+
+
+def _is_sparse_mla_reference_attention_enabled(device: torch.device) -> bool:
+    configured = _optional_env_flag(_TRITON_MLA_SPARSE_ENV)
+    if configured is not None:
+        return configured
+    legacy_configured = _optional_env_flag(_LEGACY_SM120_REFERENCE_ATTENTION_ENV)
+    if legacy_configured is not None:
+        return legacy_configured
+    return _is_sm12x_device(device)
+
+
+def _sparse_mla_attention_dump_path() -> str:
+    return (
+        os.getenv(_TRITON_MLA_SPARSE_DUMP_PATH_ENV)
+        or os.getenv(_LEGACY_SM120_ATTENTION_DUMP_PATH_ENV)
+        or "/tmp/deepseek_v4_triton_mla_sparse_dump.jsonl"
+    )
+
+
+def _sparse_mla_reference_topk_chunk_size() -> int:
+    raw_value = os.getenv(_TRITON_MLA_SPARSE_TOPK_CHUNK_ENV) or os.getenv(
+        _LEGACY_SM120_REFERENCE_TOPK_CHUNK_ENV
+    )
+    if raw_value is None:
+        return 256
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return 256
+
+
+def _sparse_mla_reference_query_chunk_size() -> int:
+    raw_value = os.getenv(_TRITON_MLA_SPARSE_QUERY_CHUNK_ENV) or os.getenv(
+        _LEGACY_SM120_REFERENCE_QUERY_CHUNK_ENV
+    )
+    if raw_value is None:
+        return 256
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return 256
+
+
+def _tensor_summary(tensor: torch.Tensor | None) -> dict[str, object] | None:
+    if tensor is None:
+        return None
+    return {
+        "shape": [int(dim) for dim in tensor.shape],
+        "dtype": str(tensor.dtype),
+        "stride": [int(stride) for stride in tensor.stride()],
+        "device": str(tensor.device),
+        "is_contiguous": tensor.is_contiguous(),
+    }
+
+
+def _optional_int(value: object) -> int | None:
+    return int(value) if value is not None else None
+
+
+def _dump_sparse_mla_attention_state(
+    phase: str,
+    prefix: str,
+    compress_ratio: int,
+    q: torch.Tensor,
+    output: torch.Tensor,
+    swa_metadata: "DeepseekSparseSWAMetadata",
+    attn_metadata: FlashMLASparseMetadata | None,
+    fields: dict[str, object],
+) -> None:
+    dump_path = _sparse_mla_attention_dump_path()
+    payload = {
+        "phase": phase,
+        "prefix": prefix,
+        "compress_ratio": compress_ratio,
+        "q": _tensor_summary(q),
+        "output": _tensor_summary(output),
+        "attn_metadata_present": attn_metadata is not None,
+        "swa_metadata": {
+            "block_table": _tensor_summary(swa_metadata.block_table),
+            "slot_mapping": _tensor_summary(swa_metadata.slot_mapping),
+            "seq_lens": _tensor_summary(swa_metadata.seq_lens),
+            "query_start_loc": _tensor_summary(swa_metadata.query_start_loc),
+            "is_valid_token": _tensor_summary(swa_metadata.is_valid_token),
+            "token_to_req_indices": _tensor_summary(
+                swa_metadata.token_to_req_indices
+            ),
+            "decode_swa_indices": _tensor_summary(
+                swa_metadata.decode_swa_indices
+            ),
+            "decode_swa_lens": _tensor_summary(swa_metadata.decode_swa_lens),
+            "prefill_seq_lens": _tensor_summary(swa_metadata.prefill_seq_lens),
+            "prefill_gather_lens": _tensor_summary(
+                swa_metadata.prefill_gather_lens
+            ),
+            "block_size": int(swa_metadata.block_size),
+            "num_decodes": int(swa_metadata.num_decodes),
+            "num_prefills": int(swa_metadata.num_prefills),
+            "num_decode_tokens": int(swa_metadata.num_decode_tokens),
+            "num_prefill_tokens": int(swa_metadata.num_prefill_tokens),
+        },
+        "flashmla_metadata": {
+            "block_table": _tensor_summary(
+                attn_metadata.block_table if attn_metadata is not None else None
+            ),
+            "slot_mapping": _tensor_summary(
+                attn_metadata.slot_mapping if attn_metadata is not None else None
+            ),
+            "c128a_global_decode_topk_indices": _tensor_summary(
+                attn_metadata.c128a_global_decode_topk_indices
+                if attn_metadata is not None
+                else None
+            ),
+            "c128a_decode_topk_lens": _tensor_summary(
+                attn_metadata.c128a_decode_topk_lens
+                if attn_metadata is not None
+                else None
+            ),
+            "c128a_prefill_topk_indices": _tensor_summary(
+                attn_metadata.c128a_prefill_topk_indices
+                if attn_metadata is not None
+                else None
+            ),
+            "block_size": _optional_int(
+                attn_metadata.block_size if attn_metadata is not None else None
+            ),
+            "topk_tokens": _optional_int(
+                attn_metadata.topk_tokens if attn_metadata is not None else None
+            ),
+        },
+        "fields": fields,
+    }
+    with open(dump_path, "a", encoding="utf-8") as dump_file:
+        dump_file.write(json.dumps(payload, sort_keys=True) + "\n")
+    raise RuntimeError(
+        f"DeepseekV4 sparse MLA diagnostic dump written to {dump_path}"
+    )
+
+
+def _write_sparse_mla_attention_state_if_enabled(
+    phase: str,
+    prefix: str,
+    compress_ratio: int,
+    q: torch.Tensor,
+    output: torch.Tensor,
+    swa_metadata: "DeepseekSparseSWAMetadata",
+    attn_metadata: FlashMLASparseMetadata | None,
+    fields: dict[str, object],
+) -> None:
+    if not _is_sparse_mla_attention_dump_enabled():
+        return
+    _dump_sparse_mla_attention_state(
+        phase=phase,
+        prefix=prefix,
+        compress_ratio=compress_ratio,
+        q=q,
+        output=output,
+        swa_metadata=swa_metadata,
+        attn_metadata=attn_metadata,
+        fields=fields,
+    )
 
 # Prefill is processed in fixed-size chunks; this bounds the bf16 kv-gather
 # workspace allocated at _forward_prefill (and the matching profile-time
@@ -191,13 +397,13 @@ class DeepseekV4MultiHeadLatentAttentionWrapper(PluggableLayer):
         self.wo_b = mla_modules.wo_b
 
         # Pick fp8_einsum recipe based on GPU arch:
-        # SM90: FP32 block scales stay [g, r/128, d/128] → sfb_gran_mn=128
-        # SM100: INT32 packed scales become [g, r, ...] → sfb_gran_mn=1
+        # SM90/SM120: FP32 block scales stay [g, r/128, d/128].
+        # SM100: INT32 packed scales become [g, r, ...].
         from vllm.platforms import current_platform
 
         cap = current_platform.get_device_capability()
-        self._einsum_recipe = (1, 128, 128) if cap.major <= 9 else (1, 1, 128)
-        self._tma_aligned_scales = cap.major >= 10
+        self._einsum_recipe = (1, 1, 128) if cap.major == 10 else (1, 128, 128)
+        self._tma_aligned_scales = cap.major == 10
 
         self.rotary_emb = mla_modules.rotary_emb
         self.indexer_rotary_emb = mla_modules.indexer_rotary_emb
@@ -487,6 +693,22 @@ def deepseek_v4_fp8_einsum(
     equation: str,
     recipe: list[int],
 ) -> None:
+    if equation == "bhr,hdr->bhd" and b.dim() == 2:
+        num_groups = out.shape[1]
+        out_rank = out.shape[2]
+        hidden_size = a.shape[2]
+        b = b.view(num_groups, out_rank, hidden_size)
+
+        if b_scale.dim() == 2:
+            scale_mn = recipe[1]
+            scale_k_pack = 4 if b_scale.dtype == torch.int32 else 1
+            scale_k = recipe[2] * scale_k_pack
+            b_scale = b_scale.view(
+                num_groups,
+                (out_rank + scale_mn - 1) // scale_mn,
+                (hidden_size + scale_k - 1) // scale_k,
+            )
+
     fp8_einsum(equation, (a, a_scale), (b, b_scale), out, recipe=tuple(recipe))
 
 
@@ -640,6 +862,375 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
             model_version="deepseek_v4",
         )
 
+    def _sink_aware_reference_attention(
+        self,
+        q: torch.Tensor,
+        kv: torch.Tensor,
+        valid_tokens: torch.Tensor,
+        output: torch.Tensor,
+    ) -> None:
+        subset_output, subset_lse = self._reference_attention_no_sink(
+            q=q,
+            kv=kv,
+            valid_tokens=valid_tokens,
+        )
+        self._merge_reference_attention_with_sink(
+            subset_outputs=[subset_output],
+            subset_lses=[subset_lse],
+            output=output,
+        )
+
+    def _reference_attention_no_sink(
+        self,
+        q: torch.Tensor,
+        kv: torch.Tensor,
+        valid_tokens: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q_bhd, max_score, denom, acc = self._new_reference_attention_state(q)
+        max_score, denom, acc = self._accumulate_reference_attention_chunk(
+            q_bhd=q_bhd,
+            kv=kv,
+            valid_tokens=valid_tokens,
+            max_score=max_score,
+            denom=denom,
+            acc=acc,
+        )
+        return self._finish_reference_attention_no_sink(max_score, denom, acc)
+
+    def _new_reference_attention_state(
+        self,
+        q: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if q.dim() == 4:
+            q_bhd = q[:, 0, :, :].float()
+        else:
+            assert q.dim() == 3, f"Expected q shape [T, H, D], got {q.shape}"
+            q_bhd = q.float()
+        num_tokens = q_bhd.shape[0]
+        num_heads = q_bhd.shape[1]
+        head_dim = q_bhd.shape[2]
+        max_score = torch.full(
+            (num_tokens, num_heads),
+            float("-inf"),
+            dtype=torch.float32,
+            device=q.device,
+        )
+        denom = torch.zeros_like(max_score)
+        acc = torch.zeros(
+            (num_tokens, num_heads, head_dim),
+            dtype=torch.float32,
+            device=q.device,
+        )
+        return q_bhd, max_score, denom, acc
+
+    def _accumulate_reference_attention_chunk(
+        self,
+        q_bhd: torch.Tensor,
+        kv: torch.Tensor,
+        valid_tokens: torch.Tensor,
+        max_score: torch.Tensor,
+        denom: torch.Tensor,
+        acc: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        kv_btd = kv.float()
+        scores = torch.einsum("bhd,btd->bht", q_bhd, kv_btd) * self.scale
+        scores = scores.masked_fill(~valid_tokens[:, None, :], float("-inf"))
+
+        chunk_max = scores.amax(dim=-1)
+        next_max = torch.maximum(max_score, chunk_max)
+
+        previous_scale = torch.exp(max_score - next_max)
+        previous_scale = torch.nan_to_num(previous_scale)
+        weights = torch.exp(scores - next_max[:, :, None])
+        weights = torch.where(
+            valid_tokens[:, None, :],
+            weights,
+            torch.zeros((), dtype=weights.dtype, device=weights.device),
+        )
+        weights = torch.nan_to_num(weights)
+
+        acc = acc * previous_scale[:, :, None]
+        denom = denom * previous_scale
+        acc = acc + torch.einsum("bht,btd->bhd", weights, kv_btd)
+        denom = denom + weights.sum(dim=-1)
+        return next_max, denom, acc
+
+    def _finish_reference_attention(
+        self,
+        max_score: torch.Tensor,
+        denom: torch.Tensor,
+        acc: torch.Tensor,
+        output: torch.Tensor,
+    ) -> None:
+        subset_output, subset_lse = self._finish_reference_attention_no_sink(
+            max_score,
+            denom,
+            acc,
+        )
+        self._merge_reference_attention_with_sink(
+            subset_outputs=[subset_output],
+            subset_lses=[subset_lse],
+            output=output,
+        )
+
+    def _finish_reference_attention_no_sink(
+        self,
+        max_score: torch.Tensor,
+        denom: torch.Tensor,
+        acc: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        valid = denom > 0
+        safe_denom = torch.where(valid, denom, torch.ones_like(denom))
+        subset_output = acc / safe_denom[:, :, None]
+        subset_output = torch.where(
+            valid[:, :, None],
+            subset_output,
+            torch.zeros((), dtype=subset_output.dtype, device=subset_output.device),
+        )
+        subset_lse = torch.where(
+            valid,
+            max_score + torch.log(safe_denom),
+            torch.full_like(max_score, float("-inf")),
+        )
+        return subset_output, subset_lse
+
+    def _merge_reference_attention_with_sink(
+        self,
+        subset_outputs: list[torch.Tensor],
+        subset_lses: list[torch.Tensor],
+        output: torch.Tensor,
+    ) -> None:
+        assert subset_outputs, "At least one attention subset is required"
+        assert len(subset_outputs) == len(subset_lses)
+
+        sink = self.attn_sink[None, :].float()
+        merge_max = sink
+        for subset_lse in subset_lses:
+            merge_max = torch.maximum(merge_max, subset_lse)
+
+        merged_acc = torch.zeros_like(subset_outputs[0], dtype=torch.float32)
+        merged_denom = torch.exp(sink - merge_max)
+        for subset_output, subset_lse in zip(subset_outputs, subset_lses):
+            subset_weight = torch.exp(subset_lse - merge_max)
+            subset_weight = torch.nan_to_num(subset_weight)
+            merged_acc = (
+                merged_acc + subset_output.float() * subset_weight[:, :, None]
+            )
+            merged_denom = merged_denom + subset_weight
+
+        reference_output = merged_acc / merged_denom[:, :, None]
+        output.copy_(reference_output.to(dtype=output.dtype))
+
+    def _forward_sparse_mla_swa_decode_reference(
+        self,
+        q: torch.Tensor,
+        swa_k_cache: torch.Tensor,
+        swa_metadata: "DeepseekSparseSWAMetadata",
+        output: torch.Tensor,
+    ) -> None:
+        num_decodes = swa_metadata.num_decodes
+        num_decode_tokens = swa_metadata.num_decode_tokens
+        assert num_decodes == num_decode_tokens, (
+            "Sparse MLA reference SWA decode currently supports one query token per "
+            f"request, got {num_decode_tokens=} and {num_decodes=}"
+        )
+
+        swa_lens = swa_metadata.decode_swa_lens[:num_decode_tokens]
+        max_swa_len = swa_metadata.decode_swa_indices.shape[-1]
+        (gathered_kv,) = current_workspace_manager().get_simultaneous(
+            ((num_decode_tokens, max_swa_len, q.shape[-1]), torch.bfloat16),
+        )
+        gathered_kv.zero_()
+        dequantize_and_gather_k_cache(
+            gathered_kv,
+            swa_k_cache,
+            seq_lens=swa_metadata.seq_lens[:num_decodes],
+            gather_lens=swa_lens,
+            block_table=swa_metadata.block_table[:num_decodes],
+            block_size=swa_metadata.block_size,
+            offset=0,
+        )
+
+        token_offsets = torch.arange(max_swa_len, device=q.device)
+        valid_tokens = token_offsets[None, :] < swa_lens[:, None]
+        self._sink_aware_reference_attention(q, gathered_kv, valid_tokens, output)
+
+    def _forward_sparse_mla_compressed_decode_reference(
+        self,
+        q: torch.Tensor,
+        compressed_k_cache: torch.Tensor,
+        swa_k_cache: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_lens: torch.Tensor,
+        swa_metadata: "DeepseekSparseSWAMetadata",
+        attn_metadata: FlashMLASparseMetadata,
+        output: torch.Tensor,
+    ) -> None:
+        if self.compress_ratio not in (4, 128):
+            raise NotImplementedError(
+                "Sparse MLA reference compressed decode currently supports "
+                f"compress_ratio=4 or 128, got {self.compress_ratio}"
+            )
+
+        num_decodes = swa_metadata.num_decodes
+        num_decode_tokens = swa_metadata.num_decode_tokens
+        assert num_decodes == num_decode_tokens, (
+            "Sparse MLA reference compressed decode currently supports one query "
+            f"token per request, got {num_decode_tokens=} and {num_decodes=}"
+        )
+
+        max_swa_len = swa_metadata.decode_swa_indices.shape[-1]
+        compressed_block_size = attn_metadata.block_size // self.compress_ratio
+        compressed_topk = topk_indices.shape[-1]
+        topk_chunk_size = min(
+            compressed_topk,
+            _sparse_mla_reference_topk_chunk_size(),
+        )
+        (compressed_kv, swa_kv) = current_workspace_manager().get_simultaneous(
+            ((num_decode_tokens, topk_chunk_size, q.shape[-1]), torch.bfloat16),
+            ((num_decode_tokens, max_swa_len, q.shape[-1]), torch.bfloat16),
+        )
+        swa_kv.zero_()
+
+        compressed_slot_ids = topk_indices[:, 0, :]
+        q_bhd, comp_max_score, comp_denom, comp_acc = (
+            self._new_reference_attention_state(q)
+        )
+        for chunk_start in range(0, compressed_topk, topk_chunk_size):
+            chunk_end = min(chunk_start + topk_chunk_size, compressed_topk)
+            chunk_size = chunk_end - chunk_start
+            compressed_kv_chunk = compressed_kv[:, :chunk_size, :]
+            topk_chunk = topk_indices[:, :, chunk_start:chunk_end]
+            compressed_kv_chunk.zero_()
+            dequantize_global_slots_k_cache(
+                compressed_kv_chunk,
+                compressed_k_cache,
+                topk_chunk,
+                block_size=compressed_block_size,
+            )
+
+            chunk_offsets = torch.arange(
+                chunk_start,
+                chunk_end,
+                device=q.device,
+            )
+            compressed_valid = (
+                (chunk_offsets[None, :] < topk_lens[:, None])
+                & (compressed_slot_ids[:, chunk_start:chunk_end] >= 0)
+            )
+            comp_max_score, comp_denom, comp_acc = (
+                self._accumulate_reference_attention_chunk(
+                    q_bhd=q_bhd,
+                    kv=compressed_kv_chunk,
+                    valid_tokens=compressed_valid,
+                    max_score=comp_max_score,
+                    denom=comp_denom,
+                    acc=comp_acc,
+                )
+            )
+        comp_output, comp_lse = self._finish_reference_attention_no_sink(
+            comp_max_score,
+            comp_denom,
+            comp_acc,
+        )
+
+        _, swa_max_score, swa_denom, swa_acc = self._new_reference_attention_state(q)
+        swa_lens = swa_metadata.decode_swa_lens[:num_decode_tokens]
+        dequantize_and_gather_k_cache(
+            swa_kv,
+            swa_k_cache,
+            seq_lens=swa_metadata.seq_lens[:num_decodes],
+            gather_lens=swa_lens,
+            block_table=swa_metadata.block_table[:num_decodes],
+            block_size=swa_metadata.block_size,
+            offset=0,
+        )
+        swa_offsets = torch.arange(max_swa_len, device=q.device)
+        swa_valid = swa_offsets[None, :] < swa_lens[:, None]
+        swa_max_score, swa_denom, swa_acc = (
+            self._accumulate_reference_attention_chunk(
+                q_bhd=q_bhd,
+                kv=swa_kv,
+                valid_tokens=swa_valid,
+                max_score=swa_max_score,
+                denom=swa_denom,
+                acc=swa_acc,
+            )
+        )
+        swa_output, swa_lse = self._finish_reference_attention_no_sink(
+            swa_max_score,
+            swa_denom,
+            swa_acc,
+        )
+        self._merge_reference_attention_with_sink(
+            subset_outputs=[comp_output, swa_output],
+            subset_lses=[comp_lse, swa_lse],
+            output=output,
+        )
+
+    def _forward_sparse_mla_prefill_reference(
+        self,
+        q: torch.Tensor,
+        kv: torch.Tensor,
+        combined_indices: torch.Tensor,
+        combined_lens: torch.Tensor,
+        output: torch.Tensor,
+    ) -> None:
+        kv_flat = kv.reshape(-1, q.shape[-1])
+        topk_chunk_size = min(
+            combined_indices.shape[-1],
+            _sparse_mla_reference_topk_chunk_size(),
+        )
+        query_chunk_size = min(q.shape[0], _sparse_mla_reference_query_chunk_size())
+
+        for token_start in range(0, q.shape[0], query_chunk_size):
+            token_end = min(token_start + query_chunk_size, q.shape[0])
+            q_chunk = q[token_start:token_end]
+            lens_chunk = combined_lens[token_start:token_end]
+            indices_chunk_full = combined_indices[token_start:token_end]
+            q_bhd, max_score, denom, acc = self._new_reference_attention_state(
+                q_chunk
+            )
+
+            for index_start in range(0, combined_indices.shape[-1], topk_chunk_size):
+                index_end = min(index_start + topk_chunk_size,
+                                combined_indices.shape[-1])
+                indices_chunk = indices_chunk_full[:, index_start:index_end]
+                index_offsets = torch.arange(
+                    index_start,
+                    index_end,
+                    device=q.device,
+                )
+                valid_tokens = (
+                    (index_offsets[None, :] < lens_chunk[:, None])
+                    & (indices_chunk >= 0)
+                )
+                safe_indices = torch.where(
+                    valid_tokens,
+                    indices_chunk,
+                    torch.zeros((), dtype=indices_chunk.dtype, device=q.device),
+                ).long()
+                gathered_kv = kv_flat[safe_indices]
+                max_score, denom, acc = self._accumulate_reference_attention_chunk(
+                    q_bhd=q_bhd,
+                    kv=gathered_kv,
+                    valid_tokens=valid_tokens,
+                    max_score=max_score,
+                    denom=denom,
+                    acc=acc,
+                )
+
+            subset_output, subset_lse = self._finish_reference_attention_no_sink(
+                max_score,
+                denom,
+                acc,
+            )
+            self._merge_reference_attention_with_sink(
+                subset_outputs=[subset_output],
+                subset_lses=[subset_lse],
+                output=output[token_start:token_end],
+            )
+
     def forward(
         self,
         q: torch.Tensor,
@@ -738,8 +1329,70 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
         # Use unsqueeze to preserve strides (handles padded blocks correctly)
         swa_cache = self.swa_cache_layer.kv_cache.unsqueeze(-2)
         # Reshape KV cache to (num_blocks, block_size, 1, head_bytes)
+        compressed_k_cache = kv_cache
         if kv_cache is not None:
             kv_cache = kv_cache.unsqueeze(-2)
+
+        decode_fields = {
+            "kv_cache": _tensor_summary(kv_cache),
+            "swa_cache": _tensor_summary(swa_cache),
+            "topk_indices": _tensor_summary(topk_indices),
+            "topk_lens": _tensor_summary(topk_lens),
+            "swa_indices": _tensor_summary(swa_indices),
+            "swa_lens": _tensor_summary(swa_lens),
+            "attn_sink": _tensor_summary(self.attn_sink),
+            "scale": float(self.scale),
+            "swa_only": swa_only,
+            "padded_heads": int(self.padded_heads),
+            "num_decodes": int(num_decodes),
+            "num_decode_tokens": int(num_decode_tokens),
+        }
+        _write_sparse_mla_attention_state_if_enabled(
+            phase="decode",
+            prefix=self.prefix,
+            compress_ratio=self.compress_ratio,
+            q=q,
+            output=output,
+            swa_metadata=swa_metadata,
+            attn_metadata=attn_metadata,
+            fields=decode_fields,
+        )
+
+        if _is_sparse_mla_reference_attention_enabled(q.device):
+            if swa_only:
+                self._forward_sparse_mla_swa_decode_reference(
+                    q=q,
+                    swa_k_cache=self.swa_cache_layer.kv_cache,
+                    swa_metadata=swa_metadata,
+                    output=output,
+                )
+                return
+            if self.compress_ratio in (4, 128):
+                assert compressed_k_cache is not None
+                assert attn_metadata is not None
+                assert topk_indices is not None
+                assert topk_lens is not None
+                self._forward_sparse_mla_compressed_decode_reference(
+                    q=q,
+                    compressed_k_cache=compressed_k_cache,
+                    swa_k_cache=self.swa_cache_layer.kv_cache,
+                    topk_indices=topk_indices,
+                    topk_lens=topk_lens,
+                    swa_metadata=swa_metadata,
+                    attn_metadata=attn_metadata,
+                    output=output,
+                )
+                return
+            _dump_sparse_mla_attention_state(
+                phase="decode_unsupported_compressed",
+                prefix=self.prefix,
+                compress_ratio=self.compress_ratio,
+                q=q,
+                output=output,
+                swa_metadata=swa_metadata,
+                attn_metadata=attn_metadata,
+                fields=decode_fields,
+            )
 
         # One FlashMLASchedMeta per layer type, shared across all same-type
         # layers within this decode step. The first forward call per type
@@ -888,6 +1541,42 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
                 M,
                 N,
             )
+
+            if _is_sparse_mla_attention_dump_enabled():
+                _dump_sparse_mla_attention_state(
+                    phase="prefill",
+                    prefix=self.prefix,
+                    compress_ratio=self.compress_ratio,
+                    q=q[query_start:query_end],
+                    output=output[query_start:query_end],
+                    swa_metadata=swa_metadata,
+                    attn_metadata=attn_metadata,
+                    fields={
+                        "compressed_k_cache": _tensor_summary(compressed_k_cache),
+                        "swa_k_cache": _tensor_summary(swa_k_cache),
+                        "gathered_kv": _tensor_summary(kv[:chunk_size]),
+                        "topk_indices": _tensor_summary(topk_indices),
+                        "combined_indices": _tensor_summary(combined_indices),
+                        "combined_lens": _tensor_summary(combined_lens),
+                        "attn_sink": _tensor_summary(self.attn_sink),
+                        "scale": float(self.scale),
+                        "swa_only": swa_only,
+                        "chunk_start": int(chunk_start),
+                        "chunk_end": int(chunk_end),
+                        "query_start": int(query_start),
+                        "query_end": int(query_end),
+                    },
+                )
+
+            if _is_sparse_mla_reference_attention_enabled(q.device):
+                self._forward_sparse_mla_prefill_reference(
+                    q=q[query_start:query_end],
+                    kv=kv[:chunk_size],
+                    combined_indices=combined_indices,
+                    combined_lens=combined_lens,
+                    output=output[query_start:query_end],
+                )
+                continue
 
             output_chunk, _, _ = flash_mla_sparse_fwd(
                 q=q[query_start:query_end],
