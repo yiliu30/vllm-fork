@@ -174,6 +174,7 @@ if TYPE_CHECKING:
     VLLM_SM120_REFERENCE_DEEPSEEK_V4_ATTENTION: bool = False
     VLLM_SM120_REFERENCE_TOPK_CHUNK_SIZE: int | None = None
     VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE: int | None = None
+    VLLM_SM120_TRITON_MLA: bool = False
     VLLM_DEEP_GEMM_WARMUP: Literal[
         "skip",
         "full",
@@ -1292,6 +1293,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     ),
     "VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE": lambda: maybe_convert_int(
         os.getenv("VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE")
+    ),
+    "VLLM_SM120_TRITON_MLA": lambda: bool(
+        int(os.getenv("VLLM_SM120_TRITON_MLA", "0"))
     ),
     # DeepGemm JITs the kernels on-demand. The warmup attempts to make DeepGemm
     # JIT all the required kernels before model execution so there is no

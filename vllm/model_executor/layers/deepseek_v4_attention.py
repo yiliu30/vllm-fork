@@ -88,6 +88,7 @@ _LEGACY_SM120_REFERENCE_ATTENTION_ENV = (
 )
 _LEGACY_SM120_REFERENCE_TOPK_CHUNK_ENV = "VLLM_SM120_REFERENCE_TOPK_CHUNK_SIZE"
 _LEGACY_SM120_REFERENCE_QUERY_CHUNK_ENV = "VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE"
+_TRITON_MLA_ENV = "VLLM_SM120_TRITON_MLA"
 _ENV_TRUE_VALUES = {"1", "true", "yes", "on"}
 _ENV_FALSE_VALUES = {"0", "false", "no", "off"}
 
@@ -126,6 +127,15 @@ def _is_sparse_mla_reference_attention_enabled(device: torch.device) -> bool:
     if legacy_configured is not None:
         return legacy_configured
     return _is_sm12x_device(device)
+
+
+def _is_triton_mla_enabled() -> bool:
+    """Check if triton MLA kernels should be used instead of torch reference.
+
+    Gated by VLLM_SM120_TRITON_MLA=1. When enabled, triton sparse MLA kernels
+    replace the pure-PyTorch reference attention paths for better performance.
+    """
+    return _optional_env_flag(_TRITON_MLA_ENV) or False
 
 
 def _sparse_mla_attention_dump_path() -> str:
@@ -1021,6 +1031,243 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
         reference_output = merged_acc / merged_denom[:, :, None]
         output.copy_(reference_output.to(dtype=output.dtype))
 
+    def _forward_sparse_mla_swa_decode_triton(
+        self,
+        q: torch.Tensor,
+        swa_k_cache: torch.Tensor,
+        swa_metadata: "DeepseekSparseSWAMetadata",
+        output: torch.Tensor,
+    ) -> None:
+        """Triton kernel path for SWA-only decode attention."""
+        from vllm.v1.attention.ops.triton_mla_utils import (
+            merge_attention_with_sink,
+        )
+        from vllm.v1.attention.ops.triton_sparse_mla_kernel import (
+            triton_sparse_mla_attention,
+        )
+
+        num_decodes = swa_metadata.num_decodes
+        num_decode_tokens = swa_metadata.num_decode_tokens
+        assert num_decodes == num_decode_tokens
+
+        # Squeeze next_n dim if 4D: [T, 1, H, D] -> [T, H, D]
+        if q.dim() == 4:
+            q = q[:, 0, :, :]
+
+        swa_lens = swa_metadata.decode_swa_lens[:num_decode_tokens]
+        max_swa_len = swa_metadata.decode_swa_indices.shape[-1]
+        (gathered_kv,) = current_workspace_manager().get_simultaneous(
+            ((num_decode_tokens, max_swa_len, q.shape[-1]), torch.bfloat16),
+        )
+        gathered_kv.zero_()
+        dequantize_and_gather_k_cache(
+            gathered_kv,
+            swa_k_cache,
+            seq_lens=swa_metadata.seq_lens[:num_decodes],
+            gather_lens=swa_lens,
+            block_table=swa_metadata.block_table[:num_decodes],
+            block_size=swa_metadata.block_size,
+            offset=0,
+        )
+
+        # Reshape for triton kernel: kv=[T*max_swa_len, 1, D], indices=[T, 1, max_swa_len]
+        T = num_decode_tokens
+        D = q.shape[-1]
+        kv_flat = gathered_kv.reshape(T * max_swa_len, 1, D)
+
+        # Build identity indices: token i's KV is at [i*max_swa_len, (i+1)*max_swa_len)
+        indices = torch.arange(
+            max_swa_len, device=q.device, dtype=torch.int32
+        ).unsqueeze(0).expand(T, -1)
+        offsets = (torch.arange(T, device=q.device, dtype=torch.int32) * max_swa_len
+                  ).unsqueeze(1)
+        indices = (indices + offsets).unsqueeze(1)  # [T, 1, max_swa_len]
+
+        # Pad topk to multiple of 16 if needed
+        topk = indices.shape[-1]
+        pad = (16 - topk % 16) % 16
+        if pad > 0:
+            pad_indices = torch.full(
+                (T, 1, pad), -1, dtype=torch.int32, device=q.device
+            )
+            indices = torch.cat([indices, pad_indices], dim=-1)
+
+        triton_out, triton_lse = triton_sparse_mla_attention(
+            q=q,
+            kv=kv_flat,
+            indices=indices,
+            sm_scale=self.scale,
+            topk_length=swa_lens,
+            return_lse=True,
+        )
+
+        result = merge_attention_with_sink(triton_out, triton_lse, self.attn_sink)
+        output.copy_(result)
+
+    def _forward_sparse_mla_compressed_decode_triton(
+        self,
+        q: torch.Tensor,
+        compressed_k_cache: torch.Tensor,
+        swa_k_cache: torch.Tensor,
+        topk_indices: torch.Tensor,
+        topk_lens: torch.Tensor,
+        swa_metadata: "DeepseekSparseSWAMetadata",
+        attn_metadata: "FlashMLASparseMetadata",
+        output: torch.Tensor,
+    ) -> None:
+        """Triton kernel path for compressed + SWA decode attention."""
+        from vllm.v1.attention.ops.triton_mla_utils import (
+            lse_merge,
+            merge_attention_with_sink,
+        )
+        from vllm.v1.attention.ops.triton_sparse_mla_kernel import (
+            triton_sparse_mla_attention,
+        )
+
+        num_decodes = swa_metadata.num_decodes
+        num_decode_tokens = swa_metadata.num_decode_tokens
+        assert num_decodes == num_decode_tokens
+
+        # Squeeze next_n dim if 4D: [T, 1, H, D] -> [T, H, D]
+        if q.dim() == 4:
+            q = q[:, 0, :, :]
+
+        max_swa_len = swa_metadata.decode_swa_indices.shape[-1]
+        compressed_block_size = attn_metadata.block_size // self.compress_ratio
+        compressed_topk = topk_indices.shape[-1]
+        T = num_decode_tokens
+        D = q.shape[-1]
+
+        # --- Compressed attention ---
+        # Dequantize all compressed KV at once
+        (compressed_kv,) = current_workspace_manager().get_simultaneous(
+            ((T, compressed_topk, D), torch.bfloat16),
+        )
+        compressed_kv.zero_()
+        dequantize_global_slots_k_cache(
+            compressed_kv,
+            compressed_k_cache,
+            topk_indices,
+            block_size=compressed_block_size,
+        )
+
+        # Build flat KV + indices for compressed
+        comp_kv_flat = compressed_kv.reshape(T * compressed_topk, 1, D)
+        comp_indices = torch.arange(
+            compressed_topk, device=q.device, dtype=torch.int32
+        ).unsqueeze(0).expand(T, -1)
+        comp_offsets = (torch.arange(T, device=q.device, dtype=torch.int32)
+                       * compressed_topk).unsqueeze(1)
+        comp_indices = (comp_indices + comp_offsets).unsqueeze(1)
+
+        # Pad to multiple of 16
+        topk = comp_indices.shape[-1]
+        pad = (16 - topk % 16) % 16
+        if pad > 0:
+            pad_idx = torch.full(
+                (T, 1, pad), -1, dtype=torch.int32, device=q.device
+            )
+            comp_indices = torch.cat([comp_indices, pad_idx], dim=-1)
+
+        comp_out, comp_lse = triton_sparse_mla_attention(
+            q=q,
+            kv=comp_kv_flat,
+            indices=comp_indices,
+            sm_scale=self.scale,
+            topk_length=topk_lens,
+            return_lse=True,
+        )
+
+        # --- SWA attention ---
+        (swa_kv,) = current_workspace_manager().get_simultaneous(
+            ((T, max_swa_len, D), torch.bfloat16),
+        )
+        swa_kv.zero_()
+        swa_lens = swa_metadata.decode_swa_lens[:num_decode_tokens]
+        dequantize_and_gather_k_cache(
+            swa_kv,
+            swa_k_cache,
+            seq_lens=swa_metadata.seq_lens[:num_decodes],
+            gather_lens=swa_lens,
+            block_table=swa_metadata.block_table[:num_decodes],
+            block_size=swa_metadata.block_size,
+            offset=0,
+        )
+
+        swa_kv_flat = swa_kv.reshape(T * max_swa_len, 1, D)
+        swa_indices = torch.arange(
+            max_swa_len, device=q.device, dtype=torch.int32
+        ).unsqueeze(0).expand(T, -1)
+        swa_offsets = (torch.arange(T, device=q.device, dtype=torch.int32)
+                      * max_swa_len).unsqueeze(1)
+        swa_indices = (swa_indices + swa_offsets).unsqueeze(1)
+
+        swa_topk = swa_indices.shape[-1]
+        swa_pad = (16 - swa_topk % 16) % 16
+        if swa_pad > 0:
+            pad_idx = torch.full(
+                (T, 1, swa_pad), -1, dtype=torch.int32, device=q.device
+            )
+            swa_indices = torch.cat([swa_indices, pad_idx], dim=-1)
+
+        swa_out, swa_lse = triton_sparse_mla_attention(
+            q=q,
+            kv=swa_kv_flat,
+            indices=swa_indices,
+            sm_scale=self.scale,
+            topk_length=swa_lens,
+            return_lse=True,
+        )
+
+        # LSE merge compressed + SWA, then merge with sink
+        merged_out, merged_lse = lse_merge(comp_out, comp_lse, swa_out, swa_lse)
+        result = merge_attention_with_sink(merged_out, merged_lse, self.attn_sink)
+        output.copy_(result)
+
+    def _forward_sparse_mla_prefill_triton(
+        self,
+        q: torch.Tensor,
+        kv: torch.Tensor,
+        combined_indices: torch.Tensor,
+        combined_lens: torch.Tensor,
+        output: torch.Tensor,
+    ) -> None:
+        """Triton kernel path for prefill attention."""
+        from vllm.v1.attention.ops.triton_mla_utils import (
+            merge_attention_with_sink,
+        )
+        from vllm.v1.attention.ops.triton_sparse_mla_kernel import (
+            triton_sparse_mla_attention,
+        )
+
+        D = q.shape[-1]
+        kv_flat = kv.reshape(-1, 1, D)  # [seq_kv, 1, D]
+
+        # combined_indices: [num_tokens, topk] -> [num_tokens, 1, topk]
+        indices = combined_indices.unsqueeze(1).to(torch.int32)
+
+        # Pad topk to multiple of 16
+        topk = indices.shape[-1]
+        pad = (16 - topk % 16) % 16
+        if pad > 0:
+            pad_idx = torch.full(
+                (indices.shape[0], 1, pad), -1,
+                dtype=torch.int32, device=q.device,
+            )
+            indices = torch.cat([indices, pad_idx], dim=-1)
+
+        triton_out, triton_lse = triton_sparse_mla_attention(
+            q=q,
+            kv=kv_flat,
+            indices=indices,
+            sm_scale=self.scale,
+            topk_length=combined_lens,
+            return_lse=True,
+        )
+
+        result = merge_attention_with_sink(triton_out, triton_lse, self.attn_sink)
+        output.copy_(result)
+
     def _forward_sparse_mla_swa_decode_reference(
         self,
         q: torch.Tensor,
@@ -1359,29 +1606,50 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
         )
 
         if _is_sparse_mla_reference_attention_enabled(q.device):
+            _use_triton = _is_triton_mla_enabled()
             if swa_only:
-                self._forward_sparse_mla_swa_decode_reference(
-                    q=q,
-                    swa_k_cache=self.swa_cache_layer.kv_cache,
-                    swa_metadata=swa_metadata,
-                    output=output,
-                )
+                if _use_triton:
+                    self._forward_sparse_mla_swa_decode_triton(
+                        q=q,
+                        swa_k_cache=self.swa_cache_layer.kv_cache,
+                        swa_metadata=swa_metadata,
+                        output=output,
+                    )
+                else:
+                    self._forward_sparse_mla_swa_decode_reference(
+                        q=q,
+                        swa_k_cache=self.swa_cache_layer.kv_cache,
+                        swa_metadata=swa_metadata,
+                        output=output,
+                    )
                 return
             if self.compress_ratio in (4, 128):
                 assert compressed_k_cache is not None
                 assert attn_metadata is not None
                 assert topk_indices is not None
                 assert topk_lens is not None
-                self._forward_sparse_mla_compressed_decode_reference(
-                    q=q,
-                    compressed_k_cache=compressed_k_cache,
-                    swa_k_cache=self.swa_cache_layer.kv_cache,
-                    topk_indices=topk_indices,
-                    topk_lens=topk_lens,
-                    swa_metadata=swa_metadata,
-                    attn_metadata=attn_metadata,
-                    output=output,
-                )
+                if _use_triton:
+                    self._forward_sparse_mla_compressed_decode_triton(
+                        q=q,
+                        compressed_k_cache=compressed_k_cache,
+                        swa_k_cache=self.swa_cache_layer.kv_cache,
+                        topk_indices=topk_indices,
+                        topk_lens=topk_lens,
+                        swa_metadata=swa_metadata,
+                        attn_metadata=attn_metadata,
+                        output=output,
+                    )
+                else:
+                    self._forward_sparse_mla_compressed_decode_reference(
+                        q=q,
+                        compressed_k_cache=compressed_k_cache,
+                        swa_k_cache=self.swa_cache_layer.kv_cache,
+                        topk_indices=topk_indices,
+                        topk_lens=topk_lens,
+                        swa_metadata=swa_metadata,
+                        attn_metadata=attn_metadata,
+                        output=output,
+                    )
                 return
             _dump_sparse_mla_attention_state(
                 phase="decode_unsupported_compressed",
@@ -1569,13 +1837,22 @@ class DeepseekV4MLAAttention(nn.Module, AttentionLayerBase):
                 )
 
             if _is_sparse_mla_reference_attention_enabled(q.device):
-                self._forward_sparse_mla_prefill_reference(
-                    q=q[query_start:query_end],
-                    kv=kv[:chunk_size],
-                    combined_indices=combined_indices,
-                    combined_lens=combined_lens,
-                    output=output[query_start:query_end],
-                )
+                if _is_triton_mla_enabled():
+                    self._forward_sparse_mla_prefill_triton(
+                        q=q[query_start:query_end],
+                        kv=kv[:chunk_size],
+                        combined_indices=combined_indices,
+                        combined_lens=combined_lens,
+                        output=output[query_start:query_end],
+                    )
+                else:
+                    self._forward_sparse_mla_prefill_reference(
+                        q=q[query_start:query_end],
+                        kv=kv[:chunk_size],
+                        combined_indices=combined_indices,
+                        combined_lens=combined_lens,
+                        output=output[query_start:query_end],
+                    )
                 continue
 
             output_chunk, _, _ = flash_mla_sparse_fwd(
