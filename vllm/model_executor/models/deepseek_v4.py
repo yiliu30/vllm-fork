@@ -3,7 +3,7 @@
 import typing
 from collections.abc import Callable, Iterable
 from itertools import islice
-
+import os
 import regex as re
 import torch
 import torch.nn as nn
@@ -576,7 +576,7 @@ class DeepseekV4Model(nn.Module):
             )
         else:
             self.embed_tokens = PPMissingLayer()
-
+        config.num_hidden_layers = int(os.environ.get("VLLM_NUM_HIDDEN_LAYERS", config.num_hidden_layers))
         self.start_layer, self.end_layer, self.layers = make_layers(
             config.num_hidden_layers,
             lambda prefix: DeepseekV4DecoderLayer(
@@ -709,7 +709,8 @@ class DeepseekV4Model(nn.Module):
                 name = name.replace(weight_name, param_name)
                 if is_pp_missing_parameter(name, self):
                     break
-
+                if name not in params_dict:
+                    continue
                 param = params_dict[name]
                 weight_loader = param.weight_loader
                 weight_loader(param, loaded_weight, shard_id)
@@ -735,6 +736,8 @@ class DeepseekV4Model(nn.Module):
                         if is_pp_missing_parameter(name_mapped, self):
                             skip_expert_weight = True
                             break
+                        if name_mapped not in params_dict:
+                            continue
                         param = params_dict[name_mapped]
                         # We should ask the weight loader to return success or not
                         # here since otherwise we may skip experts with other
@@ -762,11 +765,15 @@ class DeepseekV4Model(nn.Module):
                         continue
                     narrow_weight = loaded_weight[head_rank_start:head_rank_end]
                     n = narrow_weight.shape[0]
+                    if name not in params_dict:
+                        continue
                     params_dict[name][:n].copy_(narrow_weight)
                     loaded_params.add(name)
                     continue
                 else:
                     if is_pp_missing_parameter(name, self):
+                        continue
+                    if name not in params_dict:
                         continue
                     param = params_dict[name]
                     weight_loader = getattr(
