@@ -56,7 +56,7 @@ All four kernel entry points (`sparse_prefill_fwd`, `sparse_decode_fwd`, `dense_
 - **Impact**: Sparse attention indexer — selects which KV tokens to attend to during decode
 - **Needs**: Compile for SM120
 
-### 5. FP8/FP4 MQA Logits (`fp8_fp4_mqa_logits`) -> skipped
+### 5. FP8/FP4 MQA Logits (`fp8_fp4_mqa_logits`) -> torch reference
 - **Current**: Same pattern
 - **Impact**: Non-paged MQA logits for prefill indexer
 - **Needs**: Same
