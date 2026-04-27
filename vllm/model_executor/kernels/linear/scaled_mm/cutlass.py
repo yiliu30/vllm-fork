@@ -245,6 +245,33 @@ class CutlassFp8BlockScaledMMKernel(Fp8BlockScaledMMLinearKernel):
                 scale_b=Bs.T,
             )
 
+    def process_weights_after_loading(self, layer: torch.nn.Module):
+        super().process_weights_after_loading(layer)
+        from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+            _upcast_e8m0_to_fp32,
+        )
+        params = self._get_layer_params(layer)
+        weight_scale = (
+            params.weight_scale
+            if params.weight_scale_inv is None
+            else params.weight_scale_inv
+        )
+        scale_attr_name = (
+            params.WEIGHT_SCALE
+            if params.weight_scale_inv is None
+            else params.WEIGHT_SCALE_INV
+        )
+        e8m0_dtype = getattr(torch, "float8_e8m0fnu", None)
+        if (
+            e8m0_dtype is not None
+            and weight_scale is not None
+            and weight_scale.dtype == e8m0_dtype
+        ):
+            replace_parameter(
+                layer,
+                scale_attr_name,
+                _upcast_e8m0_to_fp32(weight_scale),
+            )
 
 def cutlass_scaled_mm(
     A: torch.Tensor,

@@ -17,7 +17,8 @@ from vllm.model_executor.layers.linear import (
     ReplicatedLinear,
 )
 from vllm.model_executor.layers.sparse_attn_indexer import SparseAttnIndexer
-from vllm.triton_utils import LOG2E, tl, triton
+# from vllm.triton_utils import LOG2E, tl, triton
+from vllm.triton_utils import tl, triton
 from vllm.utils.deep_gemm import fp8_einsum, use_dsv4_reference_kernels
 from vllm.utils.torch_utils import direct_register_custom_op
 from vllm.v1.attention.ops.deepseek_v4_ops import (
@@ -209,6 +210,7 @@ def _dsv4_sm80_sparse_attn_combine_kernel(
     softmax-normalised output. Sink contributes `exp2(sink_log2 - max)`
     to the global denominator only — it has no v term.
     """
+    LOG2E = tl.constexpr(1.4426950408889634)
     pid_t = tl.program_id(0)
     pid_h = tl.program_id(1)
 
@@ -326,6 +328,7 @@ def _dsv4_sm80_sparse_attn_decode_triton(
     sum_split = torch.empty_like(max_split)
 
     grid_split = (n_tokens, split_t, triton.cdiv(h, block_h))
+    LOG2E = tl.constexpr(1.4426950408889634)
     _dsv4_sm80_sparse_attn_split_kernel[grid_split](
         q,
         gathered_kv,

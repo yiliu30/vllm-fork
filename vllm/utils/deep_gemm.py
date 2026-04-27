@@ -93,6 +93,7 @@ def is_deep_gemm_supported() -> bool:
 
 
 def _resolve_use_dsv4_ref_kernels() -> bool:
+    return True
     try:
         if not is_deep_gemm_supported():
             return True
