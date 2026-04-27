@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import os
 import typing
 from collections.abc import Callable, Iterable
 from itertools import islice
@@ -1148,6 +1149,10 @@ class DeepseekV4Model(nn.Module):
             prefix=f"{prefix}.embed_tokens",
         )
 
+        config.num_hidden_layers = int(
+            os.environ.get("VLLM_NUM_HIDDEN_LAYERS",
+                           config.num_hidden_layers)
+        )
         self.start_layer, self.end_layer, self.layers = make_layers(
             config.num_hidden_layers,
             lambda prefix: DeepseekV4DecoderLayer(
@@ -1259,6 +1264,8 @@ class DeepseekV4Model(nn.Module):
                     continue
                 name = name.replace(weight_name, param_name)
 
+                if name not in params_dict:
+                    continue
                 param = params_dict[name]
                 weight_loader = param.weight_loader
                 weight_loader(param, loaded_weight, shard_id)
@@ -1280,6 +1287,8 @@ class DeepseekV4Model(nn.Module):
                         if weight_name not in name:
                             continue
                         name_mapped = name.replace(weight_name, param_name)
+                        if name_mapped not in params_dict:
+                            continue
                         param = params_dict[name_mapped]
                         # We should ask the weight loader to return success or not
                         # here since otherwise we may skip experts with other
@@ -1303,10 +1312,14 @@ class DeepseekV4Model(nn.Module):
                 elif "attn_sink" in name:
                     narrow_weight = loaded_weight[head_rank_start:head_rank_end]
                     n = narrow_weight.shape[0]
+                    if name not in params_dict:
+                        continue
                     params_dict[name][:n].copy_(narrow_weight)
                     loaded_params.add(name)
                     continue
                 else:
+                    if name not in params_dict:
+                        continue
                     param = params_dict[name]
                     weight_loader = getattr(
                         param, "weight_loader", default_weight_loader

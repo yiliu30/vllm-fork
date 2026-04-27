@@ -171,6 +171,13 @@ if TYPE_CHECKING:
         "full",
         "relax",
     ] = "relax"
+    VLLM_SM120_DUMP_DEEPSEEK_V4_ATTENTION: bool = False
+    VLLM_SM120_ATTENTION_DUMP_PATH: str = ""
+    VLLM_SM120_REFERENCE_DEEPSEEK_V4_ATTENTION: bool = False
+    VLLM_SM120_REFERENCE_TOPK_CHUNK_SIZE: int | None = None
+    VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE: int | None = None
+    VLLM_SM120_TRITON_MLA: bool = False
+    VLLM_SM120_DISABLE_DEEPGEMM: bool = False
     VLLM_USE_FUSED_MOE_GROUPED_TOPK: bool = True
     VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER: bool = True
     VLLM_USE_FLASHINFER_MOE_FP16: bool = False
@@ -1284,6 +1291,30 @@ environment_variables: dict[str, Callable[[], Any]] = {
             "full",
             "relax",
         ],
+    ),
+    # SM120 reference attention and DeepGEMM fallback controls.
+    "VLLM_SM120_DUMP_DEEPSEEK_V4_ATTENTION": lambda: (
+        os.getenv("VLLM_SM120_DUMP_DEEPSEEK_V4_ATTENTION", "").lower()
+        in ("1", "true", "yes", "on")
+    ),
+    "VLLM_SM120_ATTENTION_DUMP_PATH": lambda: os.getenv(
+        "VLLM_SM120_ATTENTION_DUMP_PATH", ""
+    ),
+    "VLLM_SM120_REFERENCE_DEEPSEEK_V4_ATTENTION": lambda: (
+        os.getenv("VLLM_SM120_REFERENCE_DEEPSEEK_V4_ATTENTION", "").lower()
+        in ("1", "true", "yes", "on")
+    ),
+    "VLLM_SM120_REFERENCE_TOPK_CHUNK_SIZE": lambda: maybe_convert_int(
+        os.getenv("VLLM_SM120_REFERENCE_TOPK_CHUNK_SIZE")
+    ),
+    "VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE": lambda: maybe_convert_int(
+        os.getenv("VLLM_SM120_REFERENCE_QUERY_CHUNK_SIZE")
+    ),
+    "VLLM_SM120_TRITON_MLA": lambda: bool(
+        int(os.getenv("VLLM_SM120_TRITON_MLA", "0"))
+    ),
+    "VLLM_SM120_DISABLE_DEEPGEMM": lambda: bool(
+        int(os.getenv("VLLM_SM120_DISABLE_DEEPGEMM", "0"))
     ),
     # Whether to use fused grouped_topk used for MoE expert selection.
     "VLLM_USE_FUSED_MOE_GROUPED_TOPK": lambda: bool(

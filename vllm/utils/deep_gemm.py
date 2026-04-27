@@ -20,6 +20,7 @@ from vllm.model_executor.layers.quantization.utils.quant_utils import (
     get_fp8_min_max,
 )
 from vllm.platforms import current_platform
+import vllm.utils.deep_gemm_torch_ref as dg_torch_ref
 from vllm.utils.import_utils import has_deep_gemm
 from vllm.utils.math_utils import cdiv
 
@@ -296,6 +297,8 @@ def fp8_gemm_nt(*args, **kwargs):
 
 
 def fp8_einsum(*args, **kwargs):
+    if envs.VLLM_SM120_DISABLE_DEEPGEMM:
+        return dg_torch_ref.fp8_einsum_torch_reference(*args, **kwargs)
     _lazy_init()
     if _fp8_einsum_impl is None:
         return _missing(*args, **kwargs)
@@ -371,6 +374,10 @@ def fp8_fp4_mqa_logits(
         Logits tensor of shape [M, N], dtype `torch.float32`.
     """
     _lazy_init()
+    if current_platform.is_device_capability_family(120) and q[1] is None:
+        return dg_torch_ref.fp8_mqa_logits_torch_reference(
+            q, kv, weights, cu_seqlen_ks, cu_seqlen_ke, clean_logits
+        )
     if _fp8_fp4_mqa_logits_impl is None:
         return _missing()
     return _fp8_fp4_mqa_logits_impl(
@@ -443,6 +450,16 @@ def fp8_fp4_paged_mqa_logits(
         `torch.float32`.
     """
     _lazy_init()
+    if envs.VLLM_SM120_DISABLE_DEEPGEMM:
+        return dg_torch_ref.fp8_paged_mqa_logits_torch_reference(
+            q,
+            kv_cache,
+            weights,
+            context_lens,
+            block_tables,
+            max_model_len,
+            clean_logits,
+        )
     if _fp8_fp4_paged_mqa_logits_impl is None:
         return _missing()
     return _fp8_fp4_paged_mqa_logits_impl(
@@ -471,6 +488,10 @@ def tf32_hc_prenorm_gemm(
 
     See the caller function for shape requirement
     """
+    if envs.VLLM_SM120_DISABLE_DEEPGEMM:
+        return dg_torch_ref.tf32_hc_prenorm_gemm_torch_reference(
+            x, fn, out, sqrsum, num_split
+        )
     _lazy_init()
     if _tf32_hc_prenorm_gemm_impl is None:
         return _missing()
