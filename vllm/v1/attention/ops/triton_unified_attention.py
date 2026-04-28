@@ -55,15 +55,17 @@ def _prepare_kv_tile(
     when applicable:
 
     - ``KV_QUANT_MODE == 0``: cast only (no-op for bf16/fp16).
-    - ``KV_QUANT_MODE == 1`` (FP8 per-tensor): dequantize inline
-      using the tensor-wide scale.
+    - ``KV_QUANT_MODE == 1`` (FP8 per-tensor): dequantize inline using the
+      tensor-wide scale, except for FP8-query fast path where the raw FP8 tile
+      is preserved and the scale is returned to be applied at matmul time.
     - ``KV_QUANT_MODE >= 2`` (per-token-head int8/fp8): cast to Q's
       dtype and return per-head scales separately — the caller applies
       them after the dot product for better numerical efficiency.
 
     Returns ``(data, token_head_scales)``.  *token_head_scales* is only
-    meaningful when ``KV_QUANT_MODE >= 2``; callers gate its use on
-    the same constexpr so the compiler eliminates dead code.
+    meaningful when ``KV_QUANT_MODE >= 2`` or when ``KV_QUANT_MODE == 1``
+    and Q is FP8; callers gate its use on the same constexpr so the compiler
+    eliminates dead code.
     """
     # KV_QUANT_MODE values: 0=none, 1=fp8 per-tensor,
     #                       2=int8 per-token-head, 3=fp8 per-token-head
@@ -72,9 +74,12 @@ def _prepare_kv_tile(
     unused_scales = tile_mask.to(tl.float32)
 
     if KV_QUANT_MODE == 1:  # FP8 per-tensor
+        tensor_scale_val = tl.load(tensor_scale)
         if Q.dtype.is_fp8():
-            return data.to(Q.dtype), unused_scales
-        return (data.to(tl.float32) * tl.load(tensor_scale)).to(Q.dtype), unused_scales
+            # Keep K/V in FP8 so tl.dot can use the FP8 path, but still return
+            # the descale so the caller applies it during score/output compute.
+            return data.to(Q.dtype), tl.where(tile_mask, tensor_scale_val, 1.0)
+        return (data.to(tl.float32) * tensor_scale_val).to(Q.dtype), unused_scales
     if KV_QUANT_MODE >= 2:  # per-token-head (int8 or fp8)
         scale_idx = (
             physical_block_idx * stride_s_blk
@@ -402,9 +407,9 @@ def kernel_unified_attention_2d(
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
 
-        # Per-token-head quant: fuse softmax_scale with per-head k_scale
-        # to avoid a separate BLOCK_M × TILE_SIZE multiply on S.
-        if KV_QUANT_MODE >= 2:
+        # For FP8-query KV quant, keep K in FP8 for tl.dot and apply descales
+        # on the score matrix afterward.
+        if KV_QUANT_MODE >= 2 or (KV_QUANT_MODE == 1 and Q.dtype.is_fp8()):
             S += tl.dot(Q, K) * (scale * k_token_head_scales[None, :])
         else:
             S += scale * tl.dot(Q, K)
@@ -471,8 +476,8 @@ def kernel_unified_attention_2d(
             )
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        # Per-token-head quant: apply v_scale to P instead of V.
-        if KV_QUANT_MODE >= 2:
+        # For FP8-query KV quant, keep V in FP8 and apply descales on P.
+        if KV_QUANT_MODE >= 2 or (KV_QUANT_MODE == 1 and Q.dtype.is_fp8()):
             P_v = (P * v_token_head_scales[None, :]).to(V.dtype)
             acc += tl.dot(P_v, V)
         else:
@@ -793,9 +798,9 @@ def kernel_unified_attention_3d(
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
 
-        # Per-token-head quant: fuse softmax_scale with per-head k_scale
-        # to avoid a separate BLOCK_M × TILE_SIZE multiply on S.
-        if KV_QUANT_MODE >= 2:
+        # For FP8-query KV quant, keep K in FP8 for tl.dot and apply descales
+        # on the score matrix afterward.
+        if KV_QUANT_MODE >= 2 or (KV_QUANT_MODE == 1 and Q.dtype.is_fp8()):
             S += tl.dot(Q, K) * (scale * k_token_head_scales[None, :])
         else:
             S += scale * tl.dot(Q, K)
@@ -862,8 +867,8 @@ def kernel_unified_attention_3d(
             )
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        # Per-token-head quant: apply v_scale to P instead of V.
-        if KV_QUANT_MODE >= 2:
+        # For FP8-query KV quant, keep V in FP8 and apply descales on P.
+        if KV_QUANT_MODE >= 2 or (KV_QUANT_MODE == 1 and Q.dtype.is_fp8()):
             P_v = (P * v_token_head_scales[None, :]).to(V.dtype)
             acc += tl.dot(P_v, V)
         else:

@@ -29,3 +29,4 @@ Also includes support for QuIP and SpinQuant-style transforms as well as KV cach
 
 - [LLM Compressor examples](https://github.com/vllm-project/llm-compressor/tree/main/examples)
 - [GitHub Repository](https://github.com/vllm-project/llm-compressor)
+- [Debugging Triton FP8 attention accuracy](triton_fp8_attention_debugging.md)
