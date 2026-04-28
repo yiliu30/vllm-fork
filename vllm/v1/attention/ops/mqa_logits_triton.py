@@ -20,6 +20,11 @@ import torch
 
 from vllm.triton_utils import tl, triton
 
+__all__ = [
+    "fp8_mqa_logits_triton",
+    "fp8_paged_mqa_logits_triton",
+]
+
 # Paged decode config sweep. `num_warps=4` dominated in A100/SM80 bench
 # across {2,4,8}×{2,4}; the sub-optimal warps=2/8 picks were 1.5–1.7× slower
 # at the autotune key shape (num_heads=32, head_dim=128, block_size=64), and

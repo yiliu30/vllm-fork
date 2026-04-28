@@ -15,6 +15,9 @@ import torch
 from vllm.triton_utils import LOG2E, LOGE2, tl, triton
 from vllm.utils.platform_utils import num_compute_units
 
+
+__all__ = ["triton_sparse_mla_attention"]
+
 # DeepSeek-V3.2 / GLM-5 sparse MLA shape constants.
 _BLOCK_DMODEL = 512
 _BLOCK_DPE = 64
