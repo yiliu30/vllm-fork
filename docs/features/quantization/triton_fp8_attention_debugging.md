@@ -7,6 +7,30 @@ The fixes in this repo were not in model loading and not in KV-cache writes. Bot
 - In the first bug, when the query was FP8 and the KV cache used per-tensor FP8 scales, `_prepare_kv_tile` kept K and V in FP8 for the fast path, but the kernel stopped applying `k_scale` and `v_scale`. That dropped the K/V descales from the score path and the output path.
 - In the second bug, the FP8-query fast path applied tiny `v_scale` values on the probability side while still keeping `V` compressed. For real llm-compressor checkpoints this can zero out the value contribution entirely.
 
+## Main-branch baseline dtypes
+
+On `main` (`03aeed802f`), the original Triton kernel used `_cast_kv_tile`,
+which always returned `K` and `V` in `Q.dtype`. For per-tensor FP8 KV, the
+non-FP8-query path dequantized with `scale` first and then cast to `Q.dtype`;
+the FP8-query fast path kept the raw FP8 tiles.
+
+That gives this dtype flow:
+
+| Stage | Original main-branch dtype flow |
+| --- | --- |
+| `Q` load | `Q` stays in the query tensor dtype. |
+| `K` / `V` prepare | `K.dtype == Q.dtype`, `V.dtype == Q.dtype`. |
+| `Q @ K` inputs | Always `Q.dtype x Q.dtype`. For FP8 query with per-tensor FP8 KV, this is `FP8 x FP8`. |
+| Score `S` | `tl.dot(Q, K)` feeds `S`, which is explicitly `float32`. Any `k_scale` multiply also happens on the `float32` score side. |
+| Softmax `P` | `P` from `softmax_step` is `float32`. |
+| `P @ V` inputs | Non per-token-head path: `P.to(V.dtype) @ V`. Per-token-head path: `(P * v_scale).to(V.dtype) @ V`. Since `V.dtype == Q.dtype`, both end up as `Q.dtype x Q.dtype`. |
+| Output accumulator `acc` | `acc` is explicitly `float32`. |
+| Final store | 2D path normalizes in `float32`, then stores to `out.dtype` (optionally scaled/clamped first for FP8 output). 3D path stores segment partials in `float32`, reduces in `float32`, then stores to `out.dtype`. |
+
+The important baseline for this bug is: before our change, the FP8-query path
+already did `Q @ K` as `FP8 x FP8`, and it also did `P @ V` with `V` still in
+FP8 because `V` was forced to `Q.dtype`.
+
 ## What to check first
 
 Start with a small backend matrix before you touch kernel code:
