@@ -5,7 +5,7 @@ This note covers two related failure modes: a compressed-tensors attention-FP8 c
 The fixes in this repo were not in model loading and not in KV-cache writes. Both bugs were in Triton attention itself:
 
 - In the first bug, when the query was FP8 and the KV cache used per-tensor FP8 scales, `_prepare_kv_tile` kept K and V in FP8 for the fast path, but the kernel stopped applying `k_scale` and `v_scale`. That dropped the K/V descales from the score path and the output path.
-- In the second bug, the FP8-query fast path applied tiny `v_scale` values by multiplying the softmax probabilities and then casting that product to FP8 before `P @ V`. For real llm-compressor checkpoints this can zero out `P * v_scale` entirely.
+- In the second bug, the FP8-query fast path applied tiny `v_scale` values on the probability side while still keeping `V` compressed. For real llm-compressor checkpoints this can zero out the value contribution entirely.
 
 ## What to check first
 
@@ -24,6 +24,8 @@ Start with a small backend matrix before you touch kernel code:
 - If you are chasing query-scale accuracy, do not use `query.to(FP8_DTYPE)` as the only repro. The real path uses `ops.scaled_fp8_quant(query, q_scale)`, and that matters.
 - Use FP8 tensors plus non-unit `q_descale`, `k_descale`, and `v_descale`. Both bugs hide when the scales are close to 1.
 - Tiny `v_scale` values are the best canary. In this debug session, `v_scale=7.66754150390625e-04` exposed the remaining bug immediately.
+- If you want the most stable mental model, think of the fixed path as: `Q @ K`
+  stays `FP8 x FP8`, while `V` is dequantized to FP16 before `P @ V`.
 - Run both Triton decode variants. In practice, `seq_threshold_3D=0` exercises the 2D path and `seq_threshold_3D=8` exercises the 3D path.
 - Compare against a reference built from the dequantized FP8 values, not from the original BF16 tensors. You want to isolate the scaling bug, not the quantization error.
 - If your local environment needs it, preload NCCL before importing `torch`. On the machine used for this debug session, that was required.

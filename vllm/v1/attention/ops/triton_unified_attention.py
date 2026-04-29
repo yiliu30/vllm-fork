@@ -34,7 +34,7 @@ def apply_softcap(S, x):
 
 
 @triton.jit
-def _prepare_kv_tile(
+def _prepare_k_tile(
     data,
     Q,
     tensor_scale,
@@ -49,7 +49,7 @@ def _prepare_kv_tile(
     BLOCK_SIZE: tl.constexpr,
     KV_QUANT_MODE: tl.constexpr,
 ):
-    """Prepare a loaded KV tile for attention computation.
+    """Prepare a loaded K tile for attention computation.
 
     Casts the raw KV data to Q's dtype and loads per-token-head scales
     when applicable:
@@ -62,9 +62,9 @@ def _prepare_kv_tile(
       dtype and return per-head scales separately — the caller applies
       them after the dot product for better numerical efficiency.
 
-    Returns ``(data, token_head_scales)``.  *token_head_scales* is only
-    meaningful when ``KV_QUANT_MODE >= 2`` or when ``KV_QUANT_MODE == 1``
-    and Q is FP8; callers gate its use on the same constexpr so the compiler
+    Returns ``(data, token_head_scales)``. *token_head_scales* is only
+    meaningful when ``KV_QUANT_MODE >= 2`` or when ``KV_QUANT_MODE == 1`` and
+    Q is FP8; callers gate its use on the same constexpr so the compiler
     eliminates dead code.
     """
     # KV_QUANT_MODE values: 0=none, 1=fp8 per-tensor,
@@ -334,7 +334,7 @@ def kernel_unified_attention_2d(
             mask=dim_mask[:, None] & tile_mask[None, :],
             other=0.0,
         )
-        K, k_token_head_scales = _prepare_kv_tile(
+        K, k_token_head_scales = _prepare_k_tile(
             K_load,
             Q,
             k_scale,
@@ -356,21 +356,38 @@ def kernel_unified_attention_2d(
             mask=dim_mask[None, :] & tile_mask[:, None],
             other=0.0,
         )
-        V, v_token_head_scales = _prepare_kv_tile(
-            V_load,
-            Q,
-            v_scale,
-            v_scale_cache_ptr,
-            physical_block_idx,
-            seq_offset,
-            kv_head_idx,
-            stride_vs_blk,
-            stride_vs_slot,
-            stride_vs_head,
-            tile_mask,
-            BLOCK_SIZE,
-            KV_QUANT_MODE,
-        )
+        v_token_head_scales = tile_mask.to(tl.float32)
+        if Q.dtype.is_fp8() and KV_QUANT_MODE >= 1:
+            if KV_QUANT_MODE == 1:
+                V = (V_load.to(tl.float32) * tl.load(v_scale)).to(tl.float16)
+            else:
+                scale_idx = (
+                    physical_block_idx * stride_vs_blk
+                    + (seq_offset % BLOCK_SIZE) * stride_vs_slot
+                    + kv_head_idx * stride_vs_head
+                )
+                v_token_head_scales = tl.load(
+                    v_scale_cache_ptr + scale_idx, mask=tile_mask, other=1.0
+                )
+                V = (V_load.to(tl.float32) * v_token_head_scales[:, None]).to(
+                    tl.float16
+                )
+        else:
+            V, v_token_head_scales = _prepare_k_tile(
+                V_load,
+                Q,
+                v_scale,
+                v_scale_cache_ptr,
+                physical_block_idx,
+                seq_offset,
+                kv_head_idx,
+                stride_vs_blk,
+                stride_vs_slot,
+                stride_vs_head,
+                tile_mask,
+                BLOCK_SIZE,
+                KV_QUANT_MODE,
+            )
 
         # Compute attention mask: causal by default (key <= query)
         query_abs_pos = context_len + query_pos[:, None]
@@ -477,15 +494,12 @@ def kernel_unified_attention_2d(
             )
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        # For per-token-head scales we must scale P before the dot because the
-        # descale varies across tokens. For per-tensor FP8 KV, applying a tiny
-        # v_scale on P and then casting to FP8 can underflow P to zero. Keep
-        # the FP8 dot, but apply the scalar descale after the dot instead.
-        if KV_QUANT_MODE >= 2:
+        # Keep FP8 for QK when Q is FP8, but use dequantized V for PV.
+        if Q.dtype.is_fp8() and KV_QUANT_MODE >= 1:
+            acc += tl.dot(P.to(V.dtype), V)
+        elif KV_QUANT_MODE >= 2:
             P_v = (P * v_token_head_scales[None, :]).to(V.dtype)
             acc += tl.dot(P_v, V)
-        elif KV_QUANT_MODE == 1 and Q.dtype.is_fp8():
-            acc += tl.dot(P.to(V.dtype), V) * tl.load(v_scale)
         else:
             acc += tl.dot(P.to(V.dtype), V)
 
@@ -730,7 +744,7 @@ def kernel_unified_attention_3d(
             mask=dim_mask[:, None] & tile_mask[None, :],
             other=0.0,
         )
-        K, k_token_head_scales = _prepare_kv_tile(
+        K, k_token_head_scales = _prepare_k_tile(
             K_load,
             Q,
             k_scale,
@@ -752,21 +766,38 @@ def kernel_unified_attention_3d(
             mask=dim_mask[None, :] & tile_mask[:, None],
             other=0.0,
         )
-        V, v_token_head_scales = _prepare_kv_tile(
-            V_load,
-            Q,
-            v_scale,
-            v_scale_cache_ptr,
-            physical_block_idx,
-            seq_offset,
-            kv_head_idx,
-            stride_vs_blk,
-            stride_vs_slot,
-            stride_vs_head,
-            tile_mask,
-            BLOCK_SIZE,
-            KV_QUANT_MODE,
-        )
+        v_token_head_scales = tile_mask.to(tl.float32)
+        if Q.dtype.is_fp8() and KV_QUANT_MODE >= 1:
+            if KV_QUANT_MODE == 1:
+                V = (V_load.to(tl.float32) * tl.load(v_scale)).to(tl.float16)
+            else:
+                scale_idx = (
+                    physical_block_idx * stride_vs_blk
+                    + (seq_offset % BLOCK_SIZE) * stride_vs_slot
+                    + kv_head_idx * stride_vs_head
+                )
+                v_token_head_scales = tl.load(
+                    v_scale_cache_ptr + scale_idx, mask=tile_mask, other=1.0
+                )
+                V = (V_load.to(tl.float32) * v_token_head_scales[:, None]).to(
+                    tl.float16
+                )
+        else:
+            V, v_token_head_scales = _prepare_k_tile(
+                V_load,
+                Q,
+                v_scale,
+                v_scale_cache_ptr,
+                physical_block_idx,
+                seq_offset,
+                kv_head_idx,
+                stride_vs_blk,
+                stride_vs_slot,
+                stride_vs_head,
+                tile_mask,
+                BLOCK_SIZE,
+                KV_QUANT_MODE,
+            )
 
         # Compute attention mask: causal by default (key <= query)
         query_abs_pos = context_len + query_pos[:, None]
@@ -873,15 +904,12 @@ def kernel_unified_attention_3d(
             )
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        # For per-token-head scales we must scale P before the dot because the
-        # descale varies across tokens. For per-tensor FP8 KV, applying a tiny
-        # v_scale on P and then casting to FP8 can underflow P to zero. Keep
-        # the FP8 dot, but apply the scalar descale after the dot instead.
-        if KV_QUANT_MODE >= 2:
+        # Keep FP8 for QK when Q is FP8, but use dequantized V for PV.
+        if Q.dtype.is_fp8() and KV_QUANT_MODE >= 1:
+            acc += tl.dot(P.to(V.dtype), V)
+        elif KV_QUANT_MODE >= 2:
             P_v = (P * v_token_head_scales[None, :]).to(V.dtype)
             acc += tl.dot(P_v, V)
-        elif KV_QUANT_MODE == 1 and Q.dtype.is_fp8():
-            acc += tl.dot(P.to(V.dtype), V) * tl.load(v_scale)
         else:
             acc += tl.dot(P.to(V.dtype), V)
 
