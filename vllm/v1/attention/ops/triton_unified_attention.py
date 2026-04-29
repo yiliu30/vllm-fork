@@ -79,6 +79,7 @@ def _prepare_kv_tile(
             # Keep K/V in FP8 so tl.dot can use the FP8 path, but still return
             # the descale so the caller applies it during score/output compute.
             return data.to(Q.dtype), tl.where(tile_mask, tensor_scale_val, 1.0)
+        # Dequantize K/V inline when Q is not FP8
         return (data.to(tl.float32) * tensor_scale_val).to(Q.dtype), unused_scales
     if KV_QUANT_MODE >= 2:  # per-token-head (int8 or fp8)
         scale_idx = (
@@ -476,10 +477,15 @@ def kernel_unified_attention_2d(
             )
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        # For FP8-query KV quant, keep V in FP8 and apply descales on P.
-        if KV_QUANT_MODE >= 2 or (KV_QUANT_MODE == 1 and Q.dtype.is_fp8()):
+        # For per-token-head scales we must scale P before the dot because the
+        # descale varies across tokens. For per-tensor FP8 KV, applying a tiny
+        # v_scale on P and then casting to FP8 can underflow P to zero. Keep
+        # the FP8 dot, but apply the scalar descale after the dot instead.
+        if KV_QUANT_MODE >= 2:
             P_v = (P * v_token_head_scales[None, :]).to(V.dtype)
             acc += tl.dot(P_v, V)
+        elif KV_QUANT_MODE == 1 and Q.dtype.is_fp8():
+            acc += tl.dot(P.to(V.dtype), V) * tl.load(v_scale)
         else:
             acc += tl.dot(P.to(V.dtype), V)
 
@@ -867,10 +873,15 @@ def kernel_unified_attention_3d(
             )
 
         # acc : (BLOCK_M, HEAD_SIZE_PADDED)
-        # For FP8-query KV quant, keep V in FP8 and apply descales on P.
-        if KV_QUANT_MODE >= 2 or (KV_QUANT_MODE == 1 and Q.dtype.is_fp8()):
+        # For per-token-head scales we must scale P before the dot because the
+        # descale varies across tokens. For per-tensor FP8 KV, applying a tiny
+        # v_scale on P and then casting to FP8 can underflow P to zero. Keep
+        # the FP8 dot, but apply the scalar descale after the dot instead.
+        if KV_QUANT_MODE >= 2:
             P_v = (P * v_token_head_scales[None, :]).to(V.dtype)
             acc += tl.dot(P_v, V)
+        elif KV_QUANT_MODE == 1 and Q.dtype.is_fp8():
+            acc += tl.dot(P.to(V.dtype), V) * tl.load(v_scale)
         else:
             acc += tl.dot(P.to(V.dtype), V)
 

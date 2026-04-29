@@ -1,8 +1,11 @@
 # Debugging Triton FP8 Attention Accuracy
 
-This note covers one specific failure mode: a compressed-tensors attention-FP8 checkpoint produces sane output in `transformers` and `FLASHINFER`, but `TRITON_ATTN` generates corrupted text.
+This note covers two related failure modes: a compressed-tensors attention-FP8 checkpoint produces sane output in `transformers` and `FLASHINFER`, but `TRITON_ATTN` generates corrupted text.
 
-The fix in this repo was not in model loading and not in KV-cache writes. The bug was in Triton attention itself. When the query was FP8 and the KV cache used per-tensor FP8 scales, `_prepare_kv_tile` kept K and V in FP8 for the fast path, but the kernel stopped applying `k_scale` and `v_scale`. That dropped the K/V descales from the score path and the output path.
+The fixes in this repo were not in model loading and not in KV-cache writes. Both bugs were in Triton attention itself:
+
+- In the first bug, when the query was FP8 and the KV cache used per-tensor FP8 scales, `_prepare_kv_tile` kept K and V in FP8 for the fast path, but the kernel stopped applying `k_scale` and `v_scale`. That dropped the K/V descales from the score path and the output path.
+- In the second bug, the FP8-query fast path applied tiny `v_scale` values by multiplying the softmax probabilities and then casting that product to FP8 before `P @ V`. For real llm-compressor checkpoints this can zero out `P * v_scale` entirely.
 
 ## What to check first
 
@@ -18,18 +21,21 @@ Start with a small backend matrix before you touch kernel code:
 - Split the problem into cache write and attention math. The cache writer matched the C++ op for FP8 per-tensor scales, which let us stop digging in the wrong file.
 - Reproduce with `unified_attention` directly. You do not need to load a full model to catch this class of bug.
 - Force `kv_quant_mode=KVQuantMode.FP8_PER_TENSOR`. If you leave it at the default, the descales are ignored by design and your repro is not testing the quantized path.
-- Use FP8 tensors plus non-unit `q_descale`, `k_descale`, and `v_descale`. The old bug only showed up once the scales mattered.
+- If you are chasing query-scale accuracy, do not use `query.to(FP8_DTYPE)` as the only repro. The real path uses `ops.scaled_fp8_quant(query, q_scale)`, and that matters.
+- Use FP8 tensors plus non-unit `q_descale`, `k_descale`, and `v_descale`. Both bugs hide when the scales are close to 1.
+- Tiny `v_scale` values are the best canary. In this debug session, `v_scale=7.66754150390625e-04` exposed the remaining bug immediately.
 - Run both Triton decode variants. In practice, `seq_threshold_3D=0` exercises the 2D path and `seq_threshold_3D=8` exercises the 3D path.
 - Compare against a reference built from the dequantized FP8 values, not from the original BF16 tensors. You want to isolate the scaling bug, not the quantization error.
 - If your local environment needs it, preload NCCL before importing `torch`. On the machine used for this debug session, that was required.
 
 ## Minimal repro
 
-This script reproduces the accuracy bug without loading a model. Before the fix, `max_diff` was large. After the fix, it stays within the regression tolerance.
+This script reproduces the remaining accuracy bug without loading a model. The key detail is to statically quantize Q/K/V with the real scales. Before the fix, `max_diff` was large and cosine similarity collapsed. After the fix, it stays within the regression tolerance.
 
 ```python
 import torch
 
+from vllm import _custom_ops as ops
 from vllm.platforms import current_platform
 from vllm.utils.math_utils import next_power_of_2
 from vllm.v1.attention.ops.triton_unified_attention import unified_attention
@@ -76,28 +82,39 @@ def ref_paged_attn(query, key_cache, value_cache, query_lens, kv_lens,
 torch.set_default_device("cuda")
 torch.manual_seed(0)
 
-seq_lens = [(2, 64), (1, 32)]
-query_lens = [x[0] for x in seq_lens]
-kv_lens = [x[1] for x in seq_lens]
-num_seqs = len(seq_lens)
-num_query_heads = 8
-num_kv_heads = 2
+query_lens = [5]
+kv_lens = [5]
+num_seqs = 1
+num_query_heads = 32
+num_kv_heads = 4
 head_size = 128
 block_size = 16
 num_blocks = 256
 scale = head_size**-0.5
-q_descale = 0.25
-k_descale = 0.5
-v_descale = 2.0
+q_descale = 0.033935546875
+k_descale = 0.5234375
+v_descale = 0.000766754150390625
 
 query = torch.randn(sum(query_lens), num_query_heads, head_size, dtype=torch.bfloat16)
 key_cache = torch.randn(num_blocks, block_size, num_kv_heads, head_size,
                         dtype=torch.bfloat16)
 value_cache = torch.randn_like(key_cache)
 
-query_fp8 = query.to(FP8_DTYPE)
-key_cache_fp8 = key_cache.to(FP8_DTYPE)
-value_cache_fp8 = value_cache.to(FP8_DTYPE)
+query_fp8, _ = ops.scaled_fp8_quant(
+    query.view(query.shape[0], -1),
+    torch.tensor([q_descale], dtype=torch.float32),
+)
+key_cache_fp8, _ = ops.scaled_fp8_quant(
+    key_cache.view(-1, head_size),
+    torch.tensor([k_descale], dtype=torch.float32),
+)
+value_cache_fp8, _ = ops.scaled_fp8_quant(
+    value_cache.view(-1, head_size),
+    torch.tensor([v_descale], dtype=torch.float32),
+)
+query_fp8 = query_fp8.view_as(query)
+key_cache_fp8 = key_cache_fp8.view_as(key_cache)
+value_cache_fp8 = value_cache_fp8.view_as(value_cache)
 
 cu_query_lens = torch.tensor([0] + query_lens, dtype=torch.int32).cumsum(
     dim=0, dtype=torch.int32
@@ -164,17 +181,23 @@ ref = ref_paged_attn(
 
 print("max_diff", (output.float() - ref).abs().max().item())
 print("mean_diff", (output.float() - ref).abs().mean().item())
+print(
+    "cos_sim",
+    torch.nn.functional.cosine_similarity(
+        output.reshape(-1).float(), ref.reshape(-1).float(), dim=0
+    ).item(),
+)
 ```
 
 ## Targeted verification
 
-The regression test added with this fix is:
+The regression tests added with these fixes are:
 
 ```bash
 LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libnccl.so.2.29.7 \
 /home/yiliu7/workspace/venvs/vllm/bin/python -m pytest \
 tests/kernels/attention/test_triton_unified_attention.py \
--k "fp8_query_applies_kv_descales" -v
+-k "fp8_query_applies_kv_descales or fp8_query_static_quant_keeps_tiny_v_scale" -v
 ```
 
-That test failed before the fix and passes after it.
+Those tests failed before the fixes and pass after them.

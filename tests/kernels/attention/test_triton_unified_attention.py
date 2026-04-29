@@ -5,6 +5,7 @@
 import pytest
 import torch
 
+import vllm._custom_ops as ops
 from vllm.platforms import current_platform
 from vllm.utils.math_utils import next_power_of_2
 from vllm.utils.torch_utils import set_random_seed
@@ -347,6 +348,134 @@ def test_triton_unified_attn_fp8_query_applies_kv_descales(
     )
 
     torch.testing.assert_close(output.float(), ref_output, atol=1.5e-1, rtol=1.5e-1)
+
+
+@pytest.mark.parametrize(
+    ("query_lens", "kv_lens", "seq_threshold_3D"),
+    [
+        ([5], [5], 0),
+        ([1], [5], 8),
+    ],
+)
+@torch.inference_mode()
+def test_triton_unified_attn_fp8_query_static_quant_keeps_tiny_v_scale(
+    query_lens: list[int],
+    kv_lens: list[int],
+    seq_threshold_3D: int,
+) -> None:
+    torch.set_default_device("cuda")
+
+    set_random_seed(0)
+    num_seqs = len(query_lens)
+    num_query_heads = 32
+    num_kv_heads = 4
+    head_size = 128
+    block_size = 16
+    num_blocks = 256
+    max_query_len = max(query_lens)
+    max_kv_len = max(kv_lens)
+    scale = head_size**-0.5
+
+    # Layer 0 scales from the Qwen3-8B attention-FP8 checkpoint used in the
+    # end-to-end repro. The tiny v_scale is what exposed the regression.
+    q_descale = 0.033935546875
+    k_descale_val = 0.5234375
+    v_descale_val = 0.000766754150390625
+
+    query = torch.randn(
+        sum(query_lens), num_query_heads, head_size, dtype=torch.bfloat16
+    )
+    key_cache = torch.randn(
+        num_blocks, block_size, num_kv_heads, head_size, dtype=torch.bfloat16
+    )
+    value_cache = torch.randn_like(key_cache)
+
+    query_fp8, _ = ops.scaled_fp8_quant(
+        query.view(query.shape[0], -1),
+        torch.tensor([q_descale], dtype=torch.float32),
+    )
+    key_cache_fp8, _ = ops.scaled_fp8_quant(
+        key_cache.view(-1, head_size),
+        torch.tensor([k_descale_val], dtype=torch.float32),
+    )
+    value_cache_fp8, _ = ops.scaled_fp8_quant(
+        value_cache.view(-1, head_size),
+        torch.tensor([v_descale_val], dtype=torch.float32),
+    )
+    query_fp8 = query_fp8.view_as(query)
+    key_cache_fp8 = key_cache_fp8.view_as(key_cache)
+    value_cache_fp8 = value_cache_fp8.view_as(value_cache)
+
+    cu_query_lens = torch.tensor([0] + query_lens, dtype=torch.int32).cumsum(
+        dim=0, dtype=torch.int32
+    )
+    kv_lens_tensor = torch.tensor(kv_lens, dtype=torch.int32)
+
+    max_num_blocks_per_seq = (max_kv_len + block_size - 1) // block_size
+    block_tables = torch.randint(
+        0, num_blocks, (num_seqs, max_num_blocks_per_seq), dtype=torch.int32
+    )
+
+    output = torch.empty_like(query)
+
+    num_par_softmax_segments = 16
+    head_size_padded = next_power_of_2(head_size)
+    softmax_segm_output = torch.empty(
+        (seq_threshold_3D, num_query_heads, num_par_softmax_segments, head_size_padded),
+        dtype=torch.float32,
+    )
+    softmax_segm_max = torch.empty(
+        (seq_threshold_3D, num_query_heads, num_par_softmax_segments),
+        dtype=torch.float32,
+    )
+    softmax_segm_expsum = torch.empty(
+        (seq_threshold_3D, num_query_heads, num_par_softmax_segments),
+        dtype=torch.float32,
+    )
+
+    descale_shape = (num_seqs, num_kv_heads)
+    k_descale = torch.full(descale_shape, k_descale_val, dtype=torch.float32)
+    v_descale = torch.full(descale_shape, v_descale_val, dtype=torch.float32)
+
+    unified_attention(
+        q=query_fp8,
+        k=key_cache_fp8,
+        v=value_cache_fp8,
+        out=output,
+        cu_seqlens_q=cu_query_lens,
+        seqused_k=kv_lens_tensor,
+        max_seqlen_q=max_query_len,
+        max_seqlen_k=max_kv_len,
+        softmax_scale=scale,
+        causal=True,
+        window_size=(-1, -1),
+        block_table=block_tables,
+        softcap=0,
+        q_descale=torch.tensor([q_descale], dtype=torch.float32),
+        k_descale=k_descale,
+        v_descale=v_descale,
+        seq_threshold_3D=seq_threshold_3D,
+        num_par_softmax_segments=num_par_softmax_segments,
+        softmax_segm_output=softmax_segm_output,
+        softmax_segm_max=softmax_segm_max,
+        softmax_segm_expsum=softmax_segm_expsum,
+        kv_quant_mode=KVQuantMode.FP8_PER_TENSOR,
+    )
+
+    ref_output = ref_paged_attn_with_descales(
+        query=query_fp8.float(),
+        key_cache=key_cache_fp8.float(),
+        value_cache=value_cache_fp8.float(),
+        query_lens=query_lens,
+        kv_lens=kv_lens,
+        block_tables=block_tables,
+        scale=scale,
+        q_descale=q_descale,
+        k_descale=k_descale_val,
+        v_descale=v_descale_val,
+    )
+
+    torch.testing.assert_close(output.float(), ref_output, atol=2e-2, rtol=5e-2)
 
 
 @pytest.mark.parametrize(
