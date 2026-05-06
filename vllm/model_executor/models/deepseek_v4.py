@@ -34,6 +34,7 @@ from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
     MergedColumnParallelLinear,
+    ReplicatedLinear,
     RowParallelLinear,
 )
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
@@ -44,6 +45,7 @@ from vllm.model_executor.layers.quantization import (
 from vllm.model_executor.layers.quantization.fp8 import Fp8Config
 from vllm.model_executor.layers.quantization.mxfp4 import Mxfp4MoEMethod
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
+    get_and_maybe_dequant_weights,
     is_layer_skipped,
 )
 from vllm.model_executor.layers.rotary_embedding import get_rope
@@ -72,6 +74,292 @@ from .utils import (
 )
 
 _DEEPSEEK_V4_EXPERT_DTYPES = ("fp4", "fp8")
+_DEEPSEEK_V4_EXPERT_NAME_FAMILIES = (
+    ("w1", "w2", "w3"),
+    ("gate_proj", "down_proj", "up_proj"),
+)
+_DEEPSEEK_V4_BUFFERED_MERGED_LINEAR_RE = re.compile(
+    r"^(?P<prefix>.+\.compressor)\.(?P<shard>wkv|wgate)\."
+    r"(?P<component>qweight|qzeros|scales)$"
+)
+_DEEPSEEK_V4_BUFFERED_REPLICATED_LINEAR_RE = re.compile(
+    r"^(?P<prefix>.+\.weights_proj)\.(?P<component>qweight|qzeros|scales)$"
+)
+_DEEPSEEK_V4_BUFFERED_FP8_MERGED_LINEAR_RE = re.compile(
+    r"^(?P<prefix>.+)\.(?P<shard>wq_a|wkv|gate_proj|up_proj)\."
+    r"(?P<component>weight|weight_scale_inv)$"
+)
+_DEEPSEEK_V4_BUFFERED_FP8_DIRECT_LINEAR_RE = re.compile(
+    r"^(?P<prefix>.+\.(?:wq_b|wo_a|wo_b|down_proj))\."
+    r"(?P<component>weight|weight_scale_inv)$"
+)
+
+
+class _DeepseekV4BufferedQuantLinear:
+    def __init__(
+        self,
+        *,
+        target_name: str,
+        target_weight: nn.Parameter,
+        temp_module: nn.Module,
+        expected_components: set[str],
+    ) -> None:
+        self.target_name = target_name
+        self.target_weight = target_weight
+        self.temp_module = temp_module
+        self.expected_components = expected_components
+        self.loaded_components: set[str] = set()
+        self.params = dict(temp_module.named_parameters())
+
+    def load(
+        self,
+        component: str,
+        loaded_weight: torch.Tensor,
+        shard_id: int | None = None,
+    ) -> None:
+        if component not in self.params:
+            raise ValueError(
+                f"Buffered quantized DeepSeek V4 loader expected component "
+                f"{component!r} for {self.target_name}, but only found "
+                f"{sorted(self.params)}."
+            )
+
+        param = self.params[component]
+        weight_loader = typing.cast(Callable[..., None], param.weight_loader)
+        loaded_token = component if shard_id is None else f"{component}:{shard_id}"
+        if shard_id is None:
+            weight_loader(param, loaded_weight)
+        else:
+            weight_loader(param, loaded_weight, shard_id)
+        self.loaded_components.add(loaded_token)
+
+    def finalize(self) -> None:
+        missing = sorted(self.expected_components - self.loaded_components)
+        if missing:
+            raise ValueError(
+                f"Missing quantized tensors for {self.target_name}: {missing}."
+            )
+
+        quant_method = getattr(self.temp_module, "quant_method", None)
+        if quant_method is None:
+            raise ValueError(
+                f"Buffered quantized DeepSeek V4 loader for {self.target_name} "
+                "did not create a quantized temporary module."
+            )
+
+        quant_method.process_weights_after_loading(self.temp_module)
+        dequant_weight = get_and_maybe_dequant_weights(
+            typing.cast(typing.Any, self.temp_module),
+            out_dtype=self.target_weight.dtype,
+        )
+        if dequant_weight.shape != self.target_weight.shape:
+            raise ValueError(
+                f"DeepSeek V4 deferred dequant shape mismatch for "
+                f"{self.target_name}: target {tuple(self.target_weight.shape)} vs "
+                f"dequantized {tuple(dequant_weight.shape)}."
+            )
+        self.target_weight.data.copy_(
+            dequant_weight.to(
+                device=self.target_weight.device, dtype=self.target_weight.dtype
+            )
+        )
+
+
+def _iter_deepseek_v4_expert_name_families():
+    return _DEEPSEEK_V4_EXPERT_NAME_FAMILIES
+
+
+def _get_deepseek_v4_deferred_quant_linear_spec(
+    name: str,
+) -> tuple[str, str, int | None] | None:
+    if match := _DEEPSEEK_V4_BUFFERED_MERGED_LINEAR_RE.match(name):
+        shard_id = 0 if match.group("shard") == "wkv" else 1
+        return (
+            f"{match.group('prefix')}.fused_wkv_wgate.weight",
+            match.group("component"),
+            shard_id,
+        )
+
+    if match := _DEEPSEEK_V4_BUFFERED_REPLICATED_LINEAR_RE.match(name):
+        return f"{match.group('prefix')}.weight", match.group("component"), None
+
+    return None
+
+
+def _get_deepseek_v4_deferred_fp8_linear_spec(
+    name: str,
+) -> tuple[str, str, int | None] | None:
+    if ".experts." in name:
+        return None
+
+    if match := _DEEPSEEK_V4_BUFFERED_FP8_MERGED_LINEAR_RE.match(name):
+        shard = match.group("shard")
+        target_name = (
+            f"{match.group('prefix')}.fused_wqa_wkv.weight"
+            if shard in ("wq_a", "wkv")
+            else f"{match.group('prefix')}.gate_up_proj.weight"
+        )
+        shard_id = 0 if shard in ("wq_a", "gate_proj") else 1
+        return target_name, match.group("component"), shard_id
+
+    if match := _DEEPSEEK_V4_BUFFERED_FP8_DIRECT_LINEAR_RE.match(name):
+        return f"{match.group('prefix')}.weight", match.group("component"), None
+
+    return None
+
+
+def _maybe_patch_deepseek_v4_inc_quant_config(
+    quant_config: QuantizationConfig | None,
+) -> None:
+    if quant_config is None or quant_config.get_name() != "inc":
+        return
+
+    extra_config = dict(getattr(quant_config, "extra_config", {}) or {})
+    dense_patterns = (
+        r".*model\.layers\.\d+\.attn\.(?:fused_wqa_wkv|wq_b|wo_a|wo_b).*",
+        r".*model\.layers\.\d+\.attn\.indexer\.wq_b.*",
+        r".*model\.layers\.\d+\.ffn\.gate.*",
+        r".*model\.layers\.\d+\.ffn\.shared_experts\.(?:gate_up_proj|down_proj).*",
+    )
+    for pattern in dense_patterns:
+        extra_config.setdefault(pattern, {"bits": 16, "data_type": "float"})
+    quant_config.extra_config = extra_config
+
+
+def _make_deepseek_v4_quant_linear_clone(
+    *,
+    target_name: str,
+    target_module: nn.Module,
+    target_weight: nn.Parameter,
+    quant_config: QuantizationConfig | None,
+    components: tuple[str, ...],
+    shard_ids: tuple[int, ...] | None,
+) -> _DeepseekV4BufferedQuantLinear:
+    if quant_config is None:
+        raise ValueError(
+            f"DeepSeek V4 quantized checkpoint tensor {target_name!r} needs a "
+            "quantized temporary loader, but quant_config is None."
+        )
+
+    module_prefix = target_name.removesuffix(".weight")
+    if isinstance(target_module, MergedColumnParallelLinear):
+        temp_module = MergedColumnParallelLinear(
+            input_size=target_module.input_size,
+            output_sizes=list(target_module.output_sizes),
+            bias=False,
+            params_dtype=target_module.params_dtype,
+            quant_config=quant_config,
+            prefix=module_prefix,
+            return_bias=False,
+            disable_tp=target_module.disable_tp,
+        )
+    elif isinstance(target_module, ColumnParallelLinear):
+        temp_module = ColumnParallelLinear(
+            input_size=target_module.input_size,
+            output_size=target_module.output_size,
+            bias=False,
+            gather_output=target_module.gather_output,
+            params_dtype=target_module.params_dtype,
+            quant_config=quant_config,
+            prefix=module_prefix,
+            return_bias=False,
+            disable_tp=target_module.disable_tp,
+        )
+    elif isinstance(target_module, RowParallelLinear):
+        temp_module = RowParallelLinear(
+            input_size=target_module.input_size,
+            output_size=target_module.output_size,
+            bias=False,
+            input_is_parallel=target_module.input_is_parallel,
+            params_dtype=target_module.params_dtype,
+            reduce_results=target_module.reduce_results,
+            quant_config=quant_config,
+            prefix=module_prefix,
+            return_bias=False,
+            disable_tp=target_module.disable_tp,
+        )
+    elif isinstance(target_module, ReplicatedLinear):
+        temp_module = ReplicatedLinear(
+            input_size=target_module.input_size,
+            output_size=target_module.output_size,
+            bias=False,
+            params_dtype=target_module.params_dtype,
+            quant_config=quant_config,
+            prefix=module_prefix,
+            return_bias=False,
+        )
+        # get_and_maybe_dequant_weights expects this attribute on linear layers.
+        temp_module.input_size_per_partition = temp_module.input_size
+    else:
+        raise ValueError(
+            f"DeepSeek V4 deferred quantized loading does not support "
+            f"{type(target_module).__name__} for {target_name}."
+        )
+
+    temp_module = temp_module.to(device=target_weight.device)
+    if shard_ids is None:
+        expected_components = set(components)
+    else:
+        expected_components = {
+            f"{component}:{shard_id}"
+            for component in components
+            for shard_id in shard_ids
+        }
+    return _DeepseekV4BufferedQuantLinear(
+        target_name=target_name,
+        target_weight=target_weight,
+        temp_module=temp_module,
+        expected_components=expected_components,
+    )
+
+
+def _load_deepseek_v4_expert_weight(
+    *,
+    model: nn.Module,
+    name: str,
+    loaded_weight: torch.Tensor,
+    expert_mapping: list[tuple[str, str, int, str]],
+    params_dict: dict[str, nn.Parameter],
+    is_local_expert_id: Callable[[int], bool],
+) -> str | None:
+    matched_mapping = False
+    for param_name, weight_name, expert_id, shard_id in expert_mapping:
+        if weight_name not in name:
+            continue
+
+        matched_mapping = True
+        name_mapped = name.replace(weight_name, param_name)
+        if is_pp_missing_parameter(name_mapped, model):
+            return None
+
+        param = params_dict.get(name_mapped)
+        if param is None:
+            raise ValueError(
+                f"Unsupported DeepSeek V4 expert tensor {name!r}: mapped to "
+                f"{name_mapped!r}, but that parameter does not exist."
+            )
+
+        weight_loader = typing.cast(Callable[..., bool], param.weight_loader)
+        success = weight_loader(
+            param,
+            loaded_weight,
+            name_mapped,
+            shard_id=shard_id,
+            expert_id=expert_id,
+            return_success=True,
+        )
+        if success:
+            return name_mapped
+        if is_local_expert_id(expert_id):
+            raise ValueError(
+                f"Unsupported DeepSeek V4 expert tensor {name!r} for local "
+                f"parameter {name_mapped!r}."
+            )
+
+    if not matched_mapping:
+        raise ValueError(f"Unsupported DeepSeek V4 expert tensor {name!r}.")
+
+    return None
 
 
 class DeepseekV4MLP(nn.Module):
@@ -388,10 +676,11 @@ def make_deepseek_v4_expert_params_mapping(
             shard_id,
         )
         for expert_id in range(num_experts)
+        for gate_name, down_name, up_name in _iter_deepseek_v4_expert_name_families()
         for shard_id, weight_name in [
-            ("w1", "w1"),
-            ("w2", "w2"),
-            ("w3", "w3"),
+            ("w1", gate_name),
+            ("w2", down_name),
+            ("w3", up_name),
         ]
     ]
 
@@ -1008,7 +1297,7 @@ class DeepseekV4Attention(nn.Module):
             prefix=f"{prefix}.wo_b",
         )
         self.softmax_scale = self.head_dim**-0.5
-        self.scale_fmt = config.quantization_config["scale_fmt"]
+        self.scale_fmt = config.quantization_config.get("scale_fmt", "ue8m0")
 
         self.rope_parameters = config.rope_scaling
 
@@ -1233,6 +1522,15 @@ class DeepseekV4Model(nn.Module):
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
         self.config = config
+        self.quant_config = quant_config
+        self.fp8_buffer_quant_config = DeepseekV4FP8Config(
+            is_checkpoint_fp8_serialized=True,
+            activation_scheme="dynamic",
+            weight_block_size=[128, 128],
+        )
+        self.fp8_buffer_quant_config._resolved_expert_dtype = getattr(
+            config, "expert_dtype", "fp4"
+        )
 
         self.vocab_size = config.vocab_size
         self.hc_eps = config.hc_eps
@@ -1367,6 +1665,8 @@ class DeepseekV4Model(nn.Module):
             # (param_name, shard_name, shard_id)
             ("gate_up_proj", "w1", 0),
             ("gate_up_proj", "w3", 1),
+            ("gate_up_proj", "gate_proj", 0),
+            ("gate_up_proj", "up_proj", 1),
             ("attn.fused_wqa_wkv", "attn.wq_a", 0),
             ("attn.fused_wqa_wkv", "attn.wkv", 1),
             ("compressor.fused_wkv_wgate", "compressor.wkv", 0),
@@ -1385,8 +1685,67 @@ class DeepseekV4Model(nn.Module):
 
         # Pre-compute expert mapping ONCE.
         expert_mapping = self.get_expert_mapping()
+        first_layer = next(iter(islice(self.layers, self.start_layer, self.end_layer)))
+        local_expert_ids = range(
+            first_layer.ffn.experts_start_idx, first_layer.ffn.experts_end_idx
+        )
+        buffered_quant_linears: dict[str, _DeepseekV4BufferedQuantLinear] = {}
 
         for name, loaded_weight in weights:
+            buffered_fp8_linear = _get_deepseek_v4_deferred_fp8_linear_spec(name)
+            if buffered_fp8_linear is not None:
+                target_name, component, shard_id = buffered_fp8_linear
+                if is_pp_missing_parameter(target_name, self):
+                    continue
+                if target_name not in params_dict:
+                    raise ValueError(
+                        f"DeepSeek V4 deferred FP8 tensor {name!r} mapped to "
+                        f"{target_name!r}, but that parameter does not exist."
+                    )
+                buffered_loader = buffered_quant_linears.get(target_name)
+                if buffered_loader is None:
+                    target_module = self.get_submodule(target_name.removesuffix(".weight"))
+                    buffered_loader = _make_deepseek_v4_quant_linear_clone(
+                        target_name=target_name,
+                        target_module=target_module,
+                        target_weight=params_dict[target_name],
+                        quant_config=self.fp8_buffer_quant_config,
+                        components=("weight", "weight_scale_inv"),
+                        shard_ids=(0, 1)
+                        if isinstance(target_module, MergedColumnParallelLinear)
+                        else None,
+                    )
+                    buffered_quant_linears[target_name] = buffered_loader
+                buffered_loader.load(component, loaded_weight, shard_id)
+                continue
+
+            buffered_linear = _get_deepseek_v4_deferred_quant_linear_spec(name)
+            if buffered_linear is not None:
+                target_name, component, shard_id = buffered_linear
+                if is_pp_missing_parameter(target_name, self):
+                    continue
+                if target_name not in params_dict:
+                    raise ValueError(
+                        f"DeepSeek V4 deferred quantized tensor {name!r} mapped to "
+                        f"{target_name!r}, but that parameter does not exist."
+                    )
+                buffered_loader = buffered_quant_linears.get(target_name)
+                if buffered_loader is None:
+                    target_module = self.get_submodule(target_name.removesuffix(".weight"))
+                    buffered_loader = _make_deepseek_v4_quant_linear_clone(
+                        target_name=target_name,
+                        target_module=target_module,
+                        target_weight=params_dict[target_name],
+                        quant_config=self.quant_config,
+                        components=("qweight", "qzeros", "scales"),
+                        shard_ids=(0, 1)
+                        if isinstance(target_module, MergedColumnParallelLinear)
+                        else None,
+                    )
+                    buffered_quant_linears[target_name] = buffered_loader
+                buffered_loader.load(component, loaded_weight, shard_id)
+                continue
+
             for param_name, weight_name, shard_id in stacked_params_mapping:
                 # Skip non-stacked layers and experts (experts handled below).
                 if ".experts." in name:
@@ -1413,36 +1772,16 @@ class DeepseekV4Model(nn.Module):
                         and loaded_weight.dtype == torch.float8_e8m0fnu
                     ):
                         loaded_weight = loaded_weight.view(torch.uint8)
-                    skip_expert_weight = False
-                    for mapping in expert_mapping:
-                        param_name, weight_name, expert_id, shard_id = mapping
-                        if weight_name not in name:
-                            continue
-                        name_mapped = name.replace(weight_name, param_name)
-                        if is_pp_missing_parameter(name_mapped, self):
-                            skip_expert_weight = True
-                            break
-                        param = params_dict[name_mapped]
-                        # We should ask the weight loader to return success or not
-                        # here since otherwise we may skip experts with other
-                        # available replicas.
-                        weight_loader = typing.cast(
-                            Callable[..., bool], param.weight_loader
-                        )
-                        success = weight_loader(
-                            param,
-                            loaded_weight,
-                            name_mapped,
-                            shard_id=shard_id,
-                            expert_id=expert_id,
-                            return_success=True,
-                        )
-                        if success:
-                            name = name_mapped
-                            break
-                    if skip_expert_weight:
-                        continue
-                    loaded_params.add(name_mapped)
+                    name_mapped = _load_deepseek_v4_expert_weight(
+                        model=self,
+                        name=name,
+                        loaded_weight=loaded_weight,
+                        expert_mapping=expert_mapping,
+                        params_dict=params_dict,
+                        is_local_expert_id=local_expert_ids.__contains__,
+                    )
+                    if name_mapped is not None:
+                        loaded_params.add(name_mapped)
                     continue
                 elif "attn_sink" in name:
                     if is_pp_missing_parameter(name, self):
@@ -1463,6 +1802,10 @@ class DeepseekV4Model(nn.Module):
                     loaded_params.add(name)
                     continue
 
+        for target_name, buffered_loader in buffered_quant_linears.items():
+            buffered_loader.finalize()
+            loaded_params.add(target_name)
+
         return loaded_params
 
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
@@ -1471,13 +1814,18 @@ class DeepseekV4Model(nn.Module):
             return make_deepseek_v4_expert_params_mapping(self.config.n_routed_experts)
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)
-        return FusedMoE.make_expert_params_mapping(
-            self,
-            ckpt_gate_proj_name="w1",
-            ckpt_down_proj_name="w2",
-            ckpt_up_proj_name="w3",
-            num_experts=self.config.n_routed_experts,
-        )
+        mappings: list[tuple[str, str, int, str]] = []
+        for gate_name, down_name, up_name in _iter_deepseek_v4_expert_name_families():
+            mappings.extend(
+                FusedMoE.make_expert_params_mapping(
+                    self,
+                    ckpt_gate_proj_name=gate_name,
+                    ckpt_down_proj_name=down_name,
+                    ckpt_up_proj_name=up_name,
+                    num_experts=self.config.n_routed_experts,
+                )
+            )
+        return mappings
 
     def finalize_mega_moe_weights(self) -> None:
         for layer in islice(self.layers, self.start_layer, self.end_layer):
@@ -1504,13 +1852,41 @@ def hc_head(
 
 
 def _make_deepseek_v4_weights_mapper(expert_dtype: str) -> WeightsMapper:
+    hf_layout_regex: dict[re.Pattern, str | None] = {
+        re.compile(r"^(?:embed|head)\.(?:qweight|qzeros|scales)$"): None,
+        re.compile(r"^head\.weight$"): "lm_head.weight",
+        re.compile(r"^model\.hc_head\.hc_(fn|base|scale)$"): r"model.hc_head_\1",
+        re.compile(r"\.input_layernorm\.weight$"): ".attn_norm.weight",
+        re.compile(r"\.post_attention_layernorm\.weight$"): ".ffn_norm.weight",
+        re.compile(r"\.attn_hc\.fn$"): ".hc_attn_fn",
+        re.compile(r"\.attn_hc\.base$"): ".hc_attn_base",
+        re.compile(r"\.attn_hc\.scale$"): ".hc_attn_scale",
+        re.compile(r"\.ffn_hc\.fn$"): ".hc_ffn_fn",
+        re.compile(r"\.ffn_hc\.base$"): ".hc_ffn_base",
+        re.compile(r"\.ffn_hc\.scale$"): ".hc_ffn_scale",
+        re.compile(
+            r"\.self_attn\.compressor\.indexer\.(gate_proj|kv_proj|kv_norm|position_bias)"
+        ): r".attn.indexer.compressor.\1",
+        re.compile(r"\.self_attn\.compressor\.indexer\."): ".attn.indexer.",
+        re.compile(r"\.self_attn\.compressor\."): ".attn.compressor.",
+        re.compile(r"\.self_attn\.q_a_proj\."): ".attn.wq_a.",
+        re.compile(r"\.self_attn\.kv_proj\."): ".attn.wkv.",
+        re.compile(r"\.self_attn\.q_a_norm\."): ".attn.q_norm.",
+        re.compile(r"\.self_attn\.q_b_proj\."): ".attn.wq_b.",
+        re.compile(r"\.self_attn\.kv_norm\."): ".attn.kv_norm.",
+        re.compile(r"\.self_attn\.o_a_proj\."): ".attn.wo_a.",
+        re.compile(r"\.self_attn\.o_b_proj\."): ".attn.wo_b.",
+        re.compile(r"\.self_attn\.sinks$"): ".attn.attn_sink",
+    }
     if expert_dtype == "fp4":
         # MXFP4 experts use Mxfp4MoEMethod, which registers scales as
         # ``w{1,2,3}_weight_scale`` (no _inv suffix). FP8 linear and
         # shared experts use Fp8LinearMethod's block scales, which
         # register as ``weight_scale_inv``.
         scale_regex = {
-            re.compile(r"(\.experts\.\d+\.w[123])\.scale$"): r"\1.weight_scale",
+            re.compile(
+                r"(\.experts\.\d+\.(?:w[123]|gate_proj|down_proj|up_proj))\.scale$"
+            ): r"\1.weight_scale",
             re.compile(r"\.scale$"): ".weight_scale_inv",
         }
     else:
@@ -1528,14 +1904,24 @@ def _make_deepseek_v4_weights_mapper(expert_dtype: str) -> WeightsMapper:
             "hc_head": "model.hc_head",
             "mtp.": "model.mtp.",
         },
-        orig_to_new_regex=scale_regex,
+        orig_to_new_regex={**hf_layout_regex, **scale_regex},
         orig_to_new_suffix={
-            "head.weight": "lm_head.weight",
             "embed.weight": "embed_tokens.weight",
             ".ffn.gate.bias": ".ffn.gate.e_score_correction_bias",
         },
         orig_to_new_substr={
+            ".mlp.": ".ffn.",
+            ".attn.indexer.q_b_proj.": ".attn.indexer.wq_b.",
+            ".attn.indexer.kv_norm.": ".attn.indexer.k_norm.",
+            ".attn.indexer.compressor.kv_proj.": ".attn.indexer.compressor.wkv.",
+            ".attn.indexer.compressor.gate_proj.": ".attn.indexer.compressor.wgate.",
+            ".attn.indexer.compressor.kv_norm.": ".attn.indexer.compressor.norm.",
+            ".attn.indexer.compressor.position_bias": ".attn.indexer.compressor.ape",
             ".attn.compressor.": ".attn.mla_attn.compressor.",
+            ".attn.mla_attn.compressor.kv_proj.": ".attn.mla_attn.compressor.wkv.",
+            ".attn.mla_attn.compressor.gate_proj.": ".attn.mla_attn.compressor.wgate.",
+            ".attn.mla_attn.compressor.kv_norm.": ".attn.mla_attn.compressor.norm.",
+            ".attn.mla_attn.compressor.position_bias": ".attn.mla_attn.compressor.ape",
             ".shared_experts.w2": ".shared_experts.down_proj",
         },
     )
@@ -1557,6 +1943,7 @@ class DeepseekV4ForCausalLM(nn.Module, SupportsPP):
         if expert_dtype != "fp4":
             self.hf_to_vllm_mapper = _make_deepseek_v4_weights_mapper(expert_dtype)
 
+        _maybe_patch_deepseek_v4_inc_quant_config(vllm_config.quant_config)
         self.model = self.model_cls(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
         )

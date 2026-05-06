@@ -178,6 +178,61 @@ def _allocate_deepseek_v4_wo_a_output(
     return output
 
 
+def _upcast_deepseek_v4_e8m0_to_fp32(scale: torch.Tensor) -> torch.Tensor:
+    exp_bits = scale.view(torch.uint8).to(torch.int32)
+    fp32_bits = exp_bits << 23
+    return fp32_bits.view(torch.float32)
+
+
+def _dequantize_deepseek_v4_fp8_blocks(
+    quantized: torch.Tensor,
+    scales: torch.Tensor,
+    *,
+    block_size: int = 128,
+) -> torch.Tensor:
+    if scales.dtype == torch.int32:
+        raise ValueError(
+            "Dense DeepSeek V4 wo_a fallback does not support packed INT32 "
+            "FP8 scales."
+        )
+
+    e8m0_dtype = getattr(torch, "float8_e8m0fnu", None)
+    if scales.dtype == e8m0_dtype:
+        scales = _upcast_deepseek_v4_e8m0_to_fp32(scales)
+    else:
+        scales = scales.to(torch.float32)
+
+    expanded_scales = torch.repeat_interleave(scales, block_size, dim=-1)[
+        ..., : quantized.shape[-1]
+    ]
+    return quantized.to(torch.float32) * expanded_scales
+
+
+def _deepseek_v4_dense_wo_a(
+    activations_fp8: torch.Tensor,
+    activation_scales: torch.Tensor,
+    weight: torch.Tensor,
+    *,
+    num_groups: int,
+    out_rank: int,
+    out_dtype: torch.dtype,
+) -> torch.Tensor:
+    hidden_size = activations_fp8.shape[-1]
+    expected_weight_shape = (num_groups * out_rank, hidden_size)
+    if tuple(weight.shape) != expected_weight_shape:
+        raise ValueError(
+            "Dense DeepSeek V4 wo_a fallback expected weight shape "
+            f"{expected_weight_shape}, got {tuple(weight.shape)}."
+        )
+
+    activations = _dequantize_deepseek_v4_fp8_blocks(
+        activations_fp8,
+        activation_scales,
+    )
+    grouped_weight = weight.to(torch.float32).view(num_groups, out_rank, hidden_size)
+    return torch.einsum("bgh,goh->bgo", activations, grouped_weight).to(out_dtype)
+
+
 def _dump_sparse_mla_attention_state(
     phase: str,
     prefix: str,
@@ -523,25 +578,36 @@ class DeepseekV4MultiHeadLatentAttentionWrapper(PluggableLayer):
             tma_aligned_scales=self._tma_aligned_scales,
         )
 
-        wo_a_fp8 = self.wo_a.weight
-        wo_a_scale = self.wo_a.weight_scale_inv
-
         z = _allocate_deepseek_v4_wo_a_output(
             num_tokens,
             self.n_local_groups,
             self.o_lora_rank,
-            torch.bfloat16,
+            hidden_states.dtype,
             hidden_states.device,
         )
-        torch.ops.vllm.deepseek_v4_fp8_einsum(
-            o_fp8,
-            o_scale,
-            wo_a_fp8,
-            wo_a_scale,
-            z,
-            "bhr,hdr->bhd",
-            list(self._einsum_recipe),
-        )
+        if hasattr(self.wo_a, "weight_scale_inv"):
+            wo_a_fp8 = self.wo_a.weight
+            wo_a_scale = self.wo_a.weight_scale_inv
+            torch.ops.vllm.deepseek_v4_fp8_einsum(
+                o_fp8,
+                o_scale,
+                wo_a_fp8,
+                wo_a_scale,
+                z,
+                "bhr,hdr->bhd",
+                list(self._einsum_recipe),
+            )
+        else:
+            z.copy_(
+                _deepseek_v4_dense_wo_a(
+                    o_fp8,
+                    o_scale,
+                    self.wo_a.weight,
+                    num_groups=self.n_local_groups,
+                    out_rank=self.o_lora_rank,
+                    out_dtype=z.dtype,
+                )
+            )
 
         return self.wo_b(z.flatten(1))
 
