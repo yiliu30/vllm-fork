@@ -9,6 +9,7 @@ Run `pytest tests/quantization/test_auto_round.py`.
 """
 
 import pytest
+import torch
 
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
@@ -16,10 +17,14 @@ from vllm.model_executor.layers.quantization.inc import INCConfig
 from vllm.model_executor.layers.quantization.inc.inc_linear import INCLinearMethod
 from vllm.model_executor.layers.quantization.inc.resolver import INCLayerConfig
 from vllm.model_executor.layers.quantization.inc.schemes import (
+    INCMxfp8Scheme,
     INCWna16Scheme,
     resolve_scheme,
 )
 from vllm.model_executor.layers.quantization.inc.schemes.base import INCLinearScheme
+from vllm.model_executor.layers.quantization.inc.schemes.mxfp8_linear import (
+    INCMxfp8LinearScheme,
+)
 from vllm.model_executor.layers.quantization.inc.schemes.wna16 import (
     _resolve_awq_moe,
     _resolve_gptq_moe,
@@ -41,7 +46,11 @@ MODELS = [
 )
 @pytest.mark.parametrize("model", MODELS)
 def test_auto_round(vllm_runner, model):
-    with vllm_runner(model, enforce_eager=True) as llm:
+    runner_kwargs: dict[str, object] = {"enforce_eager": True}
+    if current_platform.is_cuda():
+        runner_kwargs["gpu_memory_utilization"] = 0.5
+
+    with vllm_runner(model, **runner_kwargs) as llm:
         output = llm.generate_greedy(["The capital of France is"], max_tokens=8)
     assert output
     print(f"{output[0][1]}")
@@ -227,6 +236,39 @@ def test_inc_layer_config_mx_fp_helpers() -> None:
     assert layer_config.is_mxfp8 is False
 
 
+def test_inc_config_accepts_mxfp8_llm_compressor() -> None:
+    config = make_config(
+        weight_bits=8,
+        group_size=32,
+        sym=True,
+        packing_format="auto_round:llm_compressor",
+        data_type="mx_fp",
+    )
+
+    assert config.weight_bits == 8
+    assert config.group_size == 32
+    assert config.data_type == "mx_fp"
+    assert config.packing_format == "auto_round:llm_compressor"
+
+
+def test_inc_config_rejects_invalid_mxfp8_activation_config() -> None:
+    with pytest.raises(ValueError, match="act_dynamic=True"):
+        INCConfig.from_config(
+            {
+                "bits": 8,
+                "group_size": 32,
+                "sym": True,
+                "packing_format": "auto_round:llm_compressor",
+                "data_type": "mx_fp",
+                "act_bits": 8,
+                "act_data_type": "mx_fp",
+                "act_group_size": 32,
+                "act_sym": True,
+                "act_dynamic": False,
+            }
+        )
+
+
 def test_inc_resolve_scheme_selects_wna16() -> None:
     layer_config = INCLayerConfig(
         bits=4,
@@ -241,6 +283,22 @@ def test_inc_resolve_scheme_selects_wna16() -> None:
     scheme = resolve_scheme(layer_config)
 
     assert isinstance(scheme, INCWna16Scheme)
+
+
+def test_inc_resolve_scheme_selects_mxfp8() -> None:
+    layer_config = INCLayerConfig(
+        bits=8,
+        group_size=32,
+        sym=True,
+        packing_format="auto_round:llm_compressor",
+        backend="auto",
+        data_type="mx_fp",
+        quantized=True,
+    )
+
+    scheme = resolve_scheme(layer_config)
+
+    assert isinstance(scheme, INCMxfp8Scheme)
 
 
 class DummyLinearScheme(INCLinearScheme):
@@ -286,6 +344,76 @@ def test_inc_linear_method_delegates() -> None:
     ]
 
 
+def test_inc_mxfp8_linear_scheme_delegates_to_kernel(monkeypatch) -> None:
+    class DummyKernel:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def process_weights_after_loading(self, layer) -> None:
+            self.calls.append(("process", layer))
+
+        def apply_weights(self, layer, x, bias=None):
+            self.calls.append(("apply", layer, x, bias))
+            return "applied"
+
+    kernel = DummyKernel()
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.mxfp8_linear.init_mxfp8_linear_kernel",
+        lambda: kernel,
+    )
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.mxfp8_linear.ModelWeightParameter",
+        lambda **kwargs: torch.nn.Parameter(kwargs["data"], requires_grad=False),
+    )
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.mxfp8_linear.GroupQuantScaleParameter",
+        lambda **kwargs: torch.nn.Parameter(kwargs["data"], requires_grad=False),
+    )
+
+    scheme = INCMxfp8LinearScheme()
+    layer = torch.nn.Module()
+
+    scheme.create_weights(
+        layer=layer,
+        input_size_per_partition=64,
+        output_partition_sizes=[48, 16],
+        input_size=64,
+        output_size=64,
+        params_dtype=torch.bfloat16,
+        weight_loader=lambda *args, **kwargs: None,
+    )
+
+    assert layer.weight.shape == (64, 64)
+    assert layer.weight.dtype == torch.float8_e4m3fn
+    assert layer.weight_scale.shape == (64, 2)
+    assert layer.weight_scale.dtype == torch.uint8
+
+    scheme.process_weights_after_loading(layer)
+    result = scheme.apply_weights(layer, torch.randn(1, 64), None)
+
+    assert result == "applied"
+    assert [call[0] for call in kernel.calls] == ["process", "apply"]
+
+
+def test_inc_mxfp8_linear_scheme_requires_block_32_input(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.mxfp8_linear.init_mxfp8_linear_kernel",
+        lambda: object(),
+    )
+    scheme = INCMxfp8LinearScheme()
+
+    with pytest.raises(ValueError, match="divisible by 32"):
+        scheme.create_weights(
+            layer=torch.nn.Module(),
+            input_size_per_partition=48,
+            output_partition_sizes=[32],
+            input_size=48,
+            output_size=32,
+            params_dtype=torch.bfloat16,
+            weight_loader=lambda *args, **kwargs: None,
+        )
+
+
 def test_inc_get_quant_method_unquantized_linear_returns_unquantized() -> None:
     config = make_config(extra_config={"layer": {"bits": 16}})
     layer = object.__new__(LinearBase)
@@ -300,23 +428,23 @@ def test_inc_get_quant_method_unquantized_moe_returns_unquantized(
 ) -> None:
     """Early-exit returns UnquantizedFusedMoEMethod for FusedMoE layers
     when extra_config has bits >= 16."""
-    config = make_config(extra_config={"layer": {"bits": 16}})
-    layer = object.__new__(FusedMoE)
-    layer.moe_config = None  # UnquantizedFusedMoEMethod accepts moe_config
 
-    class DummyUnquantizedFusedMoEMethod:
-        def __init__(self, moe_config) -> None:
+    class DummyMethod:
+        def __init__(self, moe_config):
             self.moe_config = moe_config
 
     monkeypatch.setattr(
         "vllm.model_executor.layers.quantization.inc.inc.UnquantizedFusedMoEMethod",
-        DummyUnquantizedFusedMoEMethod,
+        DummyMethod,
     )
+    config = make_config(extra_config={"layer": {"bits": 16}})
+    layer = object.__new__(FusedMoE)
+    layer.moe_config = object()
 
     method = config.get_quant_method(layer, "layer")
 
-    assert isinstance(method, DummyUnquantizedFusedMoEMethod)
-    assert method.moe_config is None
+    assert isinstance(method, DummyMethod)
+    assert method.moe_config is layer.moe_config
 
 
 def test_inc_get_quant_method_linear_uses_resolved_scheme(monkeypatch) -> None:
