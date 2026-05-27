@@ -38,7 +38,6 @@ class INCConfig(QuantizationConfig):
         "auto_round:auto_awq",
         "auto_round:llm_compressor",
         "auto_round:fp8",
-        "auto-round:fp8",
     }
     SUPPORTED_BACKENDS = {
         "auto",
@@ -49,6 +48,8 @@ class INCConfig(QuantizationConfig):
         "marlin",
     }
 
+    AUTO_ROUND_QUANT_METHOD = "auto_round"
+
     MXFP8_BITS = 8
     MXFP8_GROUP_SIZE = 32
     MXFP8_DATA_TYPE = "mx_fp"
@@ -56,10 +57,7 @@ class INCConfig(QuantizationConfig):
 
     FP8_BLOCK_BITS = 8
     FP8_BLOCK_DATA_TYPE = "fp"
-    FP8_BLOCK_PACKING_FORMATS = {
-        "auto_round:fp8",
-        "auto-round:fp8",
-    }
+    FP8_BLOCK_PACKING_FORMAT = "auto_round:fp8"
     FP8_BLOCK_FMT = "e4m3"
     FP8_BLOCK_ACTIVATION_SCHEME = "dynamic"
 
@@ -179,14 +177,36 @@ class INCConfig(QuantizationConfig):
     def from_config(cls, config: dict[str, Any]) -> "INCConfig":
         quant_method = cls.get_from_keys_or(config, ["quant_method"], None)
         packing_format = cls.get_from_keys_or(config, ["packing_format"], None)
-        if packing_format is None and quant_method in cls.FP8_BLOCK_PACKING_FORMATS:
-            packing_format = quant_method
+
+        if packing_format is None and quant_method == cls.FP8_BLOCK_PACKING_FORMAT:
+            packing_format = cls.FP8_BLOCK_PACKING_FORMAT
         if packing_format is None:
             packing_format = "auto_round:auto_gptq"
 
+        raw_group_size = cls.get_from_keys(config, ["group_size"])
+        raw_weight_block_size = cls.get_from_keys_or(
+            config, ["weight_block_size"], None
+        )
+
+        if raw_weight_block_size is not None:
+            normalized_group_size = cls._normalize_group_size(raw_group_size)
+            normalized_weight_block_size = cls._normalize_group_size(
+                raw_weight_block_size
+            )
+            if normalized_group_size != normalized_weight_block_size:
+                raise ValueError(
+                    "INC block-wise FP8 requires group_size and "
+                    "weight_block_size to match, but found "
+                    f"group_size={normalized_group_size!r} and "
+                    f"weight_block_size={normalized_weight_block_size!r}."
+                )
+            group_size = normalized_weight_block_size
+        else:
+            group_size = raw_group_size
+
         quant_config = cls(
             weight_bits=cls.get_from_keys(config, ["bits"]),
-            group_size=cls.get_from_keys(config, ["group_size"]),
+            group_size=group_size,
             sym=cls.get_from_keys_or(config, ["sym"], True),
             packing_format=packing_format,
             block_name_to_quantize=cls.get_from_keys_or(
@@ -239,10 +259,10 @@ class INCConfig(QuantizationConfig):
                 )
             if not self.sym:
                 raise ValueError("INC block-wise FP8 only supports symmetric weights.")
-            if self.packing_format not in self.FP8_BLOCK_PACKING_FORMATS:
+            if self.packing_format != self.FP8_BLOCK_PACKING_FORMAT:
                 raise ValueError(
-                    "INC block-wise FP8 only supports packing_format in "
-                    f"{self.FP8_BLOCK_PACKING_FORMATS}, "
+                    "INC block-wise FP8 only supports "
+                    f"packing_format={self.FP8_BLOCK_PACKING_FORMAT!r}, "
                     f"but found {self.packing_format!r}."
                 )
             if self.backend != "auto":
@@ -258,9 +278,9 @@ class INCConfig(QuantizationConfig):
                 f"data_type={self.MXFP8_DATA_TYPE!r}."
             )
 
-        if self.packing_format in self.FP8_BLOCK_PACKING_FORMATS:
+        if self.packing_format == self.FP8_BLOCK_PACKING_FORMAT:
             raise ValueError(
-                f"packing_format={self.packing_format!r} requires "
+                f"packing_format={self.FP8_BLOCK_PACKING_FORMAT!r} requires "
                 f"data_type={self.FP8_BLOCK_DATA_TYPE!r}."
             )
 
@@ -308,6 +328,20 @@ class INCConfig(QuantizationConfig):
                     "INC block-wise FP8 only supports "
                     f"{field_name}={expected_value!r}, "
                     f"but found {field_name}={actual_value!r}."
+                )
+
+        raw_weight_block_size = self.get_from_keys_or(
+            config, ["weight_block_size"], None
+        )
+        if raw_weight_block_size is not None:
+            normalized_weight_block_size = self._normalize_group_size(
+                raw_weight_block_size
+            )
+            if normalized_weight_block_size != self.group_size:
+                raise ValueError(
+                    "INC block-wise FP8 only supports "
+                    f"weight_block_size={self.group_size!r}, "
+                    f"but found weight_block_size={normalized_weight_block_size!r}."
                 )
 
     def get_layer_config(self, layer, layer_name: str):
@@ -368,8 +402,8 @@ class INCConfig(QuantizationConfig):
         del user_quant, hf_config
 
         quant_method = hf_quant_cfg.get("quant_method", None)
-        if quant_method == "auto-round":
+        if quant_method == cls.AUTO_ROUND_QUANT_METHOD:
             return cls.get_name()
-        if quant_method in cls.FP8_BLOCK_PACKING_FORMATS:
+        if quant_method == cls.FP8_BLOCK_PACKING_FORMAT:
             return cls.get_name()
         return None

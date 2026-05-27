@@ -609,6 +609,7 @@ def test_inc_config_accepts_fp8_block_autoround() -> None:
             "quant_method": "auto_round:fp8",
             "bits": 8,
             "group_size": [128, 128],
+            "weight_block_size": [128, 128],
             "data_type": "fp",
             "act_bits": 8,
             "act_group_size": 128,
@@ -735,3 +736,24 @@ def test_inc_fp8_linear_scheme_delegates_to_fp8_linear_method(monkeypatch) -> No
         "process_weights_after_loading",
         "apply",
     ]
+
+
+def test_inc_config_rejects_mismatched_fp8_block_size() -> None:
+    with pytest.raises(ValueError, match="group_size and weight_block_size to match"):
+        INCConfig.from_config(
+            {
+                "quant_method": "auto_round:fp8",
+                "bits": 8,
+                "group_size": [128, 128],
+                "weight_block_size": [64, 128],
+                "sym": True,
+                "data_type": "fp",
+                "act_bits": 8,
+                "act_group_size": 128,
+                "act_data_type": "fp",
+                "act_dynamic": True,
+                "act_sym": True,
+                "activation_scheme": "dynamic",
+                "fmt": "e4m3",
+            }
+        )
