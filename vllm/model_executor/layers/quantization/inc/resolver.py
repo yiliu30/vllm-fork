@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class INCLayerConfig:
     bits: int
-    group_size: int
+    group_size: int | tuple[int, int]
     sym: bool
     packing_format: str
     backend: str
@@ -44,10 +44,44 @@ class INCLayerConfig:
     def is_mxfp8(self) -> bool:
         return self.data_type == "mx_fp" and self.bits == 8
 
+    @property
+    def is_fp8_block(self) -> bool:
+        return (
+            self.data_type == "fp"
+            and self.bits == 8
+            and isinstance(self.group_size, tuple)
+            and len(self.group_size) == 2
+            and self.quantized
+        )
+
 
 class INCConfigResolver:
     def __init__(self, config: "INCConfig") -> None:
         self._config = config
+
+    @staticmethod
+    def _normalize_group_size(
+        group_size: int | list[int] | tuple[int, int],
+    ) -> int | tuple[int, int]:
+        if isinstance(group_size, list):
+            if len(group_size) != 2:
+                raise ValueError(
+                    "INC block-wise FP8 requires group_size to be a 2-D "
+                    f"integer sequence, but found {group_size!r}."
+                )
+            first, second = group_size
+            return (first, second)
+
+        if isinstance(group_size, tuple):
+            if len(group_size) != 2:
+                raise ValueError(
+                    "INC block-wise FP8 requires group_size to be a 2-D "
+                    f"integer sequence, but found {group_size!r}."
+                )
+            first, second = group_size
+            return (first, second)
+
+        return group_size
 
     def resolve(self, layer: "torch.nn.Module", layer_name: str) -> INCLayerConfig:
         bits, group_size, sym = self._resolve_raw(layer, layer_name)
@@ -63,14 +97,16 @@ class INCConfigResolver:
 
     def get_layer_config(
         self, layer: "torch.nn.Module", layer_name: str
-    ) -> tuple[int, int, bool]:
+    ) -> tuple[int, int | tuple[int, int], bool]:
         layer_config = self.resolve(layer, layer_name)
         return layer_config.bits, layer_config.group_size, layer_config.sym
 
     def _resolve_raw(
         self, layer: "torch.nn.Module", layer_name: str
-    ) -> tuple[int, int, bool]:
-        def get_config(name: str, quantized: bool = True) -> tuple[int, int, bool]:
+    ) -> tuple[int, int | tuple[int, int], bool]:
+        def get_config(
+            name: str, quantized: bool = True
+        ) -> tuple[int, int | tuple[int, int], bool]:
             if not self._config.extra_config:
                 return (
                     self._config.weight_bits if quantized else 16,
@@ -82,9 +118,11 @@ class INCConfigResolver:
                 cfg = self._config.extra_config[name]
                 return (
                     cfg.get("bits", self._config.weight_bits if quantized else 16),
-                    cfg.get(
-                        "group_size",
-                        self._config.group_size if quantized else -1,
+                    self._normalize_group_size(
+                        cfg.get(
+                            "group_size",
+                            self._config.group_size if quantized else -1,
+                        )
                     ),
                     cfg.get("sym", self._config.sym if quantized else True),
                 )
@@ -103,9 +141,11 @@ class INCConfigResolver:
                                 "bits",
                                 self._config.weight_bits if quantized else 16,
                             ),
-                            cfg.get(
-                                "group_size",
-                                self._config.group_size if quantized else -1,
+                            self._normalize_group_size(
+                                cfg.get(
+                                    "group_size",
+                                    self._config.group_size if quantized else -1,
+                                )
                             ),
                             cfg.get("sym", self._config.sym if quantized else True),
                         )

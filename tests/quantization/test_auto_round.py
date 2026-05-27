@@ -17,11 +17,15 @@ from vllm.model_executor.layers.quantization.inc import INCConfig
 from vllm.model_executor.layers.quantization.inc.inc_linear import INCLinearMethod
 from vllm.model_executor.layers.quantization.inc.resolver import INCLayerConfig
 from vllm.model_executor.layers.quantization.inc.schemes import (
+    INCFp8Scheme,
     INCMxfp8Scheme,
     INCWna16Scheme,
     resolve_scheme,
 )
 from vllm.model_executor.layers.quantization.inc.schemes.base import INCLinearScheme
+from vllm.model_executor.layers.quantization.inc.schemes.fp8_linear import (
+    INCFp8LinearScheme,
+)
 from vllm.model_executor.layers.quantization.inc.schemes.mxfp8_linear import (
     INCMxfp8LinearScheme,
 )
@@ -582,3 +586,152 @@ def test_resolve_awq_moe_uses_marlin_when_supported(monkeypatch) -> None:
     assert captured["cfg"].weight_bits == 4
     assert captured["cfg"].zero_point is True
     assert captured["moe"] is DummyLayer.moe_config
+
+
+def test_inc_layer_config_fp8_block_helper() -> None:
+    layer_config = INCLayerConfig(
+        bits=8,
+        group_size=(128, 128),
+        sym=True,
+        packing_format="auto_round:fp8",
+        backend="auto",
+        data_type="fp",
+        quantized=True,
+    )
+
+    assert layer_config.is_fp8_block is True
+    assert layer_config.is_mxfp8 is False
+
+
+def test_inc_config_accepts_fp8_block_autoround() -> None:
+    config = INCConfig.from_config(
+        {
+            "quant_method": "auto_round:fp8",
+            "bits": 8,
+            "group_size": [128, 128],
+            "data_type": "fp",
+            "act_bits": 8,
+            "act_group_size": 128,
+            "act_data_type": "fp",
+            "act_dynamic": True,
+            "act_sym": True,
+            "activation_scheme": "dynamic",
+            "fmt": "e4m3",
+        }
+    )
+
+    assert config.weight_bits == 8
+    assert config.group_size == (128, 128)
+    assert config.sym is True
+    assert config.data_type == "fp"
+    assert config.packing_format == "auto_round:fp8"
+
+
+def test_inc_config_rejects_invalid_fp8_block_activation_config() -> None:
+    with pytest.raises(ValueError, match="act_group_size=128"):
+        INCConfig.from_config(
+            {
+                "quant_method": "auto_round:fp8",
+                "bits": 8,
+                "group_size": [128, 128],
+                "sym": True,
+                "data_type": "fp",
+                "act_bits": 8,
+                "act_group_size": 64,
+                "act_data_type": "fp",
+                "act_dynamic": True,
+                "act_sym": True,
+                "activation_scheme": "dynamic",
+                "fmt": "e4m3",
+            }
+        )
+
+
+def test_inc_resolve_scheme_selects_fp8_block() -> None:
+    layer_config = INCLayerConfig(
+        bits=8,
+        group_size=(128, 128),
+        sym=True,
+        packing_format="auto_round:fp8",
+        backend="auto",
+        data_type="fp",
+        quantized=True,
+    )
+
+    scheme = resolve_scheme(layer_config)
+
+    assert isinstance(scheme, INCFp8Scheme)
+
+
+def test_inc_override_quantization_method_accepts_auto_round_fp8() -> None:
+    assert (
+        INCConfig.override_quantization_method(
+            {"quant_method": "auto_round:fp8"},
+            None,
+        )
+        == "inc"
+    )
+
+
+def test_inc_fp8_linear_scheme_delegates_to_fp8_linear_method(monkeypatch) -> None:
+    class DummyFp8LinearMethod:
+        def __init__(self, quant_config) -> None:
+            self.quant_config = quant_config
+            self.marlin_input_dtype = None
+            self.calls: list[tuple] = []
+
+        def create_weights(self, *args, **kwargs) -> None:
+            self.calls.append(("create_weights", args, kwargs))
+
+        def process_weights_after_loading(self, layer) -> None:
+            self.calls.append(("process_weights_after_loading", layer))
+
+        def apply(self, layer, x, bias=None):
+            self.calls.append(("apply", layer, x, bias))
+            return "applied"
+
+    state = {}
+
+    def fake_fp8_linear_method(quant_config):
+        state["method"] = DummyFp8LinearMethod(quant_config)
+        return state["method"]
+
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.fp8_linear.Fp8LinearMethod",
+        fake_fp8_linear_method,
+    )
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.fp8_linear.get_marlin_input_dtype",
+        lambda prefix: "bf16",
+    )
+
+    scheme = INCFp8LinearScheme(
+        prefix="layers.0.self_attn.q_proj",
+        weight_block_size=(128, 128),
+    )
+    layer = torch.nn.Module()
+
+    scheme.create_weights(
+        layer=layer,
+        input_size_per_partition=128,
+        output_partition_sizes=[128],
+        input_size=128,
+        output_size=128,
+        params_dtype=torch.bfloat16,
+        weight_loader=lambda *args, **kwargs: None,
+    )
+
+    scheme.process_weights_after_loading(layer)
+    result = scheme.apply_weights(layer, torch.randn(1, 128), None)
+
+    method = state["method"]
+    assert result == "applied"
+    assert method.marlin_input_dtype == "bf16"
+    assert method.quant_config.is_checkpoint_fp8_serialized is True
+    assert method.quant_config.activation_scheme == "dynamic"
+    assert method.quant_config.weight_block_size == [128, 128]
+    assert [call[0] for call in method.calls] == [
+        "create_weights",
+        "process_weights_after_loading",
+        "apply",
+    ]
