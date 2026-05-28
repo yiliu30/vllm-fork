@@ -41,7 +41,8 @@ __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
     cvt_fp16_to_fp4(int32_t numRows, int32_t numCols, int32_t outputCols,
                     int32_t num_padded_cols, Type const* __restrict__ in,
                     float const* __restrict__ SFScale,
-                    uint32_t* __restrict__ out, uint32_t* __restrict__ SFout) {
+                    uint32_t* __restrict__ out, uint32_t* __restrict__ SFout,
+                    uint32_t sf_round_shift) {
   using PackedVec = vllm::PackedVec<Type, CVT_FP4_PACK16>;
 
   static constexpr int CVT_FP4_NUM_THREADS_PER_SF =
@@ -88,7 +89,7 @@ __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
 
       auto out_val =
           cvt_warp_fp16_to_fp4<Type, CVT_FP4_NUM_THREADS_PER_SF, UE8M0_SF>(
-              in_vec, global_scale, sf_out);
+              in_vec, global_scale, sf_out, sf_round_shift);
 
       if (valid_output) {
         if constexpr (CVT_FP4_PACK16) {
@@ -115,7 +116,8 @@ __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
                              Type const* __restrict__ in,
                              float const* __restrict__ SFScale,
                              uint32_t* __restrict__ out,
-                             uint32_t* __restrict__ SFout) {
+                             uint32_t* __restrict__ SFout,
+                             uint32_t sf_round_shift) {
   using PackedVec = PackedVec<Type, CVT_FP4_PACK16>;
 
   static constexpr int CVT_FP4_NUM_THREADS_PER_SF =
@@ -155,7 +157,7 @@ __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
 
       auto out_val =
           cvt_warp_fp16_to_fp4<Type, CVT_FP4_NUM_THREADS_PER_SF, UE8M0_SF>(
-              in_vec, global_scale, sf_out);
+              in_vec, global_scale, sf_out, sf_round_shift);
 
       if (rowIdx < numRows) {
         if constexpr (CVT_FP4_PACK16) {
@@ -227,7 +229,7 @@ void scaled_fp4_quant_sm1xxa(torch::stable::Tensor const& output,
           vllm::cvt_fp16_to_fp4<cuda_type, false><<<grid, block, 0, stream>>>(
               m, n, output_n, num_padded_cols, input_ptr, input_sf_ptr,
               reinterpret_cast<uint32_t*>(output_ptr),
-              reinterpret_cast<uint32_t*>(sf_out));
+              reinterpret_cast<uint32_t*>(sf_out), 20u);
         });
   } else {
     int num_packed_cols = output_n / CVT_FP4_ELTS_PER_THREAD;
@@ -245,7 +247,7 @@ void scaled_fp4_quant_sm1xxa(torch::stable::Tensor const& output,
                   m, n, output_n, output_sf_n_unpadded, num_packed_cols,
                   input_ptr, input_sf_ptr,
                   reinterpret_cast<uint32_t*>(output_ptr),
-                  reinterpret_cast<uint32_t*>(sf_out));
+                  reinterpret_cast<uint32_t*>(sf_out), 20u);
         });
   }
 }

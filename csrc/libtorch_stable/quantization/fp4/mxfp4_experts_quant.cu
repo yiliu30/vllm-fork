@@ -22,6 +22,7 @@
 #include <cuda_runtime_api.h>
 #include <cuda_runtime.h>
 #include <cuda_fp8.h>
+#include <cstdlib>
 
 #include <torch/csrc/stable/library.h>
 #include <torch/csrc/stable/tensor.h>
@@ -57,7 +58,8 @@ __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
                           fp4_packed_t* out, uint32_t* SFout,
                           uint32_t* input_offset_by_experts,
                           uint32_t* output_scale_offset_by_experts,
-                          int n_experts, bool low_latency) {
+                          int n_experts, bool low_latency,
+                          uint32_t sf_round_shift) {
   using PackedVec = PackedVec<Type, CVT_FP4_PACK16>;
   static_assert(sizeof(PackedVec) == sizeof(Type) * CVT_FP4_ELTS_PER_THREAD,
                 "Vec size is not matched.");
@@ -144,7 +146,7 @@ __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
     // UE8M0_SF=true for MXFP4 E8M0 scale factors
     out_pos =
         cvt_warp_fp16_to_fp4<Type, MXFP4_NUM_THREADS_PER_SF, /*UE8M0_SF=*/true>(
-            quant_input, SFScaleVal, sf_out);
+            quant_input, SFScaleVal, sf_out, sf_round_shift);
   }
 }
 
@@ -156,7 +158,7 @@ __global__ void __launch_bounds__(1024, VLLM_BLOCKS_PER_SM(1024))
                           fp4_packed_t* out, uint32_t* SFout,
                           uint32_t* input_offset_by_experts,
                           uint32_t* output_scale_offset_by_experts,
-                          int n_experts) {
+                          int n_experts, uint32_t sf_round_shift) {
   using PackedVec = PackedVec<Type, CVT_FP4_PACK16>;
   static_assert(sizeof(PackedVec) == sizeof(Type) * CVT_FP4_ELTS_PER_THREAD,
                 "Vec size is not matched.");
@@ -238,7 +240,7 @@ __global__ void __launch_bounds__(1024, VLLM_BLOCKS_PER_SM(1024))
 
     out_pos =
         cvt_warp_fp16_to_fp4<Type, MXFP4_NUM_THREADS_PER_SF, /*UE8M0_SF=*/true>(
-            quant_input, SFScaleVal, sf_out);
+            quant_input, SFScaleVal, sf_out, sf_round_shift);
   }
 }
 
@@ -247,6 +249,13 @@ void mxfp4_quant_impl(void* output, void* output_scale, void* input,
                       void* input_offset_by_experts,
                       void* output_scale_offset_by_experts, int m_topk, int k,
                       int n_experts, cudaStream_t stream) {
+  // Read VLLM_MXFP4_SF_ROUND_SHIFT env var once (cached).
+  // Default=20 (RNE), original=21 (round-up at mantissa>=0.75).
+  static uint32_t sf_round_shift = []() -> uint32_t {
+    const char* env = std::getenv("VLLM_MXFP4_SF_ROUND_SHIFT");
+    return env ? static_cast<uint32_t>(std::atoi(env)) : 20u;
+  }();
+
   int multiProcessorCount =
       get_device_attribute(cudaDevAttrMultiProcessorCount, -1);
 
@@ -274,7 +283,7 @@ void mxfp4_quant_impl(void* output, void* output_scale, void* input,
               reinterpret_cast<uint32_t*>(output_scale),
               reinterpret_cast<uint32_t*>(input_offset_by_experts),
               reinterpret_cast<uint32_t*>(output_scale_offset_by_experts),
-              n_experts);
+              n_experts, sf_round_shift);
     } else {
       mxfp4_cvt_fp16_to_fp4<T, FUSE_SILU_MUL, true>
           <<<grid, block, shared_mem_size, stream>>>(
@@ -283,7 +292,7 @@ void mxfp4_quant_impl(void* output, void* output_scale, void* input,
               reinterpret_cast<uint32_t*>(output_scale),
               reinterpret_cast<uint32_t*>(input_offset_by_experts),
               reinterpret_cast<uint32_t*>(output_scale_offset_by_experts),
-              n_experts);
+              n_experts, sf_round_shift);
     }
   } else {
     if (n_experts >= 16) {
@@ -294,7 +303,7 @@ void mxfp4_quant_impl(void* output, void* output_scale, void* input,
               reinterpret_cast<uint32_t*>(output_scale),
               reinterpret_cast<uint32_t*>(input_offset_by_experts),
               reinterpret_cast<uint32_t*>(output_scale_offset_by_experts),
-              n_experts, /* bool low_latency */ true);
+              n_experts, /* bool low_latency */ true, sf_round_shift);
     } else {
       mxfp4_cvt_fp16_to_fp4<T, FUSE_SILU_MUL, true><<<grid, block, 0, stream>>>(
           m_topk, k, reinterpret_cast<T*>(input),
@@ -302,7 +311,7 @@ void mxfp4_quant_impl(void* output, void* output_scale, void* input,
           reinterpret_cast<uint32_t*>(output_scale),
           reinterpret_cast<uint32_t*>(input_offset_by_experts),
           reinterpret_cast<uint32_t*>(output_scale_offset_by_experts),
-          n_experts, /* bool low_latency */ true);
+          n_experts, /* bool low_latency */ true, sf_round_shift);
     }
   }
 }

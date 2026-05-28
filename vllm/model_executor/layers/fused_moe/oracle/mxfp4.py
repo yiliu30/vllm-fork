@@ -85,6 +85,8 @@ class Mxfp4MoeBackend(Enum):
     CPU = "CPU"
     # Emulation
     EMULATION = "EMULATION"
+    # CUTLASS MXFP4 x MXFP4 (SM100+)
+    VLLM_CUTLASS_MXFP4 = "VLLM_CUTLASS_MXFP4"
     # Humming
     HUMMING = "HUMMING"
 
@@ -205,6 +207,13 @@ def backend_to_kernel_cls(
 
         return [AiterExperts]
 
+    elif backend == Mxfp4MoeBackend.VLLM_CUTLASS_MXFP4:
+        from vllm.model_executor.layers.fused_moe.experts.cutlass_moe import (
+            CutlassExpertsMxfp4,
+        )
+
+        return [CutlassExpertsMxfp4]
+
     elif backend == Mxfp4MoeBackend.XPU:
         from vllm.model_executor.layers.fused_moe.experts.xpu_moe import XPUExpertsMXFp4
 
@@ -255,6 +264,7 @@ def map_mxfp4_backend(runner_backend: MoEBackend) -> list[Mxfp4MoeBackend]:
         ],
         "aiter_mxfp4_fp8": [Mxfp4MoeBackend.AITER_MXFP4_FP8],
         "aiter_mxfp4_mxfp4": [Mxfp4MoeBackend.AITER_MXFP4_MXFP4],
+        "cutlass": [Mxfp4MoeBackend.VLLM_CUTLASS_MXFP4],
         "xpu": [Mxfp4MoeBackend.XPU],
         "cpu": [Mxfp4MoeBackend.CPU],
         "emulation": [Mxfp4MoeBackend.EMULATION],
@@ -323,6 +333,8 @@ def _backend_activation_key(backend: Mxfp4MoeBackend) -> QuantKey | None:
     if backend == Mxfp4MoeBackend.AITER_MXFP4_FP8:
         return kFp8StaticTensorSym
     if backend == Mxfp4MoeBackend.AITER_MXFP4_MXFP4:
+        return kMxfp4Dynamic
+    if backend == Mxfp4MoeBackend.VLLM_CUTLASS_MXFP4:
         return kMxfp4Dynamic
     return None  # BF16 activation
 
@@ -674,6 +686,7 @@ def mxfp4_round_up_hidden_size_and_intermediate_size(
     elif backend in (
         Mxfp4MoeBackend.FLASHINFER_CUTLASS_MXFP4_BF16,
         Mxfp4MoeBackend.FLASHINFER_CUTLASS_MXFP4_MXFP8,
+        Mxfp4MoeBackend.VLLM_CUTLASS_MXFP4,
     ):
         intermediate_size = round_up(intermediate_size, 128)
         hidden_size = round_up(hidden_size, 128)
@@ -978,6 +991,52 @@ def convert_gpt_oss_weight_to_mxfp4_moe_kernel_format(
                 w13_bias_swapped,
                 w2_bias,
             )
+
+    elif mxfp4_backend == Mxfp4MoeBackend.VLLM_CUTLASS_MXFP4:
+        from vllm.model_executor.layers.fused_moe.experts.cutlass_moe import (
+            swizzle_mxfp4_scales,
+        )
+
+        # CUTLASS MXFP4 kernel expects raw uint8 weights and swizzled scales.
+        # De-interleave w13 from [gate_0, up_0, gate_1, up_1, ...]
+        # to [gate_0, gate_1, ..., up_0, up_1, ...] (contiguous gate then up).
+        w13_w = w13_weight.data
+        gate_w, up_w = w13_w[:, ::2, :], w13_w[:, 1::2, :]
+        w13_deinterleaved = torch.cat([gate_w, up_w], dim=1)
+
+        # De-interleave scales similarly
+        w13_s = w13_weight_scale.data
+        gate_s, up_s = w13_s[:, ::2, :], w13_s[:, 1::2, :]
+        w13_scale_deinterleaved = torch.cat([gate_s, up_s], dim=1)
+
+        # Swizzle scales to CUTLASS tiled layout
+        E = w13_deinterleaved.shape[0]
+        w13_N = w13_scale_deinterleaved.shape[1]
+        w13_scale_K = w13_scale_deinterleaved.shape[2]
+        w13_K = w13_scale_K * 32
+
+        w2_N = w2_weight_scale.shape[1]
+        w2_scale_K = w2_weight_scale.shape[2]
+        w2_K = w2_scale_K * 32
+
+        swizzled_w13 = []
+        swizzled_w2 = []
+        for e_idx in range(E):
+            s13 = w13_scale_deinterleaved[e_idx]
+            sw13 = swizzle_mxfp4_scales(s13, w13_N, w13_K)
+            swizzled_w13.append(sw13.reshape(w13_N, w13_scale_K))
+            s2 = w2_weight_scale[e_idx]
+            sw2 = swizzle_mxfp4_scales(s2, w2_N, w2_K)
+            swizzled_w2.append(sw2.reshape(w2_N, w2_scale_K))
+
+        return (
+            w13_deinterleaved.contiguous(),
+            w2_weight.data,
+            torch.stack(swizzled_w13),
+            torch.stack(swizzled_w2),
+            w13_bias,
+            w2_bias,
+        )
 
     elif mxfp4_backend == Mxfp4MoeBackend.AITER_MXFP4_MXFP4:
         from vllm._aiter_ops import rocm_aiter_ops
@@ -1537,6 +1596,40 @@ def convert_weight_to_mxfp4_moe_kernel_format(
             w2_weight,
             w13_weight_scale,
             w2_weight_scale,
+            w13_bias,
+            w2_bias,
+        )
+    elif mxfp4_backend == Mxfp4MoeBackend.VLLM_CUTLASS_MXFP4:
+        from vllm.model_executor.layers.fused_moe.experts.cutlass_moe import (
+            swizzle_mxfp4_scales,
+        )
+
+        # Weights are already [E, 2*N, K/2] with contiguous [gate, up].
+        # Just swizzle scales to CUTLASS tiled layout.
+        E = w13_weight.shape[0]
+        w13_N = w13_weight_scale.shape[1]
+        w13_scale_K = w13_weight_scale.shape[2]
+        w13_K = w13_scale_K * 32
+
+        w2_N = w2_weight_scale.shape[1]
+        w2_scale_K = w2_weight_scale.shape[2]
+        w2_K = w2_scale_K * 32
+
+        swizzled_w13 = []
+        swizzled_w2 = []
+        for e_idx in range(E):
+            s13 = w13_weight_scale[e_idx]
+            sw13 = swizzle_mxfp4_scales(s13, w13_N, w13_K)
+            swizzled_w13.append(sw13.reshape(w13_N, w13_scale_K))
+            s2 = w2_weight_scale[e_idx]
+            sw2 = swizzle_mxfp4_scales(s2, w2_N, w2_K)
+            swizzled_w2.append(sw2.reshape(w2_N, w2_scale_K))
+
+        return (
+            w13_weight.data,
+            w2_weight.data,
+            torch.stack(swizzled_w13),
+            torch.stack(swizzled_w2),
             w13_bias,
             w2_bias,
         )
