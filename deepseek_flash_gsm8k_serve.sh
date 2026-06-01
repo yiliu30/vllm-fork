@@ -16,6 +16,7 @@ vllm serve "$MODEL" \
   --tensor-parallel-size 2 \
   --attention_config.use_fp4_indexer_cache=True \
   --moe-backend cutlass \
-  --gpu-memory-utilization 0.65 \
+  --gpu-memory-utilization 0.85 \
+  --max-model-len 1048576 \
   --port "$PORT" \
   2>&1 | tee deepseek_flash_gsm8k_serve_s21_$(date +%Y%m%d_%H%M%S).log

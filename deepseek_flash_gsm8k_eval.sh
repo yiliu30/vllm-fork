@@ -22,7 +22,7 @@ evalscope eval \
   --model "$MODEL" \
   --eval-type openai_api \
   --api-key EMPTY \
-  --datasets gsm8k \
+  --datasets mmlu_pro \
   --eval-batch-size 128 \
   --api-url "http://127.0.0.1:${PORT}/v1" \
   2>&1 | tee deepseek_flash_gsm8k_eval.log
