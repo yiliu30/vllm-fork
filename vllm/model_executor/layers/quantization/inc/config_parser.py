@@ -36,8 +36,8 @@ class INCLayerConfig:
     def is_wna16_int(self) -> bool:
         return (
             self.data_type == "int"
-            and isinstance(self.group_size, int)
             and self.quantized
+            and isinstance(self.group_size, int)
         )
 
     @property
@@ -46,7 +46,15 @@ class INCLayerConfig:
 
     @property
     def is_mxfp8(self) -> bool:
-        return self.data_type == "mx_fp" and self.bits == 8
+        return (
+            self.data_type == "mx_fp"
+            and self.bits == 8
+            and self.sym
+            and self.quantized
+            and self.packing_format == "auto_round:llm_compressor"
+            and isinstance(self.group_size, int)
+            and self.group_size == 32
+        )
 
     @property
     def is_fp8_block(self) -> bool:

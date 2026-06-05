@@ -35,6 +35,12 @@ class INCConfig(QuantizationConfig):
 
     DEFAULT_INT_PACKING_FORMAT = "auto_round:auto_gptq"
 
+    MXFP8_BITS = 8
+    MXFP8_GROUP_SIZE = 32
+    MXFP8_DATA_TYPE = "mx_fp"
+    MXFP8_PACKING_FORMAT = "auto_round:llm_compressor"
+    MXFP8_SUPPORTED_ACT_DTYPES = {"mx_fp", "mx_fp_rceil"}
+
     FP8_BLOCK_BITS = 8
     FP8_BLOCK_DATA_TYPE = "fp"
     FP8_BLOCK_PACKING_FORMAT = "auto_round:fp8"
@@ -42,10 +48,11 @@ class INCConfig(QuantizationConfig):
     FP8_BLOCK_ACTIVATION_SCHEME = "dynamic"
 
     SUPPORTED_BITS = {2, 3, 4, 8}
-    SUPPORTED_DTYPES = {"int", "fp"}
+    SUPPORTED_DTYPES = {"int", "mx_fp", "fp"}
     SUPPORTED_FORMATS = {
         DEFAULT_INT_PACKING_FORMAT,
         "auto_round:auto_awq",
+        MXFP8_PACKING_FORMAT,
         FP8_BLOCK_PACKING_FORMAT,
     }
     SUPPORTED_BACKENDS = {
@@ -129,10 +136,39 @@ class INCConfig(QuantizationConfig):
                     "INC int quantization requires scalar group_size, "
                     f"but found group_size={self.group_size!r}."
                 )
-            if self.packing_format == self.FP8_BLOCK_PACKING_FORMAT:
+            if self.packing_format in {
+                self.MXFP8_PACKING_FORMAT,
+                self.FP8_BLOCK_PACKING_FORMAT,
+            }:
                 raise ValueError(
                     f"packing_format={self.packing_format!r} is incompatible "
                     "with data_type='int'."
+                )
+            return
+
+        if self.data_type == self.MXFP8_DATA_TYPE:
+            if self.weight_bits != self.MXFP8_BITS:
+                raise ValueError(
+                    "INC MXFP8 only supports bits=8, "
+                    f"but found bits={self.weight_bits}."
+                )
+            if self.group_size != self.MXFP8_GROUP_SIZE:
+                raise ValueError(
+                    "INC MXFP8 only supports group_size=32, "
+                    f"but found group_size={self.group_size!r}."
+                )
+            if not self.sym:
+                raise ValueError("INC MXFP8 only supports symmetric weights.")
+            if self.packing_format != self.MXFP8_PACKING_FORMAT:
+                raise ValueError(
+                    "INC MXFP8 only supports "
+                    f"packing_format={self.MXFP8_PACKING_FORMAT!r}, "
+                    f"but found {self.packing_format!r}."
+                )
+            if self.backend != "auto":
+                raise ValueError(
+                    "INC MXFP8 only supports backend='auto', "
+                    f"but found backend={self.backend!r}."
                 )
             return
 
@@ -162,6 +198,12 @@ class INCConfig(QuantizationConfig):
                 )
             return
 
+        if self.packing_format == self.MXFP8_PACKING_FORMAT:
+            raise ValueError(
+                f"packing_format={self.MXFP8_PACKING_FORMAT!r} requires "
+                f"data_type={self.MXFP8_DATA_TYPE!r}."
+            )
+
         if self.packing_format == self.FP8_BLOCK_PACKING_FORMAT:
             raise ValueError(
                 f"packing_format={self.FP8_BLOCK_PACKING_FORMAT!r} requires "
@@ -169,6 +211,36 @@ class INCConfig(QuantizationConfig):
             )
 
     def _validate_raw_config(self, config: dict[str, Any]) -> None:
+        if self.data_type == self.MXFP8_DATA_TYPE:
+            expected_fields = {
+                "act_bits": self.MXFP8_BITS,
+                "act_group_size": self.MXFP8_GROUP_SIZE,
+                "act_sym": True,
+                "act_dynamic": True,
+            }
+            for field_name, expected_value in expected_fields.items():
+                actual_value = self.get_from_keys_or(
+                    config, [field_name], expected_value
+                )
+                if actual_value != expected_value:
+                    raise ValueError(
+                        "INC MXFP8 only supports "
+                        f"{field_name}={expected_value!r}, "
+                        f"but found {field_name}={actual_value!r}."
+                    )
+
+            act_data_type = self.get_from_keys_or(
+                config, ["act_data_type"], self.MXFP8_DATA_TYPE
+            )
+            if act_data_type not in self.MXFP8_SUPPORTED_ACT_DTYPES:
+                supported_act_dtypes = sorted(self.MXFP8_SUPPORTED_ACT_DTYPES)
+                raise ValueError(
+                    "INC MXFP8 only supports "
+                    f"act_data_type in {supported_act_dtypes!r}, "
+                    f"but found act_data_type={act_data_type!r}."
+                )
+            return
+
         if self.data_type != self.FP8_BLOCK_DATA_TYPE:
             return
 
@@ -235,6 +307,8 @@ class INCConfig(QuantizationConfig):
         if packing_format is None:
             if quant_method == cls.FP8_BLOCK_PACKING_FORMAT:
                 packing_format = cls.FP8_BLOCK_PACKING_FORMAT
+            elif data_type == cls.MXFP8_DATA_TYPE:
+                packing_format = cls.MXFP8_PACKING_FORMAT
             else:
                 packing_format = cls.DEFAULT_INT_PACKING_FORMAT
 
@@ -311,8 +385,11 @@ class INCConfig(QuantizationConfig):
         del user_quant, hf_config
 
         quant_method = hf_quant_cfg.get("quant_method", None)
+        packing_format = hf_quant_cfg.get("packing_format", None)
         if quant_method in cls.AUTO_ROUND_QUANT_METHODS:
             return cls.get_name()
         if quant_method == cls.FP8_BLOCK_PACKING_FORMAT:
+            return cls.get_name()
+        if packing_format == cls.MXFP8_PACKING_FORMAT:
             return cls.get_name()
         return None
