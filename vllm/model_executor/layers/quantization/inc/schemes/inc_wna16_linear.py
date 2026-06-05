@@ -277,6 +277,13 @@ class INCXPULinearBase(INCLinearScheme):
 
 
 class INCXPULinearMethod(INCXPULinearBase):
+    def __init__(self, layer_config: "INCLayerConfig") -> None:
+        super().__init__(layer_config)
+        if self.weight_bits != 4 or not self.sym:
+            raise NotImplementedError(
+                "Native XPU INC path only supports 4-bit symmetric weights."
+            )
+
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         device = layer.qweight.data.device
 
