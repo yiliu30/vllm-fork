@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-
 import torch
 
 from vllm.model_executor.kernels.linear import init_mxfp8_linear_kernel
@@ -36,7 +35,7 @@ class INCMxfp8LinearScheme(INCLinearScheme):
         params_dtype: torch.dtype,
         **extra_weight_attrs,
     ) -> None:
-        del input_size, output_size, extra_weight_attrs
+        del input_size, output_size
         if input_size_per_partition % MXFP8_BLOCK_SIZE != 0:
             raise ValueError(
                 "INC MXFP8 requires input_size_per_partition "
@@ -58,7 +57,7 @@ class INCMxfp8LinearScheme(INCLinearScheme):
             ),
             input_dim=1,
             output_dim=0,
-            weight_loader=weight_loader,
+            weight_loader=extra_weight_attrs.get("weight_loader"),
         )
         layer.register_parameter("weight", weight)
 
@@ -70,7 +69,7 @@ class INCMxfp8LinearScheme(INCLinearScheme):
             ),
             input_dim=1,
             output_dim=0,
-            weight_loader=weight_loader,
+            weight_loader=extra_weight_attrs.get("weight_loader"),
         )
         layer.register_parameter("weight_scale", weight_scale)
 
