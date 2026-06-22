@@ -54,7 +54,9 @@ def get_ark_state() -> tuple[bool, str | None, Any | None, Any | None]:
 
 class INCWNA16LinearScheme(INCLinearScheme):
     def __init__(self, layer_config: "INCLayerConfig") -> None:
+        assert isinstance(layer_config.group_size, int)
         self.layer_config = layer_config
+        self.group_size: int = layer_config.group_size
         self.inner_method = self._build_inner_method()
 
     @classmethod
@@ -81,7 +83,7 @@ class INCWNA16LinearScheme(INCLinearScheme):
         if use_marlin:
             use_marlin = check_marlin_supported(
                 gptq_type_map[(self.layer_config.bits, self.layer_config.sym)],
-                self.layer_config.group_size,
+                self.group_size,
                 has_zp=not self.layer_config.sym,
             )
 
@@ -93,7 +95,7 @@ class INCWNA16LinearScheme(INCLinearScheme):
             return AutoGPTQLinearMethod(
                 AutoGPTQConfig(
                     weight_bits=self.layer_config.bits,
-                    group_size=self.layer_config.group_size,
+                    group_size=self.group_size,
                     desc_act=False,
                     is_sym=self.layer_config.sym,
                     lm_head_quantized=False,
@@ -120,7 +122,7 @@ class INCWNA16LinearScheme(INCLinearScheme):
         if use_marlin:
             use_marlin = check_marlin_supported(
                 awq_type_map[self.layer_config.bits],
-                self.layer_config.group_size,
+                self.group_size,
                 not self.layer_config.sym,
             )
 
@@ -132,7 +134,7 @@ class INCWNA16LinearScheme(INCLinearScheme):
             return AWQMarlinLinearMethod(
                 AWQMarlinConfig(
                     weight_bits=self.layer_config.bits,
-                    group_size=self.layer_config.group_size,
+                    group_size=self.group_size,
                     zero_point=not self.layer_config.sym,
                     lm_head_quantized=False,
                     modules_to_not_convert=[],
@@ -145,7 +147,7 @@ class INCWNA16LinearScheme(INCLinearScheme):
         return AWQLinearMethod(
             AWQConfig(
                 weight_bits=self.layer_config.bits,
-                group_size=self.layer_config.group_size,
+                group_size=self.group_size,
                 zero_point=not self.layer_config.sym,
             )
         )
@@ -184,8 +186,9 @@ class INCWNA16LinearScheme(INCLinearScheme):
 
 class INCXPULinearBase(INCLinearScheme):
     def __init__(self, layer_config: "INCLayerConfig") -> None:
+        assert isinstance(layer_config.group_size, int)
         self.weight_bits = layer_config.bits
-        self.group_size = layer_config.group_size
+        self.group_size: int = layer_config.group_size
         self.sym = layer_config.sym
         self.pack_factor = 32 // self.weight_bits
 

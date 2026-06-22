@@ -103,6 +103,7 @@ class INCWna16Scheme(INCScheme):
 
 
 def _resolve_gptq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
+    assert isinstance(layer_config.group_size, int)
     from vllm.model_executor.layers.quantization.auto_gptq import (
         AutoGPTQMoEMethod,
     )
@@ -154,6 +155,7 @@ def _resolve_gptq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
 
 
 def _resolve_awq_moe(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
+    assert isinstance(layer_config.group_size, int)
     from vllm.model_executor.layers.quantization.awq_marlin import AWQMarlinMoEMethod
     from vllm.model_executor.layers.quantization.moe_wna16 import (
         MoeWNA16Config,
