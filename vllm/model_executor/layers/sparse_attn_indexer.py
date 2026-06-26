@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Custom Sparse Attention Indexer layers."""
 
+import os
+
 import torch
 
 import vllm.envs as envs
@@ -76,6 +78,104 @@ def kv_cache_as_quant_view(
             stride=(page_bytes, fp4_bytes, fp4_bytes, 1),
         )
     return kv_cache.unsqueeze(-2)
+
+
+def _prefill_topk_funnel_dense(
+    logits: torch.Tensor,
+    row_starts: torch.Tensor,
+    row_ends: torch.Tensor,
+    topk_indices: torch.Tensor,
+    topk_tokens: int,
+) -> None:
+    """Experimental dense adapter: mask ragged rows and run funnel_topk.
+
+    Keeps the same output contract as top_k_per_row_prefill:
+    - indices are local to each row's [row_start, row_end) range
+    - invalid/excess slots are -1
+    """
+    try:
+        from funnel_topk.funnel import funnel_topk
+    except Exception as exc:
+        raise RuntimeError(
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense requires "
+            "funnel_topk to be importable. Install funnel-topk or set "
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=native."
+        ) from exc
+
+    topk_indices.fill_(-1)
+    if topk_tokens <= 0 or logits.numel() == 0:
+        return
+
+    num_cols = logits.shape[1]
+    if num_cols == 0:
+        return
+
+    k = min(topk_tokens, num_cols)
+
+    starts = row_starts.to(dtype=torch.int32, device=logits.device).view(-1, 1)
+    ends = row_ends.to(dtype=torch.int32, device=logits.device).view(-1, 1)
+    cols = torch.arange(num_cols, dtype=torch.int32, device=logits.device).view(1, -1)
+
+    valid_mask = (cols >= starts) & (cols < ends)
+    masked_logits = logits.masked_fill(~valid_mask, float("-inf"))
+
+    values, abs_indices = funnel_topk(
+        masked_logits,
+        k=k,
+        dim=-1,
+        largest=True,
+        sorted=True,
+    )
+
+    local_indices = abs_indices.to(torch.int32) - starts
+    local_indices = torch.where(
+        values == float("-inf"),
+        torch.full_like(local_indices, -1, dtype=torch.int32),
+        local_indices,
+    )
+    topk_indices[:, :k] = local_indices
+
+
+def _run_prefill_topk(
+    logits: torch.Tensor,
+    row_starts: torch.Tensor,
+    row_ends: torch.Tensor,
+    topk_indices: torch.Tensor,
+    num_rows: int,
+    topk_tokens: int,
+) -> None:
+    backend = os.getenv(
+        "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND", "native"
+    ).lower()
+
+    if backend == "native":
+        ops.top_k_per_row_prefill(
+            logits,
+            row_starts,
+            row_ends,
+            topk_indices,
+            num_rows,
+            logits.stride(0),
+            logits.stride(1),
+            topk_tokens,
+        )
+        return
+
+    if backend == "funnel_dense":
+        logger.warning_once("Using funnel_dense backend for top-k prefill.")
+        _prefill_topk_funnel_dense(
+            logits=logits,
+            row_starts=row_starts,
+            row_ends=row_ends,
+            topk_indices=topk_indices,
+            topk_tokens=topk_tokens,
+        )
+        return
+
+    raise ValueError(
+        "Invalid VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND: "
+        f"{backend}. Expected one of: native, funnel_dense"
+    )
 
 
 @eager_break_during_capture
@@ -244,15 +344,13 @@ def sparse_attn_indexer(
                 chunk.token_start : chunk.token_end, :topk_tokens
             ]
 
-            ops.top_k_per_row_prefill(
-                logits,
-                chunk.cu_seqlen_ks,
-                chunk.cu_seqlen_ke,
-                topk_indices,
-                num_rows,
-                logits.stride(0),
-                logits.stride(1),
-                topk_tokens,
+            _run_prefill_topk(
+                logits=logits,
+                row_starts=chunk.cu_seqlen_ks,
+                row_ends=chunk.cu_seqlen_ke,
+                topk_indices=topk_indices,
+                num_rows=num_rows,
+                topk_tokens=topk_tokens,
             )
 
     if has_decode:
