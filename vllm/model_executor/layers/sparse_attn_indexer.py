@@ -28,6 +28,9 @@ from vllm.utils.torch_utils import (
 from vllm.v1.attention.backends.mla.indexer import (
     DeepseekV32IndexerMetadata,
 )
+from vllm.v1.attention.backends.mla.prefill_observation import (
+    record_prefill_runtime_topk,
+)
 from vllm.v1.attention.ops.common import pack_seq_triton, unpack_seq_triton
 from vllm.v1.worker.workspace import current_workspace_manager
 
@@ -159,6 +162,19 @@ def _run_prefill_topk(
             logits.stride(1),
             topk_tokens,
         )
+        # Fix: the native CUDA kernel returns position-sorted indices
+        # [0, 1, 2, ...] when rowLen <= topK (shortcut at sampler.cu:388).
+        # Sort valid indices by logit value (descending) for correctness.
+        _rs = row_starts
+        _re = row_ends
+        for _r in range(num_rows):
+            _rlen = _re[_r].item() - _rs[_r].item()
+            if _rlen <= 0:
+                continue
+            if _rlen <= topk_tokens:
+                _lrow = logits[_r, _rs[_r].item():_re[_r].item()]
+                _sorted = torch.argsort(_lrow, descending=True)
+                topk_indices[_r, :_rlen] = _sorted.to(topk_indices.dtype)
         return
 
     if backend == "funnel_dense":
@@ -352,6 +368,18 @@ def sparse_attn_indexer(
                 num_rows=num_rows,
                 topk_tokens=topk_tokens,
             )
+
+            if chunk.observation_id is not None:
+                record_prefill_runtime_topk(
+                    observation_id=chunk.observation_id,
+                    layer_name=k_cache_prefix,
+                    token_start=chunk.token_start,
+                    token_end=chunk.token_end,
+                    row_starts=chunk.cu_seqlen_ks,
+                    row_ends=chunk.cu_seqlen_ke,
+                    topk_indices=topk_indices,
+                    logits=logits,
+                )
 
     if has_decode:
         decode_metadata = attn_metadata_narrowed.decode
