@@ -50,11 +50,11 @@ def _page_score_kernel(
     stride_valid_h: tl.constexpr,
     BLOCK_D: tl.constexpr,   # tile size along head_dim
 ):
-    """One Triton program per (query_idx, head_idx).
+    """One Triton program per (query_idx, head_idx).  Q-in-registers version.
 
-    Loads the Q vector, then iterates over every K page visible to this
-    query, computing max(Q @ K_page^T) on-chip.  Scores are written to
-    out_scores[query, head, 0:num_pages].
+    Pre-loads all ceil(D/BLOCK_D) Q tiles into named register variables,
+    eliminating Q loads from the per-token inner loop.  At BLOCK_D=128
+    and D=448, this is 4 named tiles.
     """
     q_idx = tl.program_id(0)
     h_idx = tl.program_id(1)
@@ -79,50 +79,67 @@ def _page_score_kernel(
     tl.store(out_first_page_ptr + q_idx * stride_valid_m + h_idx * stride_valid_h,
              first_page)
 
-    # Weight factor for this (query, head)
     w = tl.load(weights_ptr + q_idx * stride_w_m + h_idx * stride_w_h)
+    q_base = q_ptr + q_idx * stride_q_m + h_idx * stride_q_h
 
-    # Iterate over pages
+    # Pre-load all Q tiles into explicit named register variables
+    # (avoids Python-list-in-Triton issues)
+    q_t0 = tl.load(q_base + tl.arange(0, BLOCK_D),
+                   mask=tl.arange(0, BLOCK_D) < D,
+                   other=0.0).to(tl.float32)
+    q_t1 = None; q_t2 = None; q_t3 = None
+    d128_offs = 128 + tl.arange(0, BLOCK_D)
+    d128_mask = d128_offs < D
+    if D > BLOCK_D:
+        q_t1 = tl.load(q_base + d128_offs, mask=d128_mask,
+                       other=0.0).to(tl.float32)
+    d256_offs = 256 + tl.arange(0, BLOCK_D)
+    d256_mask = d256_offs < D
+    if D > 2 * BLOCK_D:
+        q_t2 = tl.load(q_base + d256_offs, mask=d256_mask,
+                       other=0.0).to(tl.float32)
+    d384_offs = 384 + tl.arange(0, BLOCK_D)
+    d384_mask = d384_offs < D
+    if D > 3 * BLOCK_D:
+        q_t3 = tl.load(q_base + d384_offs, mask=d384_mask,
+                       other=0.0).to(tl.float32)
+
     for pg in range(num_pages):
         logical_page = first_page + pg
         page_start = logical_page * storage_block_size
         page_end = tl.minimum(page_start + storage_block_size, k_end)
 
         page_max: tl.float32 = -float("inf")  # type: ignore
-        if page_end > page_start:
-            for tok_off in range(page_end - page_start):
-                tok_idx = page_start + tok_off  # absolute K position
+        num_tokens = page_end - page_start
+        if num_tokens > 0:
+            for tok_off in range(num_tokens):
+                tok_idx = page_start + tok_off
                 k_base = k_ptr + tok_idx * stride_k_n
                 k_s = tl.load(k_scale_ptr + tok_idx)
 
-                dot = tl.sum(
-                    tl.load(q_ptr + q_idx * stride_q_m + h_idx * stride_q_h
-                            + tl.arange(0, BLOCK_D),
-                            mask=tl.arange(0, BLOCK_D) < D, other=0.0)
-                    .to(tl.float32)
-                    * tl.load(k_base + tl.arange(0, BLOCK_D),
-                              mask=tl.arange(0, BLOCK_D) < D, other=0.0)
-                    .to(tl.float32)
-                    * k_s
-                )
-                for d_start in range(BLOCK_D, D, BLOCK_D):
-                    d_offs = d_start + tl.arange(0, BLOCK_D)
-                    d_mask = d_offs < D
+                # Dot product: tile 0
+                k_t0 = tl.load(k_base + tl.arange(0, BLOCK_D),
+                               mask=tl.arange(0, BLOCK_D) < D,
+                               other=0.0).to(tl.float32)
+                dot = tl.sum(q_t0 * k_t0 * k_s)
 
-                    q_tile = tl.load(
-                        q_ptr + q_idx * stride_q_m + h_idx * stride_q_h + d_offs,
-                        mask=d_mask, other=0.0,
-                    ).to(tl.float32)
-                    k_tile = tl.load(
-                        k_base + d_offs, mask=d_mask, other=0.0,
-                    ).to(tl.float32)
-
-                    dot += tl.sum(q_tile * k_tile * k_s)
+                # Tiles 1-3 (if head_dim > BLOCK_D)
+                if q_t1 is not None:
+                    k_t1 = tl.load(k_base + d128_offs, mask=d128_mask,
+                                   other=0.0).to(tl.float32)
+                    dot += tl.sum(q_t1 * k_t1 * k_s)
+                if q_t2 is not None:
+                    k_t2 = tl.load(k_base + d256_offs, mask=d256_mask,
+                                   other=0.0).to(tl.float32)
+                    dot += tl.sum(q_t2 * k_t2 * k_s)
+                if q_t3 is not None:
+                    k_t3 = tl.load(k_base + d384_offs, mask=d384_mask,
+                                   other=0.0).to(tl.float32)
+                    dot += tl.sum(q_t3 * k_t3 * k_s)
 
                 score = dot * w
                 page_max = tl.maximum(page_max, score)
 
-        # Store at relative position pg (0-indexed within valid pages)
         tl.store(out_scores_ptr + q_idx * stride_out_m
                  + h_idx * stride_out_h + pg, page_max)
 
