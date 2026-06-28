@@ -28,6 +28,9 @@ from vllm.utils.torch_utils import (
 from vllm.v1.attention.backends.mla.indexer import (
     DeepseekV32IndexerMetadata,
 )
+from vllm.v1.attention.backends.mla.triton_fused_page_topk import (
+    fused_qk_page_topk_with_tokens,
+)
 from vllm.v1.attention.backends.mla.prefill_observation import (
     record_prefill_runtime_topk,
 )
@@ -139,6 +142,50 @@ def _prefill_topk_funnel_dense(
     topk_indices[:, :k] = local_indices
 
 
+def _fill_topk_from_fused_candidates(
+    candidate_scores: torch.Tensor,   # [M, max_candidates] fp32
+    candidate_indices: torch.Tensor,  # [M, max_candidates] int32
+    cu_seqlen_ks: torch.Tensor,       # [M] int32
+    cu_seqlen_ke: torch.Tensor,       # [M] int32
+    topk_indices: torch.Tensor,       # [M, topk_tokens] int32 (output)
+    topk_tokens: int,
+) -> None:
+    """Convert fused kernel candidate output to legacy topk_indices format.
+
+    candidate_indices are absolute positions in K-space [0, N).
+    topk_indices must be local positions relative to cu_seqlen_ks (row start).
+    """
+    M = candidate_scores.shape[0]
+    device = candidate_scores.device
+    topk_indices.fill_(-1)
+
+    ks = cu_seqlen_ks.unsqueeze(-1)  # [M, 1]
+    ke = cu_seqlen_ke.unsqueeze(-1)  # [M, 1]
+
+    # Make candidates local
+    local_indices = candidate_indices - ks  # [M, max_candidates]
+
+    # Mask: local index must be in [0, ke - ks), and score must be finite
+    valid = (
+        (local_indices >= 0)
+        & (local_indices < (ke - ks))
+        & torch.isfinite(candidate_scores)
+    )
+
+    masked_scores = candidate_scores.masked_fill(~valid, float("-inf"))
+    k_final = min(topk_tokens, masked_scores.shape[1])
+    _, top_k = torch.topk(masked_scores, k=k_final, dim=-1)
+
+    # Gather local indices
+    gathered = local_indices.gather(dim=-1, index=top_k)
+    # Only keep entries that came from valid positions
+    valid_k = valid.gather(dim=-1, index=top_k)
+    topk_indices[:, :k_final] = torch.where(
+        valid_k, gathered.to(torch.int32),
+        torch.full_like(gathered, -1).to(torch.int32),
+    )
+
+
 def _run_prefill_topk(
     logits: torch.Tensor,
     row_starts: torch.Tensor,
@@ -162,19 +209,6 @@ def _run_prefill_topk(
             logits.stride(1),
             topk_tokens,
         )
-        # Fix: the native CUDA kernel returns position-sorted indices
-        # [0, 1, 2, ...] when rowLen <= topK (shortcut at sampler.cu:388).
-        # Sort valid indices by logit value (descending) for correctness.
-        _rs = row_starts
-        _re = row_ends
-        for _r in range(num_rows):
-            _rlen = _re[_r].item() - _rs[_r].item()
-            if _rlen <= 0:
-                continue
-            if _rlen <= topk_tokens:
-                _lrow = logits[_r, _rs[_r].item():_re[_r].item()]
-                _sorted = torch.argsort(_lrow, descending=True)
-                topk_indices[_r, :_rlen] = _sorted.to(topk_indices.dtype)
         return
 
     if backend == "funnel_dense":
@@ -188,9 +222,101 @@ def _run_prefill_topk(
         )
         return
 
+    if backend == "fused_page":
+        _prefill_topk_fused_page(
+            logits=logits,
+            row_starts=row_starts,
+            row_ends=row_ends,
+            topk_indices=topk_indices,
+            topk_tokens=topk_tokens,
+        )
+        return
+
     raise ValueError(
         "Invalid VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND: "
-        f"{backend}. Expected one of: native, funnel_dense"
+        f"{backend}. Expected one of: native, funnel_dense, fused_page"
+    )
+
+
+def _prefill_topk_fused_page(
+    logits: torch.Tensor,
+    row_starts: torch.Tensor,
+    row_ends: torch.Tensor,
+    topk_indices: torch.Tensor,
+    topk_tokens: int,
+    storage_block_size: int = 64,
+    top_p: int = 16,
+) -> None:
+    """Page-level top-k: select top-P pages, then top tokens within each page.
+
+    Replaces the per-token topk CUDA kernel with a two-level selection:
+    1. Compute max-per-page score → select top-P pages
+    2. Within selected pages, select top tokens by score
+
+    Vectorized implementation — no Python row-level loops.
+    """
+    M, N = logits.shape
+    device = logits.device
+    assert topk_indices.shape == (M, topk_tokens)
+    assert topk_indices.dtype == torch.int32
+
+    topk_indices.fill_(-1)
+
+    # 1. Pad logits to page-aligned width and compute max per (row, page)
+    num_pages_total = (N + storage_block_size - 1) // storage_block_size
+    padded_len = num_pages_total * storage_block_size
+    padded = torch.full(
+        (M, padded_len), float("-inf"), dtype=torch.float32, device=device,
+    )
+    padded[:, :N] = logits
+
+    # max per page: reshape → [M, num_pages_total, storage_block_size] → max
+    page_max = padded.view(M, num_pages_total, storage_block_size).max(dim=-1).values
+    # page_max: [M, num_pages_total]
+
+    # 2. Mask pages outside each row's valid range and select top-P
+    first_page = (row_starts // storage_block_size).clamp(min=0)
+    k_end_ceil = (row_ends + storage_block_size - 1) // storage_block_size
+    page_mask = (
+        torch.arange(num_pages_total, device=device).unsqueeze(0)
+        >= first_page.unsqueeze(1)
+    ) & (
+        torch.arange(num_pages_total, device=device).unsqueeze(0)
+        < k_end_ceil.unsqueeze(1)
+    )
+
+    masked_scores = page_max.masked_fill(~page_mask, float("-inf"))
+    k_pages = min(top_p, num_pages_total)
+    _, top_page_idx = torch.topk(masked_scores, k=k_pages, dim=-1)
+    # top_page_idx: [M, k_pages] — logical page indices per row
+
+    # 3. Build token mask from selected pages (vectorized, loop only over P)
+    token_selected = torch.zeros(M, N, dtype=torch.bool, device=device)
+    col_idx = torch.arange(N, device=device).unsqueeze(0)  # [1, N]
+
+    for p in range(k_pages):
+        page_ids = top_page_idx[:, p]  # [M]
+        sel_start = (page_ids * storage_block_size).unsqueeze(1)  # [M, 1]
+        sel_end = torch.minimum(
+            (page_ids + 1) * storage_block_size,
+            row_ends,
+        ).unsqueeze(1)  # [M, 1]
+
+        # Each row: tokens in [sel_start, sel_end) are selected
+        token_selected |= (col_idx >= sel_start) & (col_idx < sel_end)
+
+    # 4. Mask logits to only selected tokens, then topk
+    masked_logits = logits.masked_fill(~token_selected, float("-inf"))
+    k_final = min(topk_tokens, N)
+    _, selected_tokens = torch.topk(masked_logits, k=k_final, dim=-1)
+
+    # Convert absolute indices to local (row-relative)
+    local_indices = selected_tokens - row_starts.unsqueeze(-1)
+    valid_mask = (selected_tokens >= row_starts.unsqueeze(-1)) & \
+                 (selected_tokens < row_ends.unsqueeze(-1))
+    topk_indices[:, :k_final] = torch.where(
+        valid_mask, local_indices.to(torch.int32),
+        torch.full_like(local_indices, -1, dtype=torch.int32),
     )
 
 
@@ -324,62 +450,105 @@ def sparse_attn_indexer(
                 if q_scale is not None
                 else None
             )
-            # DeepGEMM scalar-type tags (zero-copy): MXFP4 values → int8
-            # (kPackedFP4), scales → int32 squeezed to 1-D kv_sf / 2-D q_sf.
-            if use_fp4_cache:
-                q_slice_cast = q_slice.view(torch.int8)
-                k_quant_cast = k_quant.view(torch.int8)
-                k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
-            else:
-                q_slice_cast = q_slice
-                k_quant_cast = k_quant
-                k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
-            if current_platform.is_xpu():
-                if q_scale_slice is not None:
-                    raise RuntimeError("XPU fp8_mqa_logits does not support FP4 Q")
-                logits = torch.ops.vllm.xpu_fp8_mqa_logits(
-                    q_slice_cast,
-                    k_quant_cast,
-                    k_scale_cast,
-                    weights[chunk.token_start : chunk.token_end],
-                    chunk.cu_seqlen_ks,
-                    chunk.cu_seqlen_ke,
-                )
-            else:
-                logits = fp8_fp4_mqa_logits(
-                    (q_slice_cast, q_scale_slice),
-                    (k_quant_cast, k_scale_cast),
-                    weights[chunk.token_start : chunk.token_end],
-                    chunk.cu_seqlen_ks,
-                    chunk.cu_seqlen_ke,
-                    clean_logits=False,
-                )
-            num_rows = logits.shape[0]
 
             topk_indices = topk_indices_buffer[
                 chunk.token_start : chunk.token_end, :topk_tokens
             ]
 
-            _run_prefill_topk(
-                logits=logits,
-                row_starts=chunk.cu_seqlen_ks,
-                row_ends=chunk.cu_seqlen_ke,
-                topk_indices=topk_indices,
-                num_rows=num_rows,
-                topk_tokens=topk_tokens,
-            )
+            # Check if fused_page backend is enabled
+            prefill_topk_backend = os.getenv(
+                "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND", "native"
+            ).lower()
 
-            if chunk.observation_id is not None:
-                record_prefill_runtime_topk(
-                    observation_id=chunk.observation_id,
-                    layer_name=k_cache_prefix,
-                    token_start=chunk.token_start,
-                    token_end=chunk.token_end,
+            if prefill_topk_backend == "fused_page":
+                # Fused path: skip DeepGEMM dense logits, use Triton
+                # page-scoring + partial per-token scores
+                if use_fp4_cache:
+                    q_slice_cast = q_slice.view(torch.int8)
+                    k_quant_cast = k_quant.view(torch.int8)
+                    k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
+                else:
+                    q_slice_cast = q_slice
+                    k_quant_cast = k_quant
+                    k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+
+                chunk_weights = weights[chunk.token_start : chunk.token_end]
+                page_ids, candidate_scores, candidate_indices = \
+                    fused_qk_page_topk_with_tokens(
+                        q_slice_cast,
+                        k_quant_cast,
+                        k_scale_cast,
+                        chunk_weights,
+                        chunk.cu_seqlen_ks,
+                        chunk.cu_seqlen_ke,
+                        top_p=16,
+                        storage_block_size=64,
+                    )
+                # page_ids: [M, H, 16], candidate_indices: [M, H, 1024]
+                # H=1 for MLA, squeeze head dim for topk indices format
+                _fill_topk_from_fused_candidates(
+                    candidate_scores[:, 0, :],   # [M, 1024]
+                    candidate_indices[:, 0, :],  # [M, 1024]
+                    chunk.cu_seqlen_ks,          # [M]
+                    chunk.cu_seqlen_ke,          # [M]
+                    topk_indices,                # [M, topk_tokens]
+                    topk_tokens,
+                )
+            else:
+                # DeepGEMM scalar-type tags (zero-copy): MXFP4 values → int8
+                # (kPackedFP4), scales → int32 squeezed to 1-D kv_sf / 2-D q_sf.
+                if use_fp4_cache:
+                    q_slice_cast = q_slice.view(torch.int8)
+                    k_quant_cast = k_quant.view(torch.int8)
+                    k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
+                else:
+                    q_slice_cast = q_slice
+                    k_quant_cast = k_quant
+                    k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+                if current_platform.is_xpu():
+                    if q_scale_slice is not None:
+                        raise RuntimeError("XPU fp8_mqa_logits does not support FP4 Q")
+                    logits = torch.ops.vllm.xpu_fp8_mqa_logits(
+                        q_slice_cast,
+                        k_quant_cast,
+                        k_scale_cast,
+                        weights[chunk.token_start : chunk.token_end],
+                        chunk.cu_seqlen_ks,
+                        chunk.cu_seqlen_ke,
+                    )
+                else:
+                    logits = fp8_fp4_mqa_logits(
+                        (q_slice_cast, q_scale_slice),
+                        (k_quant_cast, k_scale_cast),
+                        weights[chunk.token_start : chunk.token_end],
+                        chunk.cu_seqlen_ks,
+                        chunk.cu_seqlen_ke,
+                        clean_logits=False,
+                    )
+                num_rows = logits.shape[0]
+
+                _run_prefill_topk(
+                    logits=logits,
                     row_starts=chunk.cu_seqlen_ks,
                     row_ends=chunk.cu_seqlen_ke,
                     topk_indices=topk_indices,
-                    logits=logits,
+                    num_rows=num_rows,
+                    topk_tokens=topk_tokens,
                 )
+
+                if chunk.observation_id is not None:
+                    record_prefill_runtime_topk(
+                        observation_id=chunk.observation_id,
+                        layer_name=k_cache_prefix,
+                        token_start=chunk.token_start,
+                        token_end=chunk.token_end,
+                        row_starts=chunk.cu_seqlen_ks,
+                        row_ends=chunk.cu_seqlen_ke,
+                        topk_indices=topk_indices,
+                        logits=logits,
+                    )
+
+            # Fused_page: skip observation (no dense logits, scores unavailable)
 
     if has_decode:
         decode_metadata = attn_metadata_narrowed.decode
