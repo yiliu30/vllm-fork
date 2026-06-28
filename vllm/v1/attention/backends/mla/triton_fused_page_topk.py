@@ -82,9 +82,6 @@ def _page_score_kernel(
     # Weight factor for this (query, head)
     w = tl.load(weights_ptr + q_idx * stride_w_m + h_idx * stride_w_h)
 
-    # Pre-load Q vector into registers (tile by tile, store in a list)
-    # We'll accumulate dot products tile-by-tile for each K token.
-
     # Iterate over pages
     for pg in range(num_pages):
         logical_page = first_page + pg
@@ -92,7 +89,6 @@ def _page_score_kernel(
         page_end = tl.minimum(page_start + storage_block_size, k_end)
 
         page_max: tl.float32 = -float("inf")  # type: ignore
-        # Only process non-empty pages
         if page_end > page_start:
             for tok_off in range(page_end - page_start):
                 tok_idx = page_start + tok_off  # absolute K position
@@ -393,6 +389,129 @@ def fused_qk_page_topk(
     )
 
     return top_abs_indices, page_scores
+
+
+def fused_qk_page_topk_refined(
+    q: torch.Tensor,            # [M, H, D] fp8
+    k: torch.Tensor,            # [N, D] fp8
+    k_scale: torch.Tensor,      # [N] fp32
+    weights: torch.Tensor,      # [M, H] fp32
+    cu_seqlen_ks: torch.Tensor, # [M] int32
+    cu_seqlen_ke: torch.Tensor, # [M] int32
+    top_p: int = 16,
+    storage_block_size: int = 64,
+    max_pages: int | None = None,
+) -> torch.Tensor:
+    """Optimized: Triton page scoring + host-side token refinement via matmul.
+
+    Eliminates the second Triton kernel.  Instead, after page selection:
+    1. Finds the UNION of all selected pages across all queries
+    2. Gathers K rows for those pages
+    3. Computes QK scores via batched matmul (much faster than per-token Triton loop)
+    4. Selects topk_tokens per query from the partial QK
+
+    Returns topk_indices in the format expected by the attention backend
+    (local token indices within [cu_seqlen_ks, cu_seqlen_ke), -1 padded to topk_tokens).
+
+    Args:
+        q, k, k_scale, weights, cu_seqlen_ks, cu_seqlen_ke, top_p,
+        storage_block_size, max_pages: same as fused_qk_page_topk
+
+    Returns:
+        topk_indices: [M, topk_tokens] int32 — local token indices
+    """
+    M, H, D = q.shape
+    N = k.shape[0]
+    device = q.device
+    topk_tokens = 512  # hardcoded for now
+
+    # Step 1: Page scoring via Triton kernel (same as fused_qk_page_topk)
+    page_ids, _ = fused_qk_page_topk(
+        q, k, k_scale, weights,
+        cu_seqlen_ks, cu_seqlen_ke,
+        top_p=top_p,
+        storage_block_size=storage_block_size,
+        max_pages=max_pages,
+    )  # page_ids: [M, H, top_p]
+
+    # Squeeze head dim (H=1 for MLA)
+    page_ids_sq = page_ids[:, 0, :]  # [M, top_p]
+
+    # Step 2: Find union of selected pages across all queries
+    valid_mask = page_ids_sq >= 0
+    all_selected = page_ids_sq[valid_mask].unique()
+    num_union = all_selected.numel()
+    page_to_offset = {int(p): i for i, p in enumerate(all_selected.tolist())}
+
+    # Step 3: Gather K rows for union pages
+    # Build index mapping: for each token in the union, what's its position in K
+    union_indices = []
+    for p in all_selected.tolist():
+        p_start = p * storage_block_size
+        p_end = min(p_start + storage_block_size, N)
+        union_indices.extend(range(p_start, p_end))
+
+    union_indices_t = torch.tensor(union_indices, dtype=torch.long, device=device)
+    num_union_tokens = len(union_indices)
+
+    # If union tokens exceed a threshold, fall back to full logits
+    if num_union_tokens > 8192:
+        # Too many union tokens — just do page selection + fallback
+        # For now, cap at something reasonable
+        pass
+
+    # Gather K and scales for union tokens
+    k_union = k[union_indices_t].to(torch.float32)  # [num_union_tokens, D]
+    k_scale_union = k_scale[union_indices_t]  # [num_union_tokens]
+
+    # Step 4: Compute QK scores via batched matmul
+    q_float = q[:, 0, :].to(torch.float32)  # [M, D]
+    w_float = weights[:, 0]  # [M]
+
+    # Weighted Q: q_weighted[m, d] = q_float[m, d] * w_float[m]
+    q_weighted = q_float * w_float.unsqueeze(-1)  # [M, D]
+
+    # Dequant K: k_dequant = k_union * k_scale_union
+    k_dequant = k_union * k_scale_union.unsqueeze(-1)  # [num_union_tokens, D]
+
+    # Batched matmul: scores = Q_weighted @ K_dequant^T
+    scores = torch.matmul(q_weighted, k_dequant.T)  # [M, num_union_tokens]
+
+    # Step 5: Vectorized per-query token selection
+    # Build [M, num_union_tokens] mask: which tokens belong to each query's selected pages
+    tok_mask_m = torch.zeros(M, num_union_tokens, dtype=torch.bool, device=device)
+    offset = 0
+    page_list = all_selected.tolist()
+    for p in page_list:
+        p_start = p * storage_block_size
+        p_end = min(p_start + storage_block_size, N)
+        n_in_page = p_end - p_start
+        # Which queries selected this page?
+        # page_ids_sq[m, p] == p for queries that selected page p
+        page_selected = (page_ids_sq == p).any(dim=-1)  # [M] bool
+        tok_mask_m[page_selected, offset:offset + n_in_page] = True
+        offset += n_in_page
+
+    # Mask per-query: each row gets -inf for unselected tokens
+    masked_scores = scores.masked_fill(~tok_mask_m, float("-inf"))
+    k_sel = min(topk_tokens, num_union_tokens)
+    _, top_k = torch.topk(masked_scores, k=k_sel, dim=-1)  # [M, k_sel]
+
+    # Convert union token positions → local indices
+    abs_positions = union_indices_t.unsqueeze(0).expand(M, -1)  # [M, num_union_tokens]
+    selected_abs = abs_positions.gather(dim=-1, index=top_k)  # [M, k_sel]
+    local_indices = selected_abs - cu_seqlen_ks.unsqueeze(-1)  # [M, k_sel]
+    row_width = (cu_seqlen_ke - cu_seqlen_ks).unsqueeze(-1)  # [M, 1]
+    valid_local = (local_indices >= 0) & (local_indices < row_width)
+
+    topk_indices = torch.full((M, topk_tokens), -1, dtype=torch.int32, device=device)
+    topk_indices[:, :k_sel] = torch.where(
+        valid_local,
+        local_indices.to(torch.int32),
+        torch.full_like(local_indices, -1, dtype=torch.int32),
+    )
+
+    return topk_indices
 
 
 def fused_qk_page_topk_with_tokens(

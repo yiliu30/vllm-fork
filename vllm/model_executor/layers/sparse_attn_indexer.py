@@ -29,7 +29,7 @@ from vllm.v1.attention.backends.mla.indexer import (
     DeepseekV32IndexerMetadata,
 )
 from vllm.v1.attention.backends.mla.triton_fused_page_topk import (
-    fused_qk_page_topk_with_tokens,
+    fused_qk_page_topk_refined,
 )
 from vllm.v1.attention.backends.mla.prefill_observation import (
     record_prefill_runtime_topk,
@@ -462,7 +462,7 @@ def sparse_attn_indexer(
 
             if prefill_topk_backend == "fused_page":
                 # Fused path: skip DeepGEMM dense logits, use Triton
-                # page-scoring + partial per-token scores
+                # page-scoring + host-side batched matmul token refinement
                 if use_fp4_cache:
                     q_slice_cast = q_slice.view(torch.int8)
                     k_quant_cast = k_quant.view(torch.int8)
@@ -473,27 +473,17 @@ def sparse_attn_indexer(
                     k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
 
                 chunk_weights = weights[chunk.token_start : chunk.token_end]
-                page_ids, candidate_scores, candidate_indices = \
-                    fused_qk_page_topk_with_tokens(
-                        q_slice_cast,
-                        k_quant_cast,
-                        k_scale_cast,
-                        chunk_weights,
-                        chunk.cu_seqlen_ks,
-                        chunk.cu_seqlen_ke,
-                        top_p=16,
-                        storage_block_size=64,
-                    )
-                # page_ids: [M, H, 16], candidate_indices: [M, H, 1024]
-                # H=1 for MLA, squeeze head dim for topk indices format
-                _fill_topk_from_fused_candidates(
-                    candidate_scores[:, 0, :],   # [M, 1024]
-                    candidate_indices[:, 0, :],  # [M, 1024]
-                    chunk.cu_seqlen_ks,          # [M]
-                    chunk.cu_seqlen_ke,          # [M]
-                    topk_indices,                # [M, topk_tokens]
-                    topk_tokens,
-                )
+                fused_topk = fused_qk_page_topk_refined(
+                    q_slice_cast,
+                    k_quant_cast,
+                    k_scale_cast,
+                    chunk_weights,
+                    chunk.cu_seqlen_ks,
+                    chunk.cu_seqlen_ke,
+                    top_p=16,
+                    storage_block_size=64,
+                )  # returns [M, topk_tokens]
+                topk_indices[:] = fused_topk[:]  # copy into buffer slice
             else:
                 # DeepGEMM scalar-type tags (zero-copy): MXFP4 values → int8
                 # (kPackedFP4), scales → int32 squeezed to 1-D kv_sf / 2-D q_sf.
