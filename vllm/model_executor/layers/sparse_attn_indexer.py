@@ -29,6 +29,7 @@ from vllm.v1.attention.backends.mla.indexer import (
     DeepseekV32IndexerMetadata,
 )
 from vllm.v1.attention.backends.mla.triton_fused_page_topk import (
+    fused_qk_page_topk,
     fused_qk_page_topk_refined,
 )
 from vllm.v1.attention.backends.mla.prefill_observation import (
@@ -140,6 +141,46 @@ def _prefill_topk_funnel_dense(
         local_indices,
     )
     topk_indices[:, :k] = local_indices
+
+
+def _expand_pages_to_tokens(
+    page_ids: torch.Tensor,          # [M, H, top_p] int32
+    cu_seqlen_ks: torch.Tensor,      # [M] int32
+    topk_indices: torch.Tensor,      # [M, max_tokens] int32 (output)
+    storage_block_size: int = 64,
+) -> None:
+    """Expand selected logical pages to token indices.
+
+    Each page contributes up to storage_block_size tokens. Indices are made
+    local (relative to cu_seqlen_ks).  The output buffer may be narrower than
+    P * storage_block_size — in that case we take a proportional share from
+    each page.
+    """
+    M, H, top_p = page_ids.shape
+    max_tokens = topk_indices.shape[1]
+    device = page_ids.device
+    topk_indices.fill_(-1)
+
+    # How many tokens can we take from each page?
+    tokens_per_page = max_tokens // top_p  # e.g. 512 // 16 = 32
+    if tokens_per_page <= 0:
+        tokens_per_page = 1
+
+    for m in range(M):
+        ks = int(cu_seqlen_ks[m])
+        slot = 0
+        for p in range(top_p):
+            logical_page = int(page_ids[m, 0, p])
+            if logical_page < 0 or slot >= max_tokens:
+                break
+            page_start = logical_page * storage_block_size
+            n_tokens = min(tokens_per_page, max_tokens - slot)
+            for tok_off in range(n_tokens):
+                abs_pos = page_start + tok_off
+                local_idx = abs_pos - ks
+                if local_idx >= 0:
+                    topk_indices[m, slot] = local_idx
+                slot += 1
 
 
 def _fill_topk_from_fused_candidates(
@@ -461,8 +502,7 @@ def sparse_attn_indexer(
             ).lower()
 
             if prefill_topk_backend == "fused_page":
-                # Fused path: skip DeepGEMM dense logits, use Triton
-                # page-scoring + host-side batched matmul token refinement
+                # Fused path: skip DeepGEMM dense logits
                 if use_fp4_cache:
                     q_slice_cast = q_slice.view(torch.int8)
                     k_quant_cast = k_quant.view(torch.int8)
@@ -473,7 +513,7 @@ def sparse_attn_indexer(
                     k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
 
                 chunk_weights = weights[chunk.token_start : chunk.token_end]
-                fused_topk = fused_qk_page_topk_refined(
+                page_ids, _ = fused_qk_page_topk(
                     q_slice_cast,
                     k_quant_cast,
                     k_scale_cast,
@@ -482,8 +522,31 @@ def sparse_attn_indexer(
                     chunk.cu_seqlen_ke,
                     top_p=16,
                     storage_block_size=64,
-                )  # returns [M, topk_tokens]
-                topk_indices[:] = fused_topk[:]  # copy into buffer slice
+                )  # page_ids: [M, H, 16]
+
+                page_mode = os.getenv(
+                    "VLLM_SPARSE_INDEXER_PAGE_MODE", "0"
+                ) == "1"
+                if page_mode:
+                    # Page expansion: all tokens from selected pages
+                    # (no token scoring needed — attention does real QK)
+                    _expand_pages_to_tokens(
+                        page_ids, chunk.cu_seqlen_ks,
+                        topk_indices, storage_block_size=64,
+                    )
+                else:
+                    # Token refinement: host matmul for token scores
+                    fused_topk = fused_qk_page_topk_refined(
+                        q_slice_cast,
+                        k_quant_cast,
+                        k_scale_cast,
+                        chunk_weights,
+                        chunk.cu_seqlen_ks,
+                        chunk.cu_seqlen_ke,
+                        top_p=16,
+                        storage_block_size=64,
+                    )  # returns [M, topk_tokens]
+                    topk_indices[:] = fused_topk[:]
             else:
                 # DeepGEMM scalar-type tags (zero-copy): MXFP4 values → int8
                 # (kPackedFP4), scales → int32 squeezed to 1-D kv_sf / 2-D q_sf.
