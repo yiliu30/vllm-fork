@@ -183,6 +183,31 @@ def _expand_pages_to_tokens(
                 slot += 1
 
 
+def logits_to_page_scores(
+    logits: torch.Tensor,        # [M, N]
+    row_starts: torch.Tensor,    # [M]
+    row_ends: torch.Tensor,      # [M]
+    storage_block_size: int = 64,
+) -> torch.Tensor:
+    """Compute max-per-page score from logits (vectorized)."""
+    M, N = logits.shape
+    device = logits.device
+    num_pages_total = (N + storage_block_size - 1) // storage_block_size
+    padded_len = num_pages_total * storage_block_size
+    padded = torch.full((M, padded_len), float("-inf"), dtype=torch.float32, device=device)
+    padded[:, :N] = logits
+    page_max = padded.view(M, num_pages_total, storage_block_size).max(dim=-1).values
+    # Mask pages outside valid range
+    first_page = (row_starts // storage_block_size).clamp(min=0)
+    last_page = (row_ends + storage_block_size - 1) // storage_block_size
+    page_mask = (
+        torch.arange(num_pages_total, device=device).unsqueeze(0) >= first_page.unsqueeze(1)
+    ) & (
+        torch.arange(num_pages_total, device=device).unsqueeze(0) < last_page.unsqueeze(1)
+    )
+    return page_max.masked_fill(~page_mask, float("-inf"))
+
+
 def _fill_topk_from_fused_candidates(
     candidate_scores: torch.Tensor,   # [M, max_candidates] fp32
     candidate_indices: torch.Tensor,  # [M, max_candidates] int32
@@ -538,23 +563,49 @@ def sparse_attn_indexer(
                         q_slice_cast = q_slice
                         k_quant_cast = k_quant
                         k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
-                    logits = fp8_fp4_mqa_logits(
-                        (q_slice_cast, q_scale_slice),
-                        (k_quant_cast, k_scale_cast),
-                        weights[chunk.token_start : chunk.token_end],
-                        chunk.cu_seqlen_ks,
-                        chunk.cu_seqlen_ke,
-                        clean_logits=False,
-                    )
-                    num_rows = logits.shape[0]
-                    _run_prefill_topk(
-                        logits=logits,
-                        row_starts=chunk.cu_seqlen_ks,
-                        row_ends=chunk.cu_seqlen_ke,
-                        topk_indices=topk_indices,
-                        num_rows=num_rows,
-                        topk_tokens=topk_tokens,
-                    )
+
+                    all_page_tokens = os.getenv(
+                        "VLLM_SPARSE_INDEXER_ALL_PAGE_TOKENS", "0"
+                    ) == "1"
+                    if all_page_tokens:
+                        # Page selection only — expand to all tokens within pages
+                        # (no topk-512 filtering, attention scores all page tokens)
+                        logits = fp8_fp4_mqa_logits(
+                            (q_slice_cast, q_scale_slice),
+                            (k_quant_cast, k_scale_cast),
+                            weights[chunk.token_start : chunk.token_end],
+                            chunk.cu_seqlen_ks,
+                            chunk.cu_seqlen_ke,
+                            clean_logits=False,
+                        )
+                        # Use logits for page scoring, then expand pages to tokens
+                        page_max = logits_to_page_scores(
+                            logits, chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
+                            storage_block_size=64,
+                        )
+                        _, page_ids = torch.topk(page_max, k=16, dim=-1)
+                        _expand_pages_to_tokens(
+                            page_ids.unsqueeze(1), chunk.cu_seqlen_ks,
+                            topk_indices, storage_block_size=64,
+                        )
+                    else:
+                        logits = fp8_fp4_mqa_logits(
+                            (q_slice_cast, q_scale_slice),
+                            (k_quant_cast, k_scale_cast),
+                            weights[chunk.token_start : chunk.token_end],
+                            chunk.cu_seqlen_ks,
+                            chunk.cu_seqlen_ke,
+                            clean_logits=False,
+                        )
+                        num_rows = logits.shape[0]
+                        _run_prefill_topk(
+                            logits=logits,
+                            row_starts=chunk.cu_seqlen_ks,
+                            row_ends=chunk.cu_seqlen_ke,
+                            topk_indices=topk_indices,
+                            num_rows=num_rows,
+                            topk_tokens=topk_tokens,
+                        )
                     if chunk.observation_id is not None:
                         record_prefill_runtime_topk(
                             observation_id=chunk.observation_id,
