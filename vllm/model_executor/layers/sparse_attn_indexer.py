@@ -189,21 +189,32 @@ def logits_to_page_scores(
     row_ends: torch.Tensor,      # [M]
     storage_block_size: int = 64,
 ) -> torch.Tensor:
-    """Compute max-per-page score from logits (vectorized)."""
+    """Compute max-per-page score from logits (view-based, no copy)."""
     M, N = logits.shape
     device = logits.device
-    num_pages_total = (N + storage_block_size - 1) // storage_block_size
-    padded_len = num_pages_total * storage_block_size
-    padded = torch.full((M, padded_len), float("-inf"), dtype=torch.float32, device=device)
-    padded[:, :N] = logits
-    page_max = padded.view(M, num_pages_total, storage_block_size).max(dim=-1).values
+    num_pages = (N + storage_block_size - 1) // storage_block_size
+    num_full = N // storage_block_size
+    page_max = torch.empty(M, num_pages, dtype=torch.float32, device=device)
+    # Full pages: reshape view [M, num_full, 64] → max (no copy)
+    if num_full > 0:
+        page_max[:, :num_full] = (
+            logits[:, :num_full * storage_block_size]
+            .view(M, num_full, storage_block_size)
+            .max(dim=-1).values
+        )
+    # Partial last page
+    partial = N % storage_block_size
+    if partial > 0:
+        page_max[:, -1] = logits[:, -partial:].max(dim=-1).values
+    elif num_full < num_pages:
+        page_max[:, -1] = float("-inf")
     # Mask pages outside valid range
     first_page = (row_starts // storage_block_size).clamp(min=0)
     last_page = (row_ends + storage_block_size - 1) // storage_block_size
     page_mask = (
-        torch.arange(num_pages_total, device=device).unsqueeze(0) >= first_page.unsqueeze(1)
+        torch.arange(num_pages, device=device).unsqueeze(0) >= first_page.unsqueeze(1)
     ) & (
-        torch.arange(num_pages_total, device=device).unsqueeze(0) < last_page.unsqueeze(1)
+        torch.arange(num_pages, device=device).unsqueeze(0) < last_page.unsqueeze(1)
     )
     return page_max.masked_fill(~page_mask, float("-inf"))
 
@@ -569,24 +580,12 @@ def sparse_attn_indexer(
                     ) == "1"
                     if all_page_tokens:
                         # Page selection only — expand to all tokens within pages
-                        # (no topk-512 filtering, attention scores all page tokens)
-                        logits = fp8_fp4_mqa_logits(
-                            (q_slice_cast, q_scale_slice),
-                            (k_quant_cast, k_scale_cast),
-                            weights[chunk.token_start : chunk.token_end],
-                            chunk.cu_seqlen_ks,
-                            chunk.cu_seqlen_ke,
-                            clean_logits=False,
-                        )
-                        # Use logits for page scoring, then expand pages to tokens
-                        page_max = logits_to_page_scores(
-                            logits, chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
-                            storage_block_size=64,
-                        )
-                        _, page_ids = torch.topk(page_max, k=16, dim=-1)
-                        _expand_pages_to_tokens(
-                            page_ids.unsqueeze(1), chunk.cu_seqlen_ks,
-                            topk_indices, storage_block_size=64,
+                        # WIP: _expand_pages_to_tokens has a Python row loop
+                        # that causes worker hangs with >7000 queries.
+                        # Needs vectorized implementation.
+                        raise NotImplementedError(
+                            "ALL_PAGE_TOKENS not yet working — needs "
+                            "vectorized _expand_pages_to_tokens"
                         )
                     else:
                         logits = fp8_fp4_mqa_logits(
