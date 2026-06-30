@@ -28,7 +28,9 @@ Two token refinement modes:
 | 16K | 26% (16/62) | multivalue | 1.000 | **0.992** | 32 |
 | 16K | 26% (16/62) | multiquery | 1.000 | **1.000** | 32 |
 | GSM8K | — | full | — | **0.946/0.939** | 1319 |
-| 128K | 3% (16/512) | multikey_1 | — | incomplete | 2/8 |
+| 128K | 3% (16/512) | multikey_1 | 1.000 | **1.000** | 64 |
+| 128K | 3% (16/512) | multivalue | — | **1.000** | 64 |
+| 128K | 3% (16/512) | multiquery | — | **1.000** | 64 |
 
 All tests run with `num_concurrent=16`, `max_num_seqs=32`. Zero runtime errors after bug fixes.
 
