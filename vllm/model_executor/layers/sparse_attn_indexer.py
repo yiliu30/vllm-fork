@@ -502,51 +502,70 @@ def sparse_attn_indexer(
             ).lower()
 
             if prefill_topk_backend == "fused_page":
-                # Fused path: skip DeepGEMM dense logits
-                if use_fp4_cache:
-                    q_slice_cast = q_slice.view(torch.int8)
-                    k_quant_cast = k_quant.view(torch.int8)
-                    k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
-                else:
-                    q_slice_cast = q_slice
-                    k_quant_cast = k_quant
-                    k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
-
-                chunk_weights = weights[chunk.token_start : chunk.token_end]
-                page_ids, _ = fused_qk_page_topk(
-                    q_slice_cast,
-                    k_quant_cast,
-                    k_scale_cast,
-                    chunk_weights,
-                    chunk.cu_seqlen_ks,
-                    chunk.cu_seqlen_ke,
-                    top_p=16,
-                    storage_block_size=64,
-                )  # page_ids: [M, H, 16]
-
                 page_mode = os.getenv(
                     "VLLM_SPARSE_INDEXER_PAGE_MODE", "0"
                 ) == "1"
+
                 if page_mode:
-                    # Page expansion: all tokens from selected pages
-                    # (no token scoring needed — attention does real QK)
+                    # Triton page scorer + page expansion (no logits needed)
+                    if use_fp4_cache:
+                        q_slice_cast = q_slice.view(torch.int8)
+                        k_quant_cast = k_quant.view(torch.int8)
+                        k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
+                    else:
+                        q_slice_cast = q_slice
+                        k_quant_cast = k_quant
+                        k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+                    chunk_weights = weights[chunk.token_start : chunk.token_end]
+                    page_ids, _ = fused_qk_page_topk(
+                        q_slice_cast, k_quant_cast, k_scale_cast,
+                        chunk_weights,
+                        chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
+                        top_p=16, storage_block_size=64,
+                    )
                     _expand_pages_to_tokens(
                         page_ids, chunk.cu_seqlen_ks,
                         topk_indices, storage_block_size=64,
                     )
                 else:
-                    # Token refinement: host matmul for token scores
-                    fused_topk = fused_qk_page_topk_refined(
-                        q_slice_cast,
-                        k_quant_cast,
-                        k_scale_cast,
-                        chunk_weights,
+                    # Keep DeepGEMM logits, use page-level topk from logits
+                    # (no Triton — just host-side page aggregation)
+                    if use_fp4_cache:
+                        q_slice_cast = q_slice.view(torch.int8)
+                        k_quant_cast = k_quant.view(torch.int8)
+                        k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
+                    else:
+                        q_slice_cast = q_slice
+                        k_quant_cast = k_quant
+                        k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+                    logits = fp8_fp4_mqa_logits(
+                        (q_slice_cast, q_scale_slice),
+                        (k_quant_cast, k_scale_cast),
+                        weights[chunk.token_start : chunk.token_end],
                         chunk.cu_seqlen_ks,
                         chunk.cu_seqlen_ke,
-                        top_p=16,
-                        storage_block_size=64,
-                    )  # returns [M, topk_tokens]
-                    topk_indices[:] = fused_topk[:]
+                        clean_logits=False,
+                    )
+                    num_rows = logits.shape[0]
+                    _run_prefill_topk(
+                        logits=logits,
+                        row_starts=chunk.cu_seqlen_ks,
+                        row_ends=chunk.cu_seqlen_ke,
+                        topk_indices=topk_indices,
+                        num_rows=num_rows,
+                        topk_tokens=topk_tokens,
+                    )
+                    if chunk.observation_id is not None:
+                        record_prefill_runtime_topk(
+                            observation_id=chunk.observation_id,
+                            layer_name=k_cache_prefix,
+                            token_start=chunk.token_start,
+                            token_end=chunk.token_end,
+                            row_starts=chunk.cu_seqlen_ks,
+                            row_ends=chunk.cu_seqlen_ke,
+                            topk_indices=topk_indices,
+                            logits=logits,
+                        )
             else:
                 # DeepGEMM scalar-type tags (zero-copy): MXFP4 values → int8
                 # (kPackedFP4), scales → int32 squeezed to 1-D kv_sf / 2-D q_sf.
