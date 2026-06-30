@@ -31,6 +31,7 @@ Two token refinement modes:
 | 128K | 3% (16/512) | multikey_1 | 1.000 | **1.000** | 64 |
 | 128K | 3% (16/512) | multivalue | — | **1.000** | 64 |
 | 128K | 3% (16/512) | multiquery | — | **1.000** | 64 |
+| **1M** | **0.1% (16/16384)** | **multivalue** | — | **0.950** | **5** |
 
 All tests run with `num_concurrent=16`, `max_num_seqs=32`. Zero runtime errors after bug fixes.
 
@@ -43,6 +44,12 @@ All tests run with `num_concurrent=16`, `max_num_seqs=32`. Zero runtime errors a
 | 128K | 512 | ~20 min | ~10 min |
 
 128K slow due to O(pages × tokens × dims) per query in Triton scalar loop — 220B ops per layer per request. The Q-reg optimization helps (~4x Q bandwidth) but doesn't change the fundamental complexity.
+
+### 1M Context — 95% accuracy with 0.1% page coverage
+
+At 1M tokens (16,384 pages), P=16 selects just 0.1% of pages. Yet the page-level selector
+preserves 95% accuracy on multivalue. The indexer's U-shaped page preference means that
+the important pages (beginning + end) always fit within P=16, regardless of context length.
 
 ## Known Limitations
 
