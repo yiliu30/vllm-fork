@@ -149,38 +149,43 @@ def _expand_pages_to_tokens(
     topk_indices: torch.Tensor,      # [M, max_tokens] int32 (output)
     storage_block_size: int = 64,
 ) -> None:
-    """Expand selected logical pages to token indices.
-
-    Each page contributes up to storage_block_size tokens. Indices are made
-    local (relative to cu_seqlen_ks).  The output buffer may be narrower than
-    P * storage_block_size — in that case we take a proportional share from
-    each page.
-    """
+    """Expand selected logical pages to token indices — fully vectorized."""
     M, H, top_p = page_ids.shape
     max_tokens = topk_indices.shape[1]
     device = page_ids.device
     topk_indices.fill_(-1)
 
-    # How many tokens can we take from each page?
-    tokens_per_page = max_tokens // top_p  # e.g. 512 // 16 = 32
+    # Squeeze head dim (H=1 for MLA)
+    pages = page_ids[:, 0, :]  # [M, top_p]
+
+    # How many tokens from each page?
+    tokens_per_page = max_tokens // top_p
     if tokens_per_page <= 0:
         tokens_per_page = 1
 
-    for m in range(M):
-        ks = int(cu_seqlen_ks[m])
-        slot = 0
-        for p in range(top_p):
-            logical_page = int(page_ids[m, 0, p])
-            if logical_page < 0 or slot >= max_tokens:
-                break
-            page_start = logical_page * storage_block_size
-            n_tokens = min(tokens_per_page, max_tokens - slot)
-            for tok_off in range(n_tokens):
-                abs_pos = page_start + tok_off
-                local_idx = abs_pos - ks
-                if local_idx >= 0:
-                    topk_indices[m, slot] = local_idx
-                slot += 1
+    # Build a lookup table: [top_p, tokens_per_page] of offsets within each page
+    tok_offs = torch.arange(tokens_per_page, device=device).unsqueeze(0)  # [1, TPP]
+
+    # For each query m, page p: absolute position = page_ids[m,p] * 64 + tok_off
+    # pages: [M, top_p] → [M, top_p, 1]
+    # tok_offs: [1, TPP] → [1, 1, TPP]
+    abs_pos = pages.unsqueeze(-1) * storage_block_size + tok_offs.unsqueeze(0)  # [M, top_p, TPP]
+
+    # Flatten to [M, top_p * TPP] and make local
+    abs_pos = abs_pos.view(M, -1)  # [M, top_p * tokens_per_page]
+    local_idx = abs_pos - cu_seqlen_ks.unsqueeze(-1)  # [M, top_p * tokens_per_page]
+
+    # Truncate to max_tokens and write
+    n_write = min(top_p * tokens_per_page, max_tokens)
+    topk_indices[:, :n_write] = local_idx[:, :n_write].to(torch.int32)
+
+    # Invalidate entries from padding pages (page_ids < 0)
+    valid_mask = pages.unsqueeze(-1).expand(-1, -1, tokens_per_page).reshape(M, -1) >= 0
+    topk_indices[:, :n_write] = torch.where(
+        valid_mask[:, :n_write],
+        topk_indices[:, :n_write],
+        torch.full_like(topk_indices[:, :n_write], -1),
+    )
 
 
 def logits_to_page_scores(
@@ -579,13 +584,23 @@ def sparse_attn_indexer(
                         "VLLM_SPARSE_INDEXER_ALL_PAGE_TOKENS", "0"
                     ) == "1"
                     if all_page_tokens:
-                        # Page selection only — expand to all tokens within pages
-                        # WIP: _expand_pages_to_tokens has a Python row loop
-                        # that causes worker hangs with >7000 queries.
-                        # Needs vectorized implementation.
-                        raise NotImplementedError(
-                            "ALL_PAGE_TOKENS not yet working — needs "
-                            "vectorized _expand_pages_to_tokens"
+                        # Page selection + expand to all tokens (no topk-512)
+                        logits = fp8_fp4_mqa_logits(
+                            (q_slice_cast, q_scale_slice),
+                            (k_quant_cast, k_scale_cast),
+                            weights[chunk.token_start : chunk.token_end],
+                            chunk.cu_seqlen_ks,
+                            chunk.cu_seqlen_ke,
+                            clean_logits=False,
+                        )
+                        page_max = logits_to_page_scores(
+                            logits, chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
+                            storage_block_size=64,
+                        )
+                        _, page_ids = torch.topk(page_max, k=16, dim=-1)
+                        _expand_pages_to_tokens(
+                            page_ids.unsqueeze(1), chunk.cu_seqlen_ks,
+                            topk_indices, storage_block_size=64,
                         )
                     else:
                         logits = fp8_fp4_mqa_logits(
