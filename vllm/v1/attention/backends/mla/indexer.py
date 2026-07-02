@@ -23,6 +23,11 @@ from vllm.v1.attention.backend import (
     MultipleOf,
 )
 from vllm.v1.attention.backends.mla.compressor_utils import get_compressed_slot_mapping
+from vllm.v1.attention.backends.mla.prefill_observation import (
+    allocate_prefill_observation_id,
+    prefill_observation_enabled,
+    record_prefill_chunk_metadata,
+)
 from vllm.v1.attention.backends.utils import (
     split_decodes_and_prefills,
 )
@@ -176,6 +181,7 @@ class DeepseekV32IndexerPrefillChunkMetadata:
     token_start: int
     token_end: int
     num_reqs: int
+    observation_id: int | None = None
     skip_kv_gather: bool = False
 
 
@@ -547,6 +553,7 @@ class DeepseekV32IndexerMetadataBuilder(AttentionMetadataBuilder):
                     compressed_seq_lens_cpu,
                     common_attn_metadata.block_table_tensor,
                     self.compress_ratio,
+                    self.kv_cache_spec.storage_block_size,
                     query_slice=query_slice,
                     skip_kv_gather=query_slice.start > 0,
                 )
@@ -653,6 +660,7 @@ def build_prefill_chunk_metadata(
     compressed_seq_lens_cpu: torch.Tensor,
     block_table: torch.Tensor,
     compress_ratio: int,
+    storage_block_size: int,
     query_slice: slice | None = None,
     skip_kv_gather: bool = False,
 ) -> DeepseekV32IndexerPrefillChunkMetadata | None:
@@ -708,16 +716,38 @@ def build_prefill_chunk_metadata(
     else:
         token_end = query_start_loc_cpu[end_idx].item()
 
+    chunk_block_table = block_table[start_idx:end_idx]
+    observation_id = (
+        allocate_prefill_observation_id() if prefill_observation_enabled() else None
+    )
+
+    if observation_id is not None:
+        record_prefill_chunk_metadata(
+            observation_id=observation_id,
+            token_start=token_start,
+            token_end=token_end,
+            num_reqs=num_reqs,
+            total_seq_lens=total_seq_lens,
+            cu_seqlen_ks=cu_seq_len_ks,
+            cu_seqlen_ke=cu_seq_len_ke,
+            cu_seq_lens=cu_seq_lens,
+            token_to_seq=token_to_seq,
+            block_table=chunk_block_table,
+            compress_ratio=compress_ratio,
+            storage_block_size=storage_block_size,
+        )
+
     return DeepseekV32IndexerPrefillChunkMetadata(
         cu_seqlen_ks=cu_seq_len_ks,
         cu_seqlen_ke=cu_seq_len_ke,
         cu_seq_lens=cu_seq_lens,
         token_to_seq=token_to_seq,
         total_seq_lens=total_seq_lens,
-        block_table=block_table[start_idx:end_idx],
+        block_table=chunk_block_table,
         token_start=token_start,
         token_end=token_end,
         num_reqs=num_reqs,
+        observation_id=observation_id,
         skip_kv_gather=skip_kv_gather,
     )
 
