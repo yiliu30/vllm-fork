@@ -2,7 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import typing
 from collections.abc import Callable, Iterable, MutableSequence, Sequence
+from contextlib import contextmanager
 from itertools import islice
+import os
 
 import regex as re
 import torch
@@ -66,6 +68,27 @@ from vllm.models.deepseek_v4.nvidia.ops.prepare_megamoe import prepare_megamoe_i
 from vllm.sequence import IntermediateTensors
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
+
+
+_ENABLE_NVTX = os.getenv("VLLM_PROFILE_NVTX", "0") == "1"
+
+
+@contextmanager
+def _prof(name: str):
+    """Annotate profiler ranges and optionally mirror them to NVTX."""
+    with torch.profiler.record_function(name):
+        if _ENABLE_NVTX and torch.cuda.is_available():
+            torch.cuda.nvtx.range_push(name)
+            try:
+                yield
+            finally:
+                torch.cuda.nvtx.range_pop()
+        else:
+            yield
+
+
+def _layer_prof_name(layer_id: int, name: str) -> str:
+    return f"dsv4.layer_{layer_id}.{name}"
 
 
 class DeepseekV4MLP(nn.Module):
@@ -758,6 +781,7 @@ class DeepseekV4DecoderLayer(nn.Module):
         super().__init__()
 
         config = vllm_config.model_config.hf_config
+        self.layer_id = extract_layer_index(prefix)
         self.hidden_size = config.hidden_size
 
         self.rms_norm_eps = config.rms_norm_eps
@@ -891,7 +915,8 @@ class DeepseekV4DecoderLayer(nn.Module):
             norm_eps=ffn_norm_eps,
         )
 
-        x = self.ffn(x, input_ids)
+        with _prof(_layer_prof_name(self.layer_id, "mlp.forward")):
+            x = self.ffn(x, input_ids)
         return x, residual, post_mix, res_mix
 
 
@@ -1111,7 +1136,7 @@ class DeepseekV4Model(nn.Module):
                     continue
                 name = name.replace(weight_name, param_name)
 
-                if is_pp_missing_parameter(name, self):
+                if is_pp_missing_parameter(name, self) or name not in params_dict:
                     break
                 param = params_dict[name]
                 weight_loader = param.weight_loader
@@ -1134,7 +1159,10 @@ class DeepseekV4Model(nn.Module):
                         if weight_name not in name:
                             continue
                         name_mapped = name.replace(weight_name, param_name)
-                        if is_pp_missing_parameter(name_mapped, self):
+                        if (
+                            is_pp_missing_parameter(name_mapped, self)
+                            or name_mapped not in params_dict
+                        ):
                             continue
                         param = params_dict[name_mapped]
                         # We should ask the weight loader to return success or not
@@ -1157,7 +1185,7 @@ class DeepseekV4Model(nn.Module):
                     loaded_params.add(name_mapped)
                     continue
                 elif "attn_sink" in name:
-                    if is_pp_missing_parameter(name, self):
+                    if is_pp_missing_parameter(name, self) or name not in params_dict:
                         continue
                     narrow_weight = loaded_weight[head_rank_start:head_rank_end]
                     n = narrow_weight.shape[0]
@@ -1165,7 +1193,7 @@ class DeepseekV4Model(nn.Module):
                     loaded_params.add(name)
                     continue
                 else:
-                    if is_pp_missing_parameter(name, self):
+                    if is_pp_missing_parameter(name, self) or name not in params_dict:
                         continue
                     param = params_dict[name]
                     weight_loader = getattr(

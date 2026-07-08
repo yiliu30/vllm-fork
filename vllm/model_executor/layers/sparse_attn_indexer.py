@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Custom Sparse Attention Indexer layers."""
 
+from contextlib import contextmanager
+import inspect
 import os
 
 import torch
@@ -13,6 +15,7 @@ from vllm.compilation.breakable_cudagraph import eager_break_during_capture
 from vllm.forward_context import get_forward_context
 from vllm.logger import init_logger
 from vllm.model_executor.custom_op import CustomOp
+from vllm.model_executor.models.utils import extract_layer_index
 from vllm.platforms import current_platform
 from vllm.utils.deep_gemm import (
     fp8_fp4_mqa_logits,
@@ -41,9 +44,31 @@ from vllm.v1.worker.workspace import current_workspace_manager
 logger = init_logger(__name__)
 
 RADIX_TOPK_WORKSPACE_SIZE = 1024 * 1024
+_FUNNEL_TOPK_MODES = ("exact", "fast", "turbo")
 
 # MXFP4 layout: 2 values packed per byte, ue8m0 (1-byte) scale per block of 32.
 MXFP4_BLOCK_SIZE = 32
+
+
+_ENABLE_NVTX = os.getenv("VLLM_PROFILE_NVTX", "0") == "1"
+
+
+@contextmanager
+def _prof(name: str):
+    """Annotate profiler ranges and optionally mirror them to NVTX."""
+    with torch.profiler.record_function(name):
+        if _ENABLE_NVTX and torch.cuda.is_available():
+            torch.cuda.nvtx.range_push(name)
+            try:
+                yield
+            finally:
+                torch.cuda.nvtx.range_pop()
+        else:
+            yield
+
+
+def _layer_prof_name(layer_name: str, name: str) -> str:
+    return f"dsv4.layer_{extract_layer_index(layer_name)}.{name}"
 
 
 def _gather_workspace_shapes(
@@ -94,14 +119,60 @@ def _prefill_topk_funnel_dense(
     topk_indices: torch.Tensor,
     topk_tokens: int,
 ) -> None:
-    """Experimental dense adapter: mask ragged rows and run funnel_topk.
+    """Experimental funnel prefill adapter.
 
+    Prefer the ragged funnel prefill op when available, and fall back to the
+    older dense-mask + funnel_topk adapter for older funnel_topk builds.
     Keeps the same output contract as top_k_per_row_prefill:
     - indices are local to each row's [row_start, row_end) range
     - invalid/excess slots are -1
     """
+    mode = os.getenv(
+        "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE", "exact"
+    ).lower()
+    if mode not in _FUNNEL_TOPK_MODES:
+        raise ValueError(
+            "Invalid VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE: "
+            f"{mode}. Expected one of: {', '.join(_FUNNEL_TOPK_MODES)}"
+        )
+
+    try:
+        from funnel_topk import top_k_per_row_prefill_funnel
+        logger.warning_once(
+            "using funnel_topk ragged prefill op for prefill top-k "
+            "(VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense)"
+        )
+        ragged_kwargs = {}
+        if "mode" in inspect.signature(top_k_per_row_prefill_funnel).parameters:
+            ragged_kwargs["mode"] = mode
+        elif mode != "exact":
+            logger.warning_once(
+                "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE is ignored by "
+                "top_k_per_row_prefill_funnel; using the ragged funnel op "
+                "instead of the dense fallback path."
+            )
+        top_k_per_row_prefill_funnel(
+            logits,
+            row_starts,
+            row_ends,
+            topk_indices,
+            logits.shape[0],
+            logits.stride(0),
+            logits.stride(1),
+            topk_tokens,
+            **ragged_kwargs,
+        )
+        return
+    except Exception:
+        pass
+
     try:
         from funnel_topk.funnel import funnel_topk
+        logger.warning_once(
+            "using funnel_topk dense fallback for prefill top-k "
+            "(VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense), "
+            f"mode={mode}"
+        )
     except Exception as exc:
         raise RuntimeError(
             "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense requires "
@@ -126,13 +197,23 @@ def _prefill_topk_funnel_dense(
     valid_mask = (cols >= starts) & (cols < ends)
     masked_logits = logits.masked_fill(~valid_mask, float("-inf"))
 
-    values, abs_indices = funnel_topk(
-        masked_logits,
-        k=k,
-        dim=-1,
-        largest=True,
-        sorted=True,
-    )
+    funnel_kwargs = {
+        "k": k,
+        "dim": -1,
+        "largest": True,
+        "sorted": True,
+    }
+    if "mode" in inspect.signature(funnel_topk).parameters:
+        funnel_kwargs["mode"] = mode
+    elif mode != "exact":
+        raise RuntimeError(
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE requires a "
+            "funnel_topk build that supports mode=fast/turbo. Upgrade "
+            "funnel-topk or set "
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE=exact."
+        )
+
+    values, abs_indices = funnel_topk(masked_logits, **funnel_kwargs)
 
     local_indices = abs_indices.to(torch.int32) - starts
     local_indices = torch.where(
@@ -425,193 +506,310 @@ def sparse_attn_indexer(
     attn_metadata = get_forward_context().attn_metadata
     fp8_dtype = current_platform.fp8_dtype()
     k_cache_prefix = _resolve_layer_name(k_cache_prefix)
-
-    # assert isinstance(attn_metadata, dict)
-    if not isinstance(attn_metadata, dict):
-        # Reserve workspace for indexer during profiling run
-        values_spec, scales_spec = _gather_workspace_shapes(
-            total_seq_lens, head_dim, fp8_dtype, use_fp4_cache
-        )
-        current_workspace_manager().get_simultaneous(
-            values_spec,
-            scales_spec,
-            ((RADIX_TOPK_WORKSPACE_SIZE,), torch.uint8),
-        )
-
-        # Dummy allocation to simulate for peak logits tensor memory during inference.
-        # FP8 elements so elements == bytes
-        max_logits_elems = envs.VLLM_SPARSE_INDEXER_MAX_LOGITS_MB * 1024 * 1024
-        _ = torch.empty(
-            max_logits_elems, dtype=torch.uint8, device=hidden_states.device
-        )
-
-        return sparse_attn_indexer_fake(
-            hidden_states,
-            k_cache_prefix,
-            kv_cache,
-            q_quant,
-            q_scale,
-            k,
-            weights,
-            quant_block_size,
-            scale_fmt,
-            topk_tokens,
-            head_dim,
-            max_model_len,
-            total_seq_lens,
-            topk_indices_buffer,
-            skip_k_cache_insert,
-            use_fp4_cache,
-        )
-    attn_metadata_narrowed = attn_metadata[k_cache_prefix]
-    assert isinstance(attn_metadata_narrowed, DeepseekV32IndexerMetadata)
-    slot_mapping = attn_metadata_narrowed.slot_mapping
-    has_decode = attn_metadata_narrowed.num_decodes > 0
-    has_prefill = attn_metadata_narrowed.num_prefills > 0
-    num_decode_tokens = attn_metadata_narrowed.num_decode_tokens
-
-    # q_scale is required iff the FP4 cache path is enabled; the FP8 path
-    # folds the Q scale into `weights` inside fused_indexer_q_rope_quant.
-    if use_fp4_cache:
-        assert q_scale is not None, "use_fp4_cache=True requires q_scale"
-    else:
-        assert q_scale is None, "q_scale must be None when use_fp4_cache=False"
-
-    # During speculative decoding, k may be padded to the CUDA graph batch
-    # size while slot_mapping only covers actual tokens. Truncate k to avoid
-    # out-of-bounds reads in the kernel.
-    num_tokens = slot_mapping.shape[0]
-    if k is not None:
-        k = k[:num_tokens]
-
-    if not skip_k_cache_insert:
-        # scale_fmt can be None, but the function expects str
-        assert scale_fmt is not None
-        assert not use_fp4_cache, "Unfused FP4 Insert is not supported yet"
-        ops.indexer_k_quant_and_cache(
-            k,
-            kv_cache,
-            slot_mapping,
-            quant_block_size,
-            scale_fmt,
-        )
-
-    topk_indices_buffer[: hidden_states.shape[0]] = -1
-    if has_prefill:
-        prefill_metadata = attn_metadata_narrowed.prefill
-        assert prefill_metadata is not None
-
-        # Get the full shared workspace buffers once (will allocate on first use).
-        # Layout switches between FP8 (head_dim bytes + 4-byte fp32 scale) and
-        # MXFP4 (head_dim/2 bytes packed + head_dim/MXFP4_BLOCK_SIZE ue8m0
-        # scales) based on use_fp4_cache.
-        workspace_manager = current_workspace_manager()
-        values_spec, scales_spec = _gather_workspace_shapes(
-            total_seq_lens, head_dim, fp8_dtype, use_fp4_cache
-        )
-        k_quant_full, k_scale_full = workspace_manager.get_simultaneous(
-            values_spec,
-            scales_spec,
-        )
-        for chunk in prefill_metadata.chunks:
-            k_quant = k_quant_full[: chunk.total_seq_lens]
-            k_scale = k_scale_full[: chunk.total_seq_lens]
-
-            if not chunk.skip_kv_gather:
-                ops.cp_gather_indexer_k_quant_cache(
-                    kv_cache,
-                    k_quant,
-                    k_scale,
-                    chunk.block_table,
-                    chunk.cu_seq_lens,
-                )
-
-            q_slice = q_quant[chunk.token_start : chunk.token_end]
-            q_scale_slice = (
-                q_scale[chunk.token_start : chunk.token_end]
-                if q_scale is not None
-                else None
+    with _prof(_layer_prof_name(k_cache_prefix, "sparse_attn_indexer")):
+        # assert isinstance(attn_metadata, dict)
+        if not isinstance(attn_metadata, dict):
+            # Reserve workspace for indexer during profiling run
+            values_spec, scales_spec = _gather_workspace_shapes(
+                total_seq_lens, head_dim, fp8_dtype, use_fp4_cache
+            )
+            current_workspace_manager().get_simultaneous(
+                values_spec,
+                scales_spec,
+                ((RADIX_TOPK_WORKSPACE_SIZE,), torch.uint8),
             )
 
-            topk_indices = topk_indices_buffer[
-                chunk.token_start : chunk.token_end, :topk_tokens
-            ]
+            # Dummy allocation to simulate for peak logits tensor memory during inference.
+            # FP8 elements so elements == bytes
+            max_logits_elems = envs.VLLM_SPARSE_INDEXER_MAX_LOGITS_MB * 1024 * 1024
+            _ = torch.empty(
+                max_logits_elems, dtype=torch.uint8, device=hidden_states.device
+            )
 
-            # Check if fused_page backend is enabled
-            prefill_topk_backend = os.getenv(
-                "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND", "native"
-            ).lower()
+            return sparse_attn_indexer_fake(
+                hidden_states,
+                k_cache_prefix,
+                kv_cache,
+                q_quant,
+                q_scale,
+                k,
+                weights,
+                quant_block_size,
+                scale_fmt,
+                topk_tokens,
+                head_dim,
+                max_model_len,
+                total_seq_lens,
+                topk_indices_buffer,
+                skip_k_cache_insert,
+                use_fp4_cache,
+            )
+        attn_metadata_narrowed = attn_metadata[k_cache_prefix]
+        assert isinstance(attn_metadata_narrowed, DeepseekV32IndexerMetadata)
+        slot_mapping = attn_metadata_narrowed.slot_mapping
+        has_decode = attn_metadata_narrowed.num_decodes > 0
+        has_prefill = attn_metadata_narrowed.num_prefills > 0
+        num_decode_tokens = attn_metadata_narrowed.num_decode_tokens
 
-            if prefill_topk_backend == "fused_page":
-                page_mode = os.getenv(
-                    "VLLM_SPARSE_INDEXER_PAGE_MODE", "0"
-                ) == "1"
+        # q_scale is required iff the FP4 cache path is enabled; the FP8 path
+        # folds the Q scale into `weights` inside fused_indexer_q_rope_quant.
+        if use_fp4_cache:
+            assert q_scale is not None, "use_fp4_cache=True requires q_scale"
+        else:
+            assert q_scale is None, "q_scale must be None when use_fp4_cache=False"
 
-                if page_mode:
-                    # Triton page scorer + page expansion (no logits needed)
-                    if use_fp4_cache:
-                        q_slice_cast = q_slice.view(torch.int8)
-                        k_quant_cast = k_quant.view(torch.int8)
-                        k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
-                    else:
-                        q_slice_cast = q_slice
-                        k_quant_cast = k_quant
-                        k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
-                    chunk_weights = weights[chunk.token_start : chunk.token_end]
-                    page_ids, _ = fused_qk_page_topk(
-                        q_slice_cast, k_quant_cast, k_scale_cast,
-                        chunk_weights,
-                        chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
-                        top_p=16, storage_block_size=64,
-                    )
-                    _expand_pages_to_tokens(
-                        page_ids, chunk.cu_seqlen_ks,
-                        topk_indices, storage_block_size=64,
-                    )
-                else:
-                    # Keep DeepGEMM logits, use page-level topk from logits
-                    # (no Triton — just host-side page aggregation)
-                    if use_fp4_cache:
-                        q_slice_cast = q_slice.view(torch.int8)
-                        k_quant_cast = k_quant.view(torch.int8)
-                        k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
-                    else:
-                        q_slice_cast = q_slice
-                        k_quant_cast = k_quant
-                        k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+        # During speculative decoding, k may be padded to the CUDA graph batch
+        # size while slot_mapping only covers actual tokens. Truncate k to avoid
+        # out-of-bounds reads in the kernel.
+        num_tokens = slot_mapping.shape[0]
+        if k is not None:
+            k = k[:num_tokens]
 
-                    all_page_tokens = os.getenv(
-                        "VLLM_SPARSE_INDEXER_ALL_PAGE_TOKENS", "0"
+        if not skip_k_cache_insert:
+            # scale_fmt can be None, but the function expects str
+            assert scale_fmt is not None
+            assert not use_fp4_cache, "Unfused FP4 Insert is not supported yet"
+            with _prof(
+                _layer_prof_name(k_cache_prefix, "sparse_attn_indexer.k_cache_insert")
+            ):
+                ops.indexer_k_quant_and_cache(
+                    k,
+                    kv_cache,
+                    slot_mapping,
+                    quant_block_size,
+                    scale_fmt,
+                )
+
+        topk_indices_buffer[: hidden_states.shape[0]] = -1
+        if has_prefill:
+            prefill_metadata = attn_metadata_narrowed.prefill
+            assert prefill_metadata is not None
+
+            # Get the full shared workspace buffers once (will allocate on first use).
+            # Layout switches between FP8 (head_dim bytes + 4-byte fp32 scale) and
+            # MXFP4 (head_dim/2 bytes packed + head_dim/MXFP4_BLOCK_SIZE ue8m0
+            # scales) based on use_fp4_cache.
+            workspace_manager = current_workspace_manager()
+            values_spec, scales_spec = _gather_workspace_shapes(
+                total_seq_lens, head_dim, fp8_dtype, use_fp4_cache
+            )
+            k_quant_full, k_scale_full = workspace_manager.get_simultaneous(
+                values_spec,
+                scales_spec,
+            )
+            for chunk in prefill_metadata.chunks:
+                k_quant = k_quant_full[: chunk.total_seq_lens]
+                k_scale = k_scale_full[: chunk.total_seq_lens]
+
+                if not chunk.skip_kv_gather:
+                    with _prof(
+                        _layer_prof_name(
+                            k_cache_prefix,
+                            "sparse_attn_indexer.cp_gather_indexer_k_quant_cache",
+                        )
+                    ):
+                        ops.cp_gather_indexer_k_quant_cache(
+                            kv_cache,
+                            k_quant,
+                            k_scale,
+                            chunk.block_table,
+                            chunk.cu_seq_lens,
+                        )
+
+                q_slice = q_quant[chunk.token_start : chunk.token_end]
+                q_scale_slice = (
+                    q_scale[chunk.token_start : chunk.token_end]
+                    if q_scale is not None
+                    else None
+                )
+
+                topk_indices = topk_indices_buffer[
+                    chunk.token_start : chunk.token_end, :topk_tokens
+                ]
+
+                # Check if fused_page backend is enabled
+                prefill_topk_backend = os.getenv(
+                    "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND", "native"
+                ).lower()
+
+                if prefill_topk_backend == "fused_page":
+                    page_mode = os.getenv(
+                        "VLLM_SPARSE_INDEXER_PAGE_MODE", "0"
                     ) == "1"
-                    if all_page_tokens:
-                        # Page selection + expand to all tokens (no topk-512)
-                        logits = fp8_fp4_mqa_logits(
-                            (q_slice_cast, q_scale_slice),
-                            (k_quant_cast, k_scale_cast),
-                            weights[chunk.token_start : chunk.token_end],
-                            chunk.cu_seqlen_ks,
-                            chunk.cu_seqlen_ke,
-                            clean_logits=False,
-                        )
-                        page_max = logits_to_page_scores(
-                            logits, chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
-                            storage_block_size=64,
-                        )
-                        _, page_ids = torch.topk(page_max, k=16, dim=-1)
-                        _expand_pages_to_tokens(
-                            page_ids.unsqueeze(1), chunk.cu_seqlen_ks,
-                            topk_indices, storage_block_size=64,
-                        )
+
+                    if page_mode:
+                        # Triton page scorer + page expansion (no logits needed)
+                        if use_fp4_cache:
+                            q_slice_cast = q_slice.view(torch.int8)
+                            k_quant_cast = k_quant.view(torch.int8)
+                            k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
+                        else:
+                            q_slice_cast = q_slice
+                            k_quant_cast = k_quant
+                            k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+                        chunk_weights = weights[chunk.token_start : chunk.token_end]
+                        with _prof(
+                            _layer_prof_name(
+                                k_cache_prefix, "sparse_attn_indexer.page_topk"
+                            )
+                        ):
+                            page_ids, _ = fused_qk_page_topk(
+                                q_slice_cast, k_quant_cast, k_scale_cast,
+                                chunk_weights,
+                                chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
+                                top_p=16, storage_block_size=64,
+                            )
+                        with _prof(
+                            _layer_prof_name(
+                                k_cache_prefix, "sparse_attn_indexer.page_expand"
+                            )
+                        ):
+                            _expand_pages_to_tokens(
+                                page_ids, chunk.cu_seqlen_ks,
+                                topk_indices, storage_block_size=64,
+                            )
                     else:
-                        logits = fp8_fp4_mqa_logits(
-                            (q_slice_cast, q_scale_slice),
-                            (k_quant_cast, k_scale_cast),
-                            weights[chunk.token_start : chunk.token_end],
-                            chunk.cu_seqlen_ks,
-                            chunk.cu_seqlen_ke,
-                            clean_logits=False,
+                        # Keep DeepGEMM logits, use page-level topk from logits
+                        # (no Triton — just host-side page aggregation)
+                        if use_fp4_cache:
+                            q_slice_cast = q_slice.view(torch.int8)
+                            k_quant_cast = k_quant.view(torch.int8)
+                            k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
+                        else:
+                            q_slice_cast = q_slice
+                            k_quant_cast = k_quant
+                            k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+
+                        all_page_tokens = os.getenv(
+                            "VLLM_SPARSE_INDEXER_ALL_PAGE_TOKENS", "0"
+                        ) == "1"
+                        if all_page_tokens:
+                            # Page selection + expand to all tokens (no topk-512)
+                            with _prof(
+                                _layer_prof_name(
+                                    k_cache_prefix,
+                                    "sparse_attn_indexer.fp8_fp4_mqa_logits",
+                                )
+                            ):
+                                logits = fp8_fp4_mqa_logits(
+                                    (q_slice_cast, q_scale_slice),
+                                    (k_quant_cast, k_scale_cast),
+                                    weights[chunk.token_start:chunk.token_end],
+                                    chunk.cu_seqlen_ks,
+                                    chunk.cu_seqlen_ke,
+                                    clean_logits=False,
+                                )
+                            with _prof(
+                                _layer_prof_name(
+                                    k_cache_prefix, "sparse_attn_indexer.page_scores"
+                                )
+                            ):
+                                page_max = logits_to_page_scores(
+                                    logits, chunk.cu_seqlen_ks, chunk.cu_seqlen_ke,
+                                    storage_block_size=64,
+                                )
+                                _, page_ids = torch.topk(page_max, k=16, dim=-1)
+                            with _prof(
+                                _layer_prof_name(
+                                    k_cache_prefix, "sparse_attn_indexer.page_expand"
+                                )
+                            ):
+                                _expand_pages_to_tokens(
+                                    page_ids.unsqueeze(1), chunk.cu_seqlen_ks,
+                                    topk_indices, storage_block_size=64,
+                                )
+                        else:
+                            with _prof(
+                                _layer_prof_name(
+                                    k_cache_prefix,
+                                    "sparse_attn_indexer.fp8_fp4_mqa_logits",
+                                )
+                            ):
+                                logits = fp8_fp4_mqa_logits(
+                                    (q_slice_cast, q_scale_slice),
+                                    (k_quant_cast, k_scale_cast),
+                                    weights[chunk.token_start:chunk.token_end],
+                                    chunk.cu_seqlen_ks,
+                                    chunk.cu_seqlen_ke,
+                                    clean_logits=False,
+                                )
+                            num_rows = logits.shape[0]
+                            with _prof(
+                                _layer_prof_name(
+                                    k_cache_prefix, "sparse_attn_indexer.prefill_topk"
+                                )
+                            ):
+                                _run_prefill_topk(
+                                    logits=logits,
+                                    row_starts=chunk.cu_seqlen_ks,
+                                    row_ends=chunk.cu_seqlen_ke,
+                                    topk_indices=topk_indices,
+                                    num_rows=num_rows,
+                                    topk_tokens=topk_tokens,
+                                )
+                        if chunk.observation_id is not None:
+                            record_prefill_runtime_topk(
+                                observation_id=chunk.observation_id,
+                                layer_name=k_cache_prefix,
+                                token_start=chunk.token_start,
+                                token_end=chunk.token_end,
+                                row_starts=chunk.cu_seqlen_ks,
+                                row_ends=chunk.cu_seqlen_ke,
+                                topk_indices=topk_indices,
+                                logits=logits,
+                            )
+                else:
+                    # DeepGEMM scalar-type tags (zero-copy): MXFP4 values → int8
+                    # (kPackedFP4), scales → int32 squeezed to 1-D kv_sf / 2-D q_sf.
+                    if use_fp4_cache:
+                        q_slice_cast = q_slice.view(torch.int8)
+                        k_quant_cast = k_quant.view(torch.int8)
+                        k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
+                    else:
+                        q_slice_cast = q_slice
+                        k_quant_cast = k_quant
+                        k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
+                    if current_platform.is_xpu():
+                        if q_scale_slice is not None:
+                            raise RuntimeError(
+                                "XPU fp8_mqa_logits does not support FP4 Q"
+                            )
+                        with _prof(
+                            _layer_prof_name(
+                                k_cache_prefix,
+                                "sparse_attn_indexer.fp8_fp4_mqa_logits",
+                            )
+                        ):
+                            logits = torch.ops.vllm.xpu_fp8_mqa_logits(
+                                q_slice_cast,
+                                k_quant_cast,
+                                k_scale_cast,
+                                weights[chunk.token_start:chunk.token_end],
+                                chunk.cu_seqlen_ks,
+                                chunk.cu_seqlen_ke,
+                            )
+                    else:
+                        with _prof(
+                            _layer_prof_name(
+                                k_cache_prefix,
+                                "sparse_attn_indexer.fp8_fp4_mqa_logits",
+                            )
+                        ):
+                            logits = fp8_fp4_mqa_logits(
+                                (q_slice_cast, q_scale_slice),
+                                (k_quant_cast, k_scale_cast),
+                                weights[chunk.token_start:chunk.token_end],
+                                chunk.cu_seqlen_ks,
+                                chunk.cu_seqlen_ke,
+                                clean_logits=False,
+                            )
+                    num_rows = logits.shape[0]
+
+                    with _prof(
+                        _layer_prof_name(
+                            k_cache_prefix, "sparse_attn_indexer.prefill_topk"
                         )
-                        num_rows = logits.shape[0]
+                    ):
                         _run_prefill_topk(
                             logits=logits,
                             row_starts=chunk.cu_seqlen_ks,
@@ -620,6 +818,7 @@ def sparse_attn_indexer(
                             num_rows=num_rows,
                             topk_tokens=topk_tokens,
                         )
+
                     if chunk.observation_id is not None:
                         record_prefill_runtime_topk(
                             observation_id=chunk.observation_id,
@@ -631,178 +830,140 @@ def sparse_attn_indexer(
                             topk_indices=topk_indices,
                             logits=logits,
                         )
-            else:
-                # DeepGEMM scalar-type tags (zero-copy): MXFP4 values → int8
-                # (kPackedFP4), scales → int32 squeezed to 1-D kv_sf / 2-D q_sf.
-                if use_fp4_cache:
-                    q_slice_cast = q_slice.view(torch.int8)
-                    k_quant_cast = k_quant.view(torch.int8)
-                    k_scale_cast = k_scale.view(torch.int32).squeeze(-1)
-                else:
-                    q_slice_cast = q_slice
-                    k_quant_cast = k_quant
-                    k_scale_cast = k_scale.view(torch.float32).squeeze(-1)
-                if current_platform.is_xpu():
-                    if q_scale_slice is not None:
-                        raise RuntimeError("XPU fp8_mqa_logits does not support FP4 Q")
-                    logits = torch.ops.vllm.xpu_fp8_mqa_logits(
-                        q_slice_cast,
-                        k_quant_cast,
-                        k_scale_cast,
-                        weights[chunk.token_start : chunk.token_end],
-                        chunk.cu_seqlen_ks,
-                        chunk.cu_seqlen_ke,
+
+                # Fused_page: skip observation (no dense logits, scores unavailable)
+
+        if has_decode:
+            decode_metadata = attn_metadata_narrowed.decode
+            assert decode_metadata is not None
+            kv_cache = kv_cache_as_quant_view(kv_cache, head_dim, use_fp4_cache)
+            decode_lens = decode_metadata.decode_lens
+            if decode_metadata.requires_padding:
+                # pad in edge case where we have short chunked prefill length <
+                # decode_threshold since we unstrictly split
+                # prefill and decode by decode_threshold
+                # (currently set to 1 + speculative tokens).
+                # FP8 Q is float8_e4m3fn (pack_seq_triton's fp32 pad path is OK —
+                # downstream context_lens masks stale slots). MXFP4 Q is two
+                # uint8 tensors (values + ue8m0 scales) — use the dedicated uint8
+                # packer with pad_byte=0 so padded slots dequantize to 0 and
+                # can't produce NaN/Inf in the logits kernel.
+                if q_scale is not None:
+                    padded_q_quant_decode_tokens = pack_seq_triton(
+                        q_quant[:num_decode_tokens], decode_lens, pad_value=0
+                    )
+                    padded_q_scale = pack_seq_triton(
+                        q_scale[:num_decode_tokens], decode_lens, pad_value=0
                     )
                 else:
-                    logits = fp8_fp4_mqa_logits(
-                        (q_slice_cast, q_scale_slice),
-                        (k_quant_cast, k_scale_cast),
-                        weights[chunk.token_start : chunk.token_end],
-                        chunk.cu_seqlen_ks,
-                        chunk.cu_seqlen_ke,
+                    padded_q_quant_decode_tokens = pack_seq_triton(
+                        q_quant[:num_decode_tokens], decode_lens
+                    )
+                    padded_q_scale = None
+            else:
+                padded_q_quant_decode_tokens = q_quant[:num_decode_tokens].reshape(
+                    decode_lens.shape[0], -1, *q_quant.shape[1:]
+                )
+                if q_scale is not None:
+                    padded_q_scale = q_scale[:num_decode_tokens].reshape(
+                        decode_lens.shape[0], -1, *q_scale.shape[1:]
+                    )
+                else:
+                    padded_q_scale = None
+            # TODO: move and optimize below logic with triton kernels
+            batch_size = padded_q_quant_decode_tokens.shape[0]
+            next_n = padded_q_quant_decode_tokens.shape[1]
+            num_padded_tokens = batch_size * next_n
+            seq_lens = decode_metadata.seq_lens[:batch_size]
+            # seq_lens is always 2D: (B, next_n) for native spec decode, (B, 1)
+            # otherwise. deep_gemm fp8_fp4_paged_mqa_logits requires 2D context_lens;
+            # the downstream topk kernels accept both 1D and 2D.
+            padded_q_quant_cast = (
+                padded_q_quant_decode_tokens.view(torch.int8)
+                if use_fp4_cache
+                else padded_q_quant_decode_tokens
+            )
+            if current_platform.is_xpu():
+                if padded_q_scale is not None:
+                    raise RuntimeError(
+                        "XPU fp8_paged_mqa_logits does not support FP4 Q"
+                    )
+                seq_lens_xpu = (
+                    seq_lens[:, -1].contiguous() if seq_lens.ndim == 2 else seq_lens
+                )
+                with _prof(
+                    _layer_prof_name(
+                        k_cache_prefix, "sparse_attn_indexer.decode_mqa_logits"
+                    )
+                ):
+                    logits = torch.ops.vllm.xpu_fp8_paged_mqa_logits(
+                        padded_q_quant_cast,
+                        kv_cache,
+                        weights[:num_padded_tokens],
+                        seq_lens_xpu,
+                        decode_metadata.block_table,
+                        decode_metadata.schedule_metadata,
+                        max_model_len,
+                    )
+            else:
+                with _prof(
+                    _layer_prof_name(
+                        k_cache_prefix, "sparse_attn_indexer.decode_mqa_logits"
+                    )
+                ):
+                    logits = fp8_fp4_paged_mqa_logits(
+                        (padded_q_quant_cast, padded_q_scale),
+                        kv_cache,
+                        weights[:num_padded_tokens],
+                        seq_lens,
+                        decode_metadata.block_table,
+                        decode_metadata.schedule_metadata,
+                        max_model_len=max_model_len,
                         clean_logits=False,
                     )
-                num_rows = logits.shape[0]
+            num_rows = logits.shape[0]
+            topk_indices = topk_indices_buffer[:num_padded_tokens, :topk_tokens]
 
-                _run_prefill_topk(
-                    logits=logits,
-                    row_starts=chunk.cu_seqlen_ks,
-                    row_ends=chunk.cu_seqlen_ke,
-                    topk_indices=topk_indices,
-                    num_rows=num_rows,
-                    topk_tokens=topk_tokens,
-                )
-
-                if chunk.observation_id is not None:
-                    record_prefill_runtime_topk(
-                        observation_id=chunk.observation_id,
-                        layer_name=k_cache_prefix,
-                        token_start=chunk.token_start,
-                        token_end=chunk.token_end,
-                        row_starts=chunk.cu_seqlen_ks,
-                        row_ends=chunk.cu_seqlen_ke,
-                        topk_indices=topk_indices,
-                        logits=logits,
+            with _prof(
+                _layer_prof_name(k_cache_prefix, "sparse_attn_indexer.decode_topk")
+            ):
+                if current_platform.is_cuda() and topk_tokens in (512, 1024, 2048):
+                    workspace_manager = current_workspace_manager()
+                    (topk_workspace,) = workspace_manager.get_simultaneous(
+                        ((RADIX_TOPK_WORKSPACE_SIZE,), torch.uint8),
+                    )
+                    torch.ops._C.persistent_topk(
+                        logits,
+                        seq_lens,
+                        topk_indices,
+                        topk_workspace,
+                        topk_tokens,
+                        attn_metadata_narrowed.max_seq_len,
+                    )
+                else:
+                    ops.top_k_per_row_decode(
+                        logits,
+                        next_n,
+                        seq_lens,
+                        topk_indices,
+                        num_rows,
+                        logits.stride(0),
+                        logits.stride(1),
+                        topk_tokens,
                     )
 
-            # Fused_page: skip observation (no dense logits, scores unavailable)
-
-    if has_decode:
-        decode_metadata = attn_metadata_narrowed.decode
-        assert decode_metadata is not None
-        kv_cache = kv_cache_as_quant_view(kv_cache, head_dim, use_fp4_cache)
-        decode_lens = decode_metadata.decode_lens
-        if decode_metadata.requires_padding:
-            # pad in edge case where we have short chunked prefill length <
-            # decode_threshold since we unstrictly split
-            # prefill and decode by decode_threshold
-            # (currently set to 1 + speculative tokens).
-            # FP8 Q is float8_e4m3fn (pack_seq_triton's fp32 pad path is OK —
-            # downstream context_lens masks stale slots). MXFP4 Q is two
-            # uint8 tensors (values + ue8m0 scales) — use the dedicated uint8
-            # packer with pad_byte=0 so padded slots dequantize to 0 and
-            # can't produce NaN/Inf in the logits kernel.
-            if q_scale is not None:
-                padded_q_quant_decode_tokens = pack_seq_triton(
-                    q_quant[:num_decode_tokens], decode_lens, pad_value=0
+            if decode_metadata.requires_padding:
+                # if padded, we need to unpack
+                # the topk indices removing padded tokens
+                topk_indices = unpack_seq_triton(
+                    topk_indices.reshape(batch_size, -1, topk_indices.shape[-1]),
+                    decode_lens,
                 )
-                padded_q_scale = pack_seq_triton(
-                    q_scale[:num_decode_tokens], decode_lens, pad_value=0
-                )
-            else:
-                padded_q_quant_decode_tokens = pack_seq_triton(
-                    q_quant[:num_decode_tokens], decode_lens
-                )
-                padded_q_scale = None
-        else:
-            padded_q_quant_decode_tokens = q_quant[:num_decode_tokens].reshape(
-                decode_lens.shape[0], -1, *q_quant.shape[1:]
-            )
-            if q_scale is not None:
-                padded_q_scale = q_scale[:num_decode_tokens].reshape(
-                    decode_lens.shape[0], -1, *q_scale.shape[1:]
-                )
-            else:
-                padded_q_scale = None
-        # TODO: move and optimize below logic with triton kernels
-        batch_size = padded_q_quant_decode_tokens.shape[0]
-        next_n = padded_q_quant_decode_tokens.shape[1]
-        num_padded_tokens = batch_size * next_n
-        seq_lens = decode_metadata.seq_lens[:batch_size]
-        # seq_lens is always 2D: (B, next_n) for native spec decode, (B, 1)
-        # otherwise. deep_gemm fp8_fp4_paged_mqa_logits requires 2D context_lens;
-        # the downstream topk kernels accept both 1D and 2D.
-        padded_q_quant_cast = (
-            padded_q_quant_decode_tokens.view(torch.int8)
-            if use_fp4_cache
-            else padded_q_quant_decode_tokens
-        )
-        if current_platform.is_xpu():
-            if padded_q_scale is not None:
-                raise RuntimeError("XPU fp8_paged_mqa_logits does not support FP4 Q")
-            seq_lens_xpu = (
-                seq_lens[:, -1].contiguous() if seq_lens.ndim == 2 else seq_lens
-            )
-            logits = torch.ops.vllm.xpu_fp8_paged_mqa_logits(
-                padded_q_quant_cast,
-                kv_cache,
-                weights[:num_padded_tokens],
-                seq_lens_xpu,
-                decode_metadata.block_table,
-                decode_metadata.schedule_metadata,
-                max_model_len,
-            )
-        else:
-            logits = fp8_fp4_paged_mqa_logits(
-                (padded_q_quant_cast, padded_q_scale),
-                kv_cache,
-                weights[:num_padded_tokens],
-                seq_lens,
-                decode_metadata.block_table,
-                decode_metadata.schedule_metadata,
-                max_model_len=max_model_len,
-                clean_logits=False,
-            )
-        num_rows = logits.shape[0]
-        topk_indices = topk_indices_buffer[:num_padded_tokens, :topk_tokens]
+                topk_indices_buffer[
+                    : topk_indices.shape[0], : topk_indices.shape[-1]
+                ] = topk_indices
 
-        if current_platform.is_cuda() and topk_tokens in (512, 1024, 2048):
-            workspace_manager = current_workspace_manager()
-            (topk_workspace,) = workspace_manager.get_simultaneous(
-                ((RADIX_TOPK_WORKSPACE_SIZE,), torch.uint8),
-            )
-            torch.ops._C.persistent_topk(
-                logits,
-                seq_lens,
-                topk_indices,
-                topk_workspace,
-                topk_tokens,
-                attn_metadata_narrowed.max_seq_len,
-            )
-        else:
-            ops.top_k_per_row_decode(
-                logits,
-                next_n,
-                seq_lens,
-                topk_indices,
-                num_rows,
-                logits.stride(0),
-                logits.stride(1),
-                topk_tokens,
-            )
-
-        if decode_metadata.requires_padding:
-            # if padded, we need to unpack
-            # the topk indices removing padded tokens
-            topk_indices = unpack_seq_triton(
-                topk_indices.reshape(batch_size, -1, topk_indices.shape[-1]),
-                decode_lens,
-            )
-            topk_indices_buffer[: topk_indices.shape[0], : topk_indices.shape[-1]] = (
-                topk_indices
-            )
-
-    return topk_indices_buffer
+        return topk_indices_buffer
 
 
 def sparse_attn_indexer_fake(
