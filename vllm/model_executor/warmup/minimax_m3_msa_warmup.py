@@ -4,7 +4,6 @@
 from typing import TYPE_CHECKING
 
 from vllm.logger import init_logger
-from vllm.models.minimax_m3.nvidia.model import MiniMaxM3SparseAttention
 from vllm.platforms import current_platform
 from vllm.tracing import instrument
 
@@ -16,6 +15,12 @@ logger = init_logger(__name__)
 
 @instrument(span_name="MiniMax M3 MSA warmup")
 def minimax_m3_msa_warmup(worker: "Worker") -> None:
+    model_type = getattr(worker.model_config.hf_config, "model_type", "")
+    if not str(model_type).startswith("minimax_m3"):
+        return
+
+    from vllm.models.minimax_m3.nvidia.model import MiniMaxM3SparseAttention
+
     sparse_module = next(
         (
             module

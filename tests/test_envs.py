@@ -133,6 +133,21 @@ def test_precompiled_install_flags_are_orthogonal() -> None:
         assert environment_variables["VLLM_USE_PRECOMPILED_RUST"]() is True
 
 
+def test_profiling_envs() -> None:
+    with patch.dict(
+        os.environ,
+        {
+            "VLLM_PROFILE_NVTX": "1",
+            "VLLM_NSYS_CAPTURE_RANGE": "target_range",
+            "VLLM_NSYS_CAPTURE_RANGE_OCCURRENCE": "61",
+        },
+        clear=True,
+    ):
+        assert environment_variables["VLLM_PROFILE_NVTX"]() is True
+        assert environment_variables["VLLM_NSYS_CAPTURE_RANGE"]() == "target_range"
+        assert environment_variables["VLLM_NSYS_CAPTURE_RANGE_OCCURRENCE"]() == 61
+
+
 class TestEnvWithChoices:
     """Test cases for env_with_choices function."""
 

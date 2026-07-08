@@ -2,18 +2,73 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from typing import Literal
 
 import torch
 from typing_extensions import override
 
+import vllm.envs as envs
 from vllm.config import ProfilerConfig
 from vllm.config.profiler import _is_uri_path
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
+
+_capture_range_matches: defaultdict[str, int] = defaultdict(int)
+
+
+def _nvtx_enabled() -> bool:
+    return envs.VLLM_PROFILE_NVTX
+
+
+def _capture_range_name() -> str | None:
+    return envs.VLLM_NSYS_CAPTURE_RANGE
+
+
+def _capture_range_occurrence() -> int:
+    return max(1, envs.VLLM_NSYS_CAPTURE_RANGE_OCCURRENCE)
+
+
+@contextmanager
+def annotate_context(name: str, *, with_torch: bool) -> None:
+    """Annotate a region for torch profiler and optionally NVTX."""
+    torch_context = (
+        torch.profiler.record_function(name) if with_torch else nullcontext()
+    )
+    capture_this_range = False
+    capture_name = _capture_range_name()
+    if torch.cuda.is_available() and capture_name == name:
+        _capture_range_matches[name] += 1
+        capture_this_range = (
+            _capture_range_matches[name] == _capture_range_occurrence()
+        )
+
+    if capture_this_range:
+        import torch.cuda.profiler as cuda_profiler
+
+        logger.info(
+            "Triggering CUDA profiler capture for range: %s (occurrence %d)",
+            name,
+            _capture_range_matches[name],
+        )
+        cuda_profiler.start()
+
+    try:
+        with torch_context:
+            if _nvtx_enabled() and torch.cuda.is_available():
+                torch.cuda.nvtx.range_push(name)
+                try:
+                    yield
+                finally:
+                    torch.cuda.nvtx.range_pop()
+            else:
+                yield
+    finally:
+        if capture_this_range:
+            cuda_profiler.stop()
 
 
 class WorkerProfiler(ABC):
@@ -304,7 +359,7 @@ class TorchProfilerWrapper(WorkerProfiler):
 
     @override
     def annotate_context_manager(self, name: str):
-        return torch.profiler.record_function(name)
+        return annotate_context(name, with_torch=True)
 
 
 class CudaProfilerWrapper(WorkerProfiler):
@@ -325,4 +380,4 @@ class CudaProfilerWrapper(WorkerProfiler):
 
     @override
     def annotate_context_manager(self, name: str):
-        return torch.cuda.nvtx.range(name)
+        return annotate_context(name, with_torch=False)

@@ -236,6 +236,9 @@ if TYPE_CHECKING:
     VLLM_TOOL_JSON_ERROR_AUTOMATIC_RETRY: bool = False
     VLLM_CUSTOM_SCOPES_FOR_PROFILING: bool = False
     VLLM_NVTX_SCOPES_FOR_PROFILING: bool = False
+    VLLM_PROFILE_NVTX: bool = False
+    VLLM_NSYS_CAPTURE_RANGE: str | None = None
+    VLLM_NSYS_CAPTURE_RANGE_OCCURRENCE: int = 1
     VLLM_KV_EVENTS_USE_INT_BLOCK_HASHES: bool = True
     VLLM_OBJECT_STORAGE_SHM_BUFFER_NAME: str = "VLLM_OBJECT_STORAGE_SHM_BUFFER"
     VLLM_DEEPEP_BUFFER_SIZE_MB: int = 1024
@@ -1723,6 +1726,15 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Add optional nvtx scopes for profiling, disable to avoid overheads
     "VLLM_NVTX_SCOPES_FOR_PROFILING": lambda: bool(
         int(os.getenv("VLLM_NVTX_SCOPES_FOR_PROFILING", "0"))
+    ),
+    # Enable custom NVTX annotations used by targeted profiling helpers.
+    "VLLM_PROFILE_NVTX": lambda: bool(int(os.getenv("VLLM_PROFILE_NVTX", "0"))),
+    # Capture only when a named NVTX range is encountered.
+    "VLLM_NSYS_CAPTURE_RANGE": lambda: os.getenv("VLLM_NSYS_CAPTURE_RANGE", None),
+    # If the same named range appears multiple times, only trigger capture on
+    # the Nth occurrence. Defaults to the first match.
+    "VLLM_NSYS_CAPTURE_RANGE_OCCURRENCE": lambda: int(
+        os.getenv("VLLM_NSYS_CAPTURE_RANGE_OCCURRENCE", "1")
     ),
     # Represent block hashes in KV cache events as 64-bit integers instead of
     # raw bytes. Defaults to True for backward compatibility.

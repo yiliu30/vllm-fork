@@ -51,7 +51,11 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.model_executor.warmup.kernel_warmup import kernel_warmup
 from vllm.platforms import current_platform
-from vllm.profiler.wrapper import CudaProfilerWrapper, TorchProfilerWrapper
+from vllm.profiler.wrapper import (
+    CudaProfilerWrapper,
+    TorchProfilerWrapper,
+    annotate_context,
+)
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
 from vllm.tracing import instrument
@@ -804,11 +808,6 @@ class Worker(WorkerBase):
         # add trace annotation so that we can easily distinguish
         # context/generation request numbers in each iteration.
         # A context request is a request that has not yet generated any tokens
-        if not self.profiler:
-            return nullcontext()
-
-        self.profiler.step()
-
         iteration_details = compute_iteration_details(scheduler_output)
 
         annotation = "".join(
@@ -824,6 +823,11 @@ class Worker(WorkerBase):
                 ")",
             ]
         )
+
+        if not self.profiler:
+            return annotate_context(annotation, with_torch=False)
+
+        self.profiler.step()
         return self.profiler.annotate_context_manager(annotation)
 
     @torch.inference_mode()

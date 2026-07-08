@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import pytest
+import torch.cuda.profiler as cuda_profiler
 
 from vllm.config import ProfilerConfig
 from vllm.config.profiler import _is_uri_path
+import vllm.profiler.wrapper as profiler_wrapper
 from vllm.profiler.wrapper import WorkerProfiler
 
 
@@ -236,3 +238,33 @@ class TestIsUriPath:
     def test_is_uri_path(self, path, expected):
         """Test that _is_uri_path correctly identifies URI vs local paths."""
         assert _is_uri_path(path) == expected
+
+
+def test_annotate_context_capture_on_nth_occurrence(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[str] = []
+
+    profiler_wrapper._capture_range_matches.clear()
+    monkeypatch.setattr(profiler_wrapper, "_capture_range_name", lambda: "target")
+    monkeypatch.setattr(profiler_wrapper, "_capture_range_occurrence", lambda: 3)
+    monkeypatch.setattr(profiler_wrapper, "_nvtx_enabled", lambda: False)
+    monkeypatch.setattr(profiler_wrapper.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(cuda_profiler, "start", lambda: calls.append("start"))
+    monkeypatch.setattr(cuda_profiler, "stop", lambda: calls.append("stop"))
+
+    for _ in range(2):
+        with profiler_wrapper.annotate_context("target", with_torch=False):
+            pass
+
+    assert calls == []
+
+    with profiler_wrapper.annotate_context("target", with_torch=False):
+        pass
+
+    assert calls == ["start", "stop"]
+
+    with profiler_wrapper.annotate_context("target", with_torch=False):
+        pass
+
+    assert calls == ["start", "stop"]
