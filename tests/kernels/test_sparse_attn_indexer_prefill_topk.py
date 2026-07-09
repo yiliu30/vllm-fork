@@ -3,6 +3,8 @@
 
 import builtins
 import importlib.util
+import sys
+import types
 
 import pytest
 import torch
@@ -219,7 +221,7 @@ def test_prefill_topk_funnel_dense_import_error_message(
     real_import = builtins.__import__
 
     def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "funnel_topk.funnel":
+        if name == "funnel_topk" or name == "funnel_topk.funnel":
             raise ModuleNotFoundError("mock missing funnel_topk")
         return real_import(name, globals, locals, fromlist, level)
 
@@ -235,6 +237,211 @@ def test_prefill_topk_funnel_dense_import_error_message(
         match=(
             "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense "
             "requires funnel_topk to be importable"
+        ),
+    ):
+        _prefill_topk_funnel_dense(
+            logits,
+            row_starts,
+            row_ends,
+            topk_indices,
+            topk_tokens=2,
+        )
+
+
+@torch.inference_mode()
+def test_prefill_topk_funnel_dense_uses_env_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """funnel_dense should forward the configured funnel mode."""
+    seen: dict[str, str] = {}
+
+    def fake_funnel_topk(input, k, dim, largest, sorted, mode):
+        seen["mode"] = mode
+        return torch.topk(input, k=k, dim=dim, largest=largest, sorted=sorted)
+
+    fake_package = types.ModuleType("funnel_topk")
+    fake_package.__path__ = []
+    fake_module = types.ModuleType("funnel_topk.funnel")
+    fake_module.funnel_topk = fake_funnel_topk
+
+    monkeypatch.setitem(sys.modules, "funnel_topk", fake_package)
+    monkeypatch.setitem(sys.modules, "funnel_topk.funnel", fake_module)
+    monkeypatch.setenv("VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE", "turbo")
+
+    logits = torch.tensor([[1.0, 4.0, 3.0, 2.0]], dtype=torch.float32)
+    row_starts = torch.tensor([1], dtype=torch.int32)
+    row_ends = torch.tensor([4], dtype=torch.int32)
+    topk_indices = torch.empty((1, 2), dtype=torch.int32)
+
+    _prefill_topk_funnel_dense(
+        logits,
+        row_starts,
+        row_ends,
+        topk_indices,
+        topk_tokens=2,
+    )
+
+    assert seen["mode"] == "turbo"
+    assert topk_indices.tolist() == [[0, 1]]
+
+
+@torch.inference_mode()
+def test_prefill_topk_funnel_dense_prefers_ragged_prefill_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prefer the ragged funnel prefill op when the funnel build provides it."""
+    seen: dict[str, object] = {}
+
+    def fake_prefill_op(
+        logits,
+        row_starts,
+        row_ends,
+        topk_indices,
+        num_rows,
+        stride0,
+        stride1,
+        top_k,
+        mode,
+    ):
+        seen["called"] = True
+        seen["num_rows"] = num_rows
+        seen["stride0"] = stride0
+        seen["stride1"] = stride1
+        seen["top_k"] = top_k
+        seen["mode"] = mode
+        topk_indices.fill_(-1)
+        topk_indices[0, :2] = torch.tensor([0, 1], dtype=torch.int32, device=topk_indices.device)
+
+    def fake_funnel_topk(*args, **kwargs):
+        raise AssertionError("dense fallback should not be used when ragged op exists")
+
+    fake_package = types.ModuleType("funnel_topk")
+    fake_package.__path__ = []
+    fake_package.top_k_per_row_prefill_funnel = fake_prefill_op
+    fake_module = types.ModuleType("funnel_topk.funnel")
+    fake_module.funnel_topk = fake_funnel_topk
+
+    monkeypatch.setitem(sys.modules, "funnel_topk", fake_package)
+    monkeypatch.setitem(sys.modules, "funnel_topk.funnel", fake_module)
+    monkeypatch.setenv("VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE", "turbo")
+
+    logits = torch.tensor([[1.0, 4.0, 3.0, 2.0]], dtype=torch.float32)
+    row_starts = torch.tensor([1], dtype=torch.int32)
+    row_ends = torch.tensor([4], dtype=torch.int32)
+    topk_indices = torch.empty((1, 2), dtype=torch.int32)
+
+    _prefill_topk_funnel_dense(
+        logits,
+        row_starts,
+        row_ends,
+        topk_indices,
+        topk_tokens=2,
+    )
+
+    assert seen == {
+        "called": True,
+        "num_rows": 1,
+        "stride0": 4,
+        "stride1": 1,
+        "top_k": 2,
+        "mode": "turbo",
+    }
+    assert topk_indices.tolist() == [[0, 1]]
+
+
+@torch.inference_mode()
+def test_prefill_topk_funnel_dense_rejects_invalid_env_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """funnel_dense should validate the env-selected funnel mode."""
+    monkeypatch.setenv("VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE", "invalid")
+
+    logits = torch.zeros((1, 4), dtype=torch.float32)
+    row_starts = torch.tensor([0], dtype=torch.int32)
+    row_ends = torch.tensor([4], dtype=torch.int32)
+    topk_indices = torch.empty((1, 2), dtype=torch.int32)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Invalid VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE: "
+            "invalid. Expected one of: exact, fast, turbo"
+        ),
+    ):
+        _prefill_topk_funnel_dense(
+            logits,
+            row_starts,
+            row_ends,
+            topk_indices,
+            topk_tokens=2,
+        )
+
+
+@torch.inference_mode()
+def test_prefill_topk_funnel_dense_exact_mode_works_with_older_funnel_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """exact mode should fall back when funnel_topk has no mode kwarg."""
+    seen: dict[str, bool] = {"called": False}
+
+    def fake_funnel_topk(input, k, dim, largest, sorted):
+        seen["called"] = True
+        return torch.topk(input, k=k, dim=dim, largest=largest, sorted=sorted)
+
+    fake_package = types.ModuleType("funnel_topk")
+    fake_package.__path__ = []
+    fake_module = types.ModuleType("funnel_topk.funnel")
+    fake_module.funnel_topk = fake_funnel_topk
+
+    monkeypatch.setitem(sys.modules, "funnel_topk", fake_package)
+    monkeypatch.setitem(sys.modules, "funnel_topk.funnel", fake_module)
+    monkeypatch.setenv("VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE", "exact")
+
+    logits = torch.tensor([[1.0, 4.0, 3.0, 2.0]], dtype=torch.float32)
+    row_starts = torch.tensor([1], dtype=torch.int32)
+    row_ends = torch.tensor([4], dtype=torch.int32)
+    topk_indices = torch.empty((1, 2), dtype=torch.int32)
+
+    _prefill_topk_funnel_dense(
+        logits,
+        row_starts,
+        row_ends,
+        topk_indices,
+        topk_tokens=2,
+    )
+
+    assert seen["called"]
+    assert topk_indices.tolist() == [[0, 1]]
+
+
+@torch.inference_mode()
+def test_prefill_topk_funnel_dense_non_exact_mode_requires_newer_funnel_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fast/turbo should fail clearly when the funnel build is too old."""
+
+    def fake_funnel_topk(input, k, dim, largest, sorted):
+        return torch.topk(input, k=k, dim=dim, largest=largest, sorted=sorted)
+
+    fake_package = types.ModuleType("funnel_topk")
+    fake_package.__path__ = []
+    fake_module = types.ModuleType("funnel_topk.funnel")
+    fake_module.funnel_topk = fake_funnel_topk
+
+    monkeypatch.setitem(sys.modules, "funnel_topk", fake_package)
+    monkeypatch.setitem(sys.modules, "funnel_topk.funnel", fake_module)
+    monkeypatch.setenv("VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE", "fast")
+
+    logits = torch.tensor([[1.0, 4.0, 3.0, 2.0]], dtype=torch.float32)
+    row_starts = torch.tensor([1], dtype=torch.int32)
+    row_ends = torch.tensor([4], dtype=torch.int32)
+    topk_indices = torch.empty((1, 2), dtype=torch.int32)
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE requires a "
+            "funnel_topk build that supports mode=fast/turbo"
         ),
     ):
         _prefill_topk_funnel_dense(
