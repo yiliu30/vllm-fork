@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek V4 Flash Prefill Breakdown</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: rgba(255, 251, 245, 0.92);
+      --panel-strong: #fffdf8;
+      --ink: #1f2a1f;
+      --muted: #5d6a5d;
+      --line: rgba(62, 78, 62, 0.14);
+      --accent: #155e63;
+      --accent-soft: #d8eeef;
+      --accent-2: #c7682b;
+      --accent-2-soft: #f7e1d2;
+      --accent-3: #4a6a2e;
+      --accent-3-soft: #dfe8d6;
+      --shadow: 0 18px 60px rgba(46, 54, 42, 0.10);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(21, 94, 99, 0.12), transparent 30%),
+        radial-gradient(circle at top right, rgba(199, 104, 43, 0.12), transparent 28%),
+        linear-gradient(180deg, #f8f4ed 0%, var(--bg) 100%);
+    }
+    .page {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 40px 24px 56px;
+    }
+    .hero {
+      padding: 28px 30px 24px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.96), rgba(246,240,229,0.88));
+      box-shadow: var(--shadow);
+    }
+    .eyebrow {
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-size: 12px;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(36px, 6vw, 58px);
+      line-height: 0.95;
+      max-width: 10ch;
+      font-weight: 700;
+    }
+    .hero p {
+      margin: 16px 0 0;
+      max-width: 70ch;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+    .meta-card {
+      padding: 14px 16px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    .meta-card .label {
+      display: block;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+    .meta-card .value {
+      font-size: 17px;
+      font-weight: 700;
+    }
+    section {
+      margin-top: 28px;
+      padding: 24px;
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    h2 {
+      margin: 0 0 6px;
+      font-size: 24px;
+    }
+    .section-note {
+      color: var(--muted);
+      margin: 0 0 18px;
+      line-height: 1.5;
+    }
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+    }
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+      margin-top: 14px;
+    }
+    .chart-card {
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      padding: 16px;
+    }
+    .chart-card h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+    .chart-card p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .chart-shell {
+      width: 100%;
+      overflow-x: auto;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .legend-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+    }
+    .scenario-card {
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      padding: 16px;
+    }
+    .scenario-title {
+      font-size: 17px;
+      font-weight: 700;
+      margin: 0 0 6px;
+    }
+    .scenario-subtitle {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0 0 14px;
+    }
+    .metric-stack {
+      display: grid;
+      gap: 10px;
+    }
+    .metric-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .metric-label span:last-child {
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+    }
+    .bar {
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(80, 96, 80, 0.10);
+      overflow: hidden;
+    }
+    .fill {
+      height: 100%;
+      border-radius: 999px;
+    }
+    .fill.chunk { background: linear-gradient(90deg, #155e63, #3ea1a7); }
+    .fill.indexer { background: linear-gradient(90deg, #c7682b, #e8a05e); }
+    .fill.calls { background: linear-gradient(90deg, #4a6a2e, #8ab25b); }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .compare-card {
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      padding: 18px;
+    }
+    .compare-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .compare-head strong {
+      font-size: 20px;
+    }
+    .compare-head span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .ratio-row {
+      margin-top: 10px;
+    }
+    .ratio-row .bar {
+      height: 12px;
+    }
+    .ratio-row .fill.chunk { background: linear-gradient(90deg, #1f6b70, #5ec3b8); }
+    .ratio-row .fill.indexer { background: linear-gradient(90deg, #b65b1f, #efb36b); }
+    .ratio-row .fill.calls { background: linear-gradient(90deg, #516d33, #aad270); }
+    .ratio-row .fill.logits { background: linear-gradient(90deg, #7e3040, #ce6b84); }
+    .scenario-detail {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,0.66);
+      overflow: hidden;
+    }
+    .scenario-detail summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 18px 20px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      font-weight: 700;
+    }
+    .scenario-detail summary::-webkit-details-marker { display: none; }
+    .scenario-detail summary span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 400;
+    }
+    .detail-body {
+      padding: 0 20px 20px;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .detail-card {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.70);
+    }
+    .detail-card .label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.10em;
+      margin-bottom: 5px;
+    }
+    .detail-card .value {
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    td.num {
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .footnote {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    code {
+      font-family: "SFMono-Regular", "Consolas", monospace;
+      font-size: 0.95em;
+      background: rgba(33, 45, 33, 0.06);
+      padding: 1px 5px;
+      border-radius: 6px;
+    }
+    @media (max-width: 720px) {
+      .page { padding: 20px 14px 32px; }
+      .hero, section { padding: 18px; }
+      .scenario-detail summary { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div class="eyebrow">DeepSeek V4 Flash Prefill Sweep</div>
+      <h1>Decoder-Layer Breakdown Across Context Growth</h1>
+      <p>
+        Targeted <code>nsys + NVTX</code> capture of real prefill inference chunks.
+        The report compares single-chunk cases and first-vs-last full <code>16k</code>
+        chunks so the sparse-indexer scaling pattern is visible without reading raw CSV.
+      </p>
+      <div class="meta-grid">
+        <div class="meta-card"><span class="label">Created</span><span class="value">20260710T005822Z</span></div>
+        <div class="meta-card"><span class="label">Model</span><span class="value">DeepSeek-V4-Flash-8layers</span></div>
+        <div class="meta-card"><span class="label">TP Size</span><span class="value">1</span></div>
+        <div class="meta-card"><span class="label">Chunk Size</span><span class="value">16384</span></div>
+        <div class="meta-card"><span class="label">Prime Iterations</span><span class="value">1</span></div>
+        <div class="meta-card"><span class="label">Sequence Lengths</span><span class="value">1m</span></div>
+      </div>
+    </div>
+
+    <section>
+      <h2>Scenario Overview</h2>
+      <p class="section-note">
+        Each card shows total captured chunk time, sparse-indexer share of the chunk,
+        and the expected/observed <code>prefill_topk</code> call count per sparse C4 layer.
+      </p>
+      <div class="scenario-grid"><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_01_of_64</h3><p class="scenario-subtitle">chunk_01_of_64 | effective seq len 16384</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>74.96 ms</span></div><div class="bar"><div class="fill chunk" style="width:29.62%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>2.69%</span></div><div class="bar"><div class="fill indexer" style="width:5.23%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>1</span></div><div class="bar"><div class="fill calls" style="width:3.12%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_08_of_64</h3><p class="scenario-subtitle">chunk_08_of_64 | effective seq len 131072</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>94.60 ms</span></div><div class="bar"><div class="fill chunk" style="width:37.38%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>14.00%</span></div><div class="bar"><div class="fill indexer" style="width:27.20%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>4</span></div><div class="bar"><div class="fill calls" style="width:12.50%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_16_of_64</h3><p class="scenario-subtitle">chunk_16_of_64 | effective seq len 262144</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>111.61 ms</span></div><div class="bar"><div class="fill chunk" style="width:44.10%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>24.03%</span></div><div class="bar"><div class="fill indexer" style="width:46.70%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>8</span></div><div class="bar"><div class="fill calls" style="width:25.00%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_24_of_64</h3><p class="scenario-subtitle">chunk_24_of_64 | effective seq len 393216</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>137.67 ms</span></div><div class="bar"><div class="fill chunk" style="width:54.40%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>33.17%</span></div><div class="bar"><div class="fill indexer" style="width:64.46%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>13</span></div><div class="bar"><div class="fill calls" style="width:40.62%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_32_of_64</h3><p class="scenario-subtitle">chunk_32_of_64 | effective seq len 524288</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>171.49 ms</span></div><div class="bar"><div class="fill chunk" style="width:67.77%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>36.75%</span></div><div class="bar"><div class="fill indexer" style="width:71.41%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>16</span></div><div class="bar"><div class="fill calls" style="width:50.00%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_40_of_64</h3><p class="scenario-subtitle">chunk_40_of_64 | effective seq len 655360</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>178.91 ms</span></div><div class="bar"><div class="fill chunk" style="width:70.70%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>42.24%</span></div><div class="bar"><div class="fill indexer" style="width:82.08%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>21</span></div><div class="bar"><div class="fill calls" style="width:65.62%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_48_of_64</h3><p class="scenario-subtitle">chunk_48_of_64 | effective seq len 786432</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>213.52 ms</span></div><div class="bar"><div class="fill chunk" style="width:84.38%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>49.14%</span></div><div class="bar"><div class="fill indexer" style="width:95.49%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>25</span></div><div class="bar"><div class="fill calls" style="width:78.12%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_56_of_64</h3><p class="scenario-subtitle">chunk_56_of_64 | effective seq len 917504</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>223.13 ms</span></div><div class="bar"><div class="fill chunk" style="width:88.17%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>47.66%</span></div><div class="bar"><div class="fill indexer" style="width:92.62%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>29</span></div><div class="bar"><div class="fill calls" style="width:90.62%"></div></div></div></div></article><article class="scenario-card"><h3 class="scenario-title">seq_1m_chunk_64_of_64</h3><p class="scenario-subtitle">chunk_64_of_64 | effective seq len 1048576</p><div class="metric-stack"><div class="metric"><div class="metric-label"><span>Chunk time</span><span>253.05 ms</span></div><div class="bar"><div class="fill chunk" style="width:100.00%"></div></div></div><div class="metric"><div class="metric-label"><span>Indexer / chunk</span><span>51.46%</span></div><div class="bar"><div class="fill indexer" style="width:100.00%"></div></div></div><div class="metric"><div class="metric-label"><span>TopK calls / sparse layer</span><span>32</span></div><div class="bar"><div class="fill calls" style="width:100.00%"></div></div></div></div></article></div>
+    </section>
+
+    <section>
+      <h2>Decoder Layer Trend</h2>
+      <p class="section-note">
+        These charts normalize to the average sparse decoder layer so the layer-local
+        growth of <code>attention</code>, <code>sparse_attn_indexer</code>, and
+        <code>prefill_topk</code> is visible directly. Percent means
+        <code>% of decoder layer</code>; time means average projected device time per
+        sparse decoder layer.
+      </p>
+      <div class="chart-grid"><article class="chart-card"><h3>Percent Trend</h3><p>Attention, sparse indexer, and top-k as a share of the average sparse decoder layer.</p><div class="chart-shell"><svg viewBox="0 0 640 260" role="img" aria-label="Percent of Decoder Layer" style="width:100%;height:auto;"><rect x="0" y="0" width="100%" height="100%" fill="transparent" /><line x1="56" y1="226.00" x2="620" y2="226.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="230.00" text-anchor="end" font-size="11" fill="#5d6a5d">0.00%</text><line x1="56" y1="174.00" x2="620" y2="174.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="178.00" text-anchor="end" font-size="11" fill="#5d6a5d">25.00%</text><line x1="56" y1="122.00" x2="620" y2="122.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="126.00" text-anchor="end" font-size="11" fill="#5d6a5d">50.00%</text><line x1="56" y1="70.00" x2="620" y2="70.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="74.00" text-anchor="end" font-size="11" fill="#5d6a5d">75.00%</text><line x1="56" y1="18.00" x2="620" y2="18.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="22.00" text-anchor="end" font-size="11" fill="#5d6a5d">100.00%</text><line x1="56" y1="226.00" x2="620" y2="226.00" stroke="rgba(62,78,62,0.22)" stroke-width="1.2" /><line x1="56" y1="18" x2="56" y2="226.00" stroke="rgba(62,78,62,0.22)" stroke-width="1.2" /><polyline fill="none" stroke="#155e63" stroke-width="3" points="56.00,89.67 126.50,68.52 197.00,55.00 267.50,45.52 338.00,39.72 408.50,37.06 479.00,32.92 549.50,32.62 620.00,30.46" /><circle cx="56.00" cy="89.67" r="3.5" fill="#155e63" /><circle cx="126.50" cy="68.52" r="3.5" fill="#155e63" /><circle cx="197.00" cy="55.00" r="3.5" fill="#155e63" /><circle cx="267.50" cy="45.52" r="3.5" fill="#155e63" /><circle cx="338.00" cy="39.72" r="3.5" fill="#155e63" /><circle cx="408.50" cy="37.06" r="3.5" fill="#155e63" /><circle cx="479.00" cy="32.92" r="3.5" fill="#155e63" /><circle cx="549.50" cy="32.62" r="3.5" fill="#155e63" /><circle cx="620.00" cy="30.46" r="3.5" fill="#155e63" /><polyline fill="none" stroke="#c7682b" stroke-width="3" points="56.00,210.40 126.50,154.62 197.00,118.40 267.50,92.73 338.00,77.68 408.50,70.25 479.00,58.42 549.50,57.94 620.00,50.56" /><circle cx="56.00" cy="210.40" r="3.5" fill="#c7682b" /><circle cx="126.50" cy="154.62" r="3.5" fill="#c7682b" /><circle cx="197.00" cy="118.40" r="3.5" fill="#c7682b" /><circle cx="267.50" cy="92.73" r="3.5" fill="#c7682b" /><circle cx="338.00" cy="77.68" r="3.5" fill="#c7682b" /><circle cx="408.50" cy="70.25" r="3.5" fill="#c7682b" /><circle cx="479.00" cy="58.42" r="3.5" fill="#c7682b" /><circle cx="549.50" cy="57.94" r="3.5" fill="#c7682b" /><circle cx="620.00" cy="50.56" r="3.5" fill="#c7682b" /><polyline fill="none" stroke="#4a6a2e" stroke-width="3" points="56.00,216.72 126.50,210.95 197.00,202.32 267.50,197.25 338.00,195.67 408.50,194.09 479.00,193.67 549.50,183.39 620.00,184.82" /><circle cx="56.00" cy="216.72" r="3.5" fill="#4a6a2e" /><circle cx="126.50" cy="210.95" r="3.5" fill="#4a6a2e" /><circle cx="197.00" cy="202.32" r="3.5" fill="#4a6a2e" /><circle cx="267.50" cy="197.25" r="3.5" fill="#4a6a2e" /><circle cx="338.00" cy="195.67" r="3.5" fill="#4a6a2e" /><circle cx="408.50" cy="194.09" r="3.5" fill="#4a6a2e" /><circle cx="479.00" cy="193.67" r="3.5" fill="#4a6a2e" /><circle cx="549.50" cy="183.39" r="3.5" fill="#4a6a2e" /><circle cx="620.00" cy="184.82" r="3.5" fill="#4a6a2e" /><text x="56.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">1</text><text x="126.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">8</text><text x="197.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">16</text><text x="267.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">24</text><text x="338.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">32</text><text x="408.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">40</text><text x="479.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">48</text><text x="549.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">56</text><text x="620.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">64</text><text x="320.00" y="258" text-anchor="middle" font-size="11" fill="#5d6a5d">chunk index</text></svg></div><div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#155e63"></span>attention</span><span class="legend-item"><span class="legend-swatch" style="background:#c7682b"></span>sparse_attn_indexer</span><span class="legend-item"><span class="legend-swatch" style="background:#4a6a2e"></span>prefill_topk</span></div></article><article class="chart-card"><h3>Time Trend</h3><p>Average projected device time per sparse decoder layer for the same three scopes.</p><div class="chart-shell"><svg viewBox="0 0 640 260" role="img" aria-label="Average Device Time per Sparse Decoder Layer" style="width:100%;height:auto;"><rect x="0" y="0" width="100%" height="100%" fill="transparent" /><line x1="56" y1="226.00" x2="620" y2="226.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="230.00" text-anchor="end" font-size="11" fill="#5d6a5d">0.00 ms</text><line x1="56" y1="174.00" x2="620" y2="174.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="178.00" text-anchor="end" font-size="11" fill="#5d6a5d">12.10 ms</text><line x1="56" y1="122.00" x2="620" y2="122.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="126.00" text-anchor="end" font-size="11" fill="#5d6a5d">24.19 ms</text><line x1="56" y1="70.00" x2="620" y2="70.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="74.00" text-anchor="end" font-size="11" fill="#5d6a5d">36.29 ms</text><line x1="56" y1="18.00" x2="620" y2="18.00" stroke="rgba(62,78,62,0.14)" stroke-width="1" /><text x="48" y="22.00" text-anchor="end" font-size="11" fill="#5d6a5d">48.38 ms</text><line x1="56" y1="226.00" x2="620" y2="226.00" stroke="rgba(62,78,62,0.22)" stroke-width="1.2" /><line x1="56" y1="18" x2="56" y2="226.00" stroke="rgba(62,78,62,0.22)" stroke-width="1.2" /><polyline fill="none" stroke="#155e63" stroke-width="3" points="56.00,200.77 126.50,184.14 197.00,164.91 267.50,137.37 338.00,112.58 408.50,94.64 479.00,52.76 549.50,50.65 620.00,18.00" /><circle cx="56.00" cy="200.77" r="3.5" fill="#155e63" /><circle cx="126.50" cy="184.14" r="3.5" fill="#155e63" /><circle cx="197.00" cy="164.91" r="3.5" fill="#155e63" /><circle cx="267.50" cy="137.37" r="3.5" fill="#155e63" /><circle cx="338.00" cy="112.58" r="3.5" fill="#155e63" /><circle cx="408.50" cy="94.64" r="3.5" fill="#155e63" /><circle cx="479.00" cy="52.76" r="3.5" fill="#155e63" /><circle cx="549.50" cy="50.65" r="3.5" fill="#155e63" /><circle cx="620.00" cy="18.00" r="3.5" fill="#155e63" /><polyline fill="none" stroke="#c7682b" stroke-width="3" points="56.00,223.11 126.50,207.02 197.00,187.56 267.50,160.56 338.00,135.69 408.50,117.71 479.00,75.64 549.50,73.61 620.00,39.39" /><circle cx="56.00" cy="223.11" r="3.5" fill="#c7682b" /><circle cx="126.50" cy="207.02" r="3.5" fill="#c7682b" /><circle cx="197.00" cy="187.56" r="3.5" fill="#c7682b" /><circle cx="267.50" cy="160.56" r="3.5" fill="#c7682b" /><circle cx="338.00" cy="135.69" r="3.5" fill="#c7682b" /><circle cx="408.50" cy="117.71" r="3.5" fill="#c7682b" /><circle cx="479.00" cy="75.64" r="3.5" fill="#c7682b" /><circle cx="549.50" cy="73.61" r="3.5" fill="#c7682b" /><circle cx="620.00" cy="39.39" r="3.5" fill="#c7682b" /><polyline fill="none" stroke="#4a6a2e" stroke-width="3" points="56.00,224.28 126.50,222.00 197.00,217.54 267.50,211.89 338.00,207.54 408.50,203.82 479.00,196.99 549.50,187.37 620.00,182.21" /><circle cx="56.00" cy="224.28" r="3.5" fill="#4a6a2e" /><circle cx="126.50" cy="222.00" r="3.5" fill="#4a6a2e" /><circle cx="197.00" cy="217.54" r="3.5" fill="#4a6a2e" /><circle cx="267.50" cy="211.89" r="3.5" fill="#4a6a2e" /><circle cx="338.00" cy="207.54" r="3.5" fill="#4a6a2e" /><circle cx="408.50" cy="203.82" r="3.5" fill="#4a6a2e" /><circle cx="479.00" cy="196.99" r="3.5" fill="#4a6a2e" /><circle cx="549.50" cy="187.37" r="3.5" fill="#4a6a2e" /><circle cx="620.00" cy="182.21" r="3.5" fill="#4a6a2e" /><text x="56.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">1</text><text x="126.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">8</text><text x="197.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">16</text><text x="267.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">24</text><text x="338.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">32</text><text x="408.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">40</text><text x="479.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">48</text><text x="549.50" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">56</text><text x="620.00" y="250" text-anchor="middle" font-size="11" fill="#5d6a5d">64</text><text x="320.00" y="258" text-anchor="middle" font-size="11" fill="#5d6a5d">chunk index</text></svg></div><div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#155e63"></span>attention</span><span class="legend-item"><span class="legend-swatch" style="background:#c7682b"></span>sparse_attn_indexer</span><span class="legend-item"><span class="legend-swatch" style="background:#4a6a2e"></span>prefill_topk</span></div></article></div><table><thead><tr><th>Scenario</th><th>Chunk</th><th>Decoder ms</th><th>Attention ms</th><th>Attention % of layer</th><th>Indexer ms</th><th>Indexer % of layer</th><th>TopK ms</th><th>TopK % of layer</th><th>TopK calls</th></tr></thead><tbody><tr><td>seq_1m_chunk_01_of_64</td><td class="num">1</td><td class="num">8.95</td><td class="num">5.87</td><td class="num">65.54%</td><td class="num">0.67</td><td class="num">7.50%</td><td class="num">0.40</td><td class="num">4.46%</td><td class="num">1</td></tr><tr><td>seq_1m_chunk_08_of_64</td><td class="num">8</td><td class="num">12.86</td><td class="num">9.74</td><td class="num">75.71%</td><td class="num">4.41</td><td class="num">34.32%</td><td class="num">0.93</td><td class="num">7.24%</td><td class="num">4</td></tr><tr><td>seq_1m_chunk_16_of_64</td><td class="num">16</td><td class="num">17.28</td><td class="num">14.21</td><td class="num">82.21%</td><td class="num">8.94</td><td class="num">51.73%</td><td class="num">1.97</td><td class="num">11.38%</td><td class="num">8</td></tr><tr><td>seq_1m_chunk_24_of_64</td><td class="num">24</td><td class="num">23.76</td><td class="num">20.62</td><td class="num">86.77%</td><td class="num">15.22</td><td class="num">64.07%</td><td class="num">3.28</td><td class="num">13.82%</td><td class="num">13</td></tr><tr><td>seq_1m_chunk_32_of_64</td><td class="num">32</td><td class="num">29.46</td><td class="num">26.38</td><td class="num">89.56%</td><td class="num">21.01</td><td class="num">71.31%</td><td class="num">4.29</td><td class="num">14.58%</td><td class="num">16</td></tr><tr><td>seq_1m_chunk_40_of_64</td><td class="num">40</td><td class="num">33.64</td><td class="num">30.56</td><td class="num">90.83%</td><td class="num">25.19</td><td class="num">74.88%</td><td class="num">5.16</td><td class="num">15.34%</td><td class="num">21</td></tr><tr><td>seq_1m_chunk_48_of_64</td><td class="num">48</td><td class="num">43.41</td><td class="num">40.30</td><td class="num">92.83%</td><td class="num">34.98</td><td class="num">80.57%</td><td class="num">6.75</td><td class="num">15.54%</td><td class="num">25</td></tr><tr><td>seq_1m_chunk_56_of_64</td><td class="num">56</td><td class="num">43.87</td><td class="num">40.79</td><td class="num">92.97%</td><td class="num">35.45</td><td class="num">80.80%</td><td class="num">8.99</td><td class="num">20.49%</td><td class="num">29</td></tr><tr><td>seq_1m_chunk_64_of_64</td><td class="num">64</td><td class="num">51.47</td><td class="num">48.38</td><td class="num">94.01%</td><td class="num">43.41</td><td class="num">84.35%</td><td class="num">10.19</td><td class="num">19.80%</td><td class="num">32</td></tr></tbody></table>
+    </section>
+
+    <section>
+      <h2>Chunk Order Trend</h2>
+      <p class="section-note">
+        Chunk-order trend uses device-time percentages from
+        <code>nvtx_gpu_proj_sum</code> and keeps the denominator explicit so
+        <code>attention</code>, <code>sparse_attn_indexer</code>, and
+        <code>prefill_topk</code> stay comparable across sampled chunks.
+      </p>
+      <table><thead><tr><th>Scenario</th><th>Chunk</th><th>Chunk ms</th><th>Attention %</th><th>Indexer % of chunk</th><th>Indexer % of attention</th><th>TopK % of chunk</th><th>TopK % of attention</th><th>TopK % of indexer</th><th>TopK calls</th></tr></thead><tbody><tr><td>seq_1m_chunk_01_of_64</td><td class="num">1</td><td class="num">74.96</td><td class="num">50.56%</td><td class="num">2.69%</td><td class="num">5.32%</td><td class="num">1.60%</td><td class="num">3.16%</td><td class="num">59.46%</td><td class="num">1</td></tr><tr><td>seq_1m_chunk_08_of_64</td><td class="num">8</td><td class="num">94.60</td><td class="num">57.89%</td><td class="num">14.00%</td><td class="num">24.18%</td><td class="num">2.95%</td><td class="num">5.10%</td><td class="num">21.08%</td><td class="num">4</td></tr><tr><td>seq_1m_chunk_16_of_64</td><td class="num">16</td><td class="num">111.61</td><td class="num">65.34%</td><td class="num">24.03%</td><td class="num">36.78%</td><td class="num">5.29%</td><td class="num">8.09%</td><td class="num">22.00%</td><td class="num">8</td></tr><tr><td>seq_1m_chunk_24_of_64</td><td class="num">24</td><td class="num">137.67</td><td class="num">71.63%</td><td class="num">33.17%</td><td class="num">46.31%</td><td class="num">7.15%</td><td class="num">9.99%</td><td class="num">21.56%</td><td class="num">13</td></tr><tr><td>seq_1m_chunk_32_of_64</td><td class="num">32</td><td class="num">171.49</td><td class="num">71.39%</td><td class="num">36.75%</td><td class="num">51.47%</td><td class="num">7.51%</td><td class="num">10.52%</td><td class="num">20.44%</td><td class="num">16</td></tr><tr><td>seq_1m_chunk_40_of_64</td><td class="num">40</td><td class="num">178.91</td><td class="num">77.43%</td><td class="num">42.24%</td><td class="num">54.55%</td><td class="num">8.65%</td><td class="num">11.18%</td><td class="num">20.49%</td><td class="num">21</td></tr><tr><td>seq_1m_chunk_48_of_64</td><td class="num">48</td><td class="num">213.52</td><td class="num">80.94%</td><td class="num">49.14%</td><td class="num">60.72%</td><td class="num">9.48%</td><td class="num">11.71%</td><td class="num">19.29%</td><td class="num">25</td></tr><tr><td>seq_1m_chunk_56_of_64</td><td class="num">56</td><td class="num">223.13</td><td class="num">80.69%</td><td class="num">47.66%</td><td class="num">59.06%</td><td class="num">12.08%</td><td class="num">14.97%</td><td class="num">25.35%</td><td class="num">29</td></tr><tr><td>seq_1m_chunk_64_of_64</td><td class="num">64</td><td class="num">253.05</td><td class="num">82.22%</td><td class="num">51.46%</td><td class="num">62.59%</td><td class="num">12.08%</td><td class="num">14.69%</td><td class="num">23.47%</td><td class="num">32</td></tr></tbody></table>
+    </section>
+
+    <section>
+      <h2>First vs Last Full 16K</h2>
+      <p class="section-note">
+        The first full <code>16k</code> chunk stays almost flat. The last full <code>16k</code>
+        chunk becomes increasingly dominated by sparse-indexer work, especially
+        <code>fp8_fp4_mqa_logits</code>.
+      </p>
+      <div class="compare-grid"><article class="compare-card"><div class="compare-head"><strong>1m</strong><span>first full 16k vs last full 16k</span></div><div class="ratio-row"><div class="metric-label"><span>Chunk time</span><span>3.38x</span></div><div class="bar"><div class="fill chunk" style="width:2.67%"></div></div></div><div class="ratio-row"><div class="metric-label"><span>Sparse indexer</span><span>64.60x</span></div><div class="bar"><div class="fill indexer" style="width:51.08%"></div></div></div><div class="ratio-row"><div class="metric-label"><span>Prefill topk</span><span>25.50x</span></div><div class="bar"><div class="fill calls" style="width:20.16%"></div></div></div><div class="ratio-row"><div class="metric-label"><span>Logits</span><span>126.48x</span></div><div class="bar"><div class="fill logits" style="width:100.00%"></div></div></div></article></div>
+    </section>
+
+    <section>
+      <h2>Per-Scenario Layer Detail</h2>
+      <p class="section-note">
+        Each scenario section uses sparse decoder-layer total as the local frame of
+        reference and shows how attention, sparse indexer, logits, and top-k evolve.
+      </p>
+      <details class="scenario-detail" open><summary>seq_1m_chunk_01_of_64<span>chunk_01_of_64 | capture occurrence 65 | effective seq len 16384</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">74.96 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">50.56%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">2.69%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">5.32%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">59.46%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">38.98%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[1]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">1</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">8.80</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:3.48%"></div></div></div></td><td class="num">65.42%</td><td class="num">34.58%</td><td class="num">7.36%</td><td class="num">4.35%</td><td class="num">2.89%</td><td class="num">1</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">8.88</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:3.51%"></div></div></div></td><td class="num">65.25%</td><td class="num">34.75%</td><td class="num">7.43%</td><td class="num">4.44%</td><td class="num">2.88%</td><td class="num">1</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">9.18</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:3.63%"></div></div></div></td><td class="num">65.95%</td><td class="num">34.05%</td><td class="num">7.71%</td><td class="num">4.59%</td><td class="num">3.00%</td><td class="num">1</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">8.95</td><td class="num">65.54%</td><td class="num">34.46%</td><td class="num">7.50%</td><td class="num">4.46%</td><td class="num">2.92%</td><td class="num">1</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_08_of_64<span>chunk_08_of_64 | capture occurrence 72 | effective seq len 131072</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">94.60 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">57.89%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">14.00%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">24.18%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">21.08%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">78.69%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[4]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">4</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">12.57</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:4.97%"></div></div></div></td><td class="num">75.45%</td><td class="num">24.55%</td><td class="num">34.06%</td><td class="num">7.45%</td><td class="num">26.53%</td><td class="num">4</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">12.91</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:5.10%"></div></div></div></td><td class="num">75.69%</td><td class="num">24.31%</td><td class="num">34.33%</td><td class="num">7.15%</td><td class="num">27.10%</td><td class="num">4</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">13.10</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:5.18%"></div></div></div></td><td class="num">75.99%</td><td class="num">24.01%</td><td class="num">34.57%</td><td class="num">7.11%</td><td class="num">27.37%</td><td class="num">4</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">12.86</td><td class="num">75.71%</td><td class="num">24.29%</td><td class="num">34.32%</td><td class="num">7.24%</td><td class="num">27.00%</td><td class="num">4</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_16_of_64<span>chunk_16_of_64 | capture occurrence 80 | effective seq len 262144</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">111.61 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">65.34%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">24.03%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">36.78%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">22.00%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">77.87%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[8]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">8</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">17.19</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:6.79%"></div></div></div></td><td class="num">82.26%</td><td class="num">17.74%</td><td class="num">51.90%</td><td class="num">11.63%</td><td class="num">40.21%</td><td class="num">8</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">17.13</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:6.77%"></div></div></div></td><td class="num">82.07%</td><td class="num">17.93%</td><td class="num">51.64%</td><td class="num">11.23%</td><td class="num">40.35%</td><td class="num">8</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">17.54</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:6.93%"></div></div></div></td><td class="num">82.30%</td><td class="num">17.70%</td><td class="num">51.65%</td><td class="num">11.30%</td><td class="num">40.29%</td><td class="num">8</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">17.28</td><td class="num">82.21%</td><td class="num">17.79%</td><td class="num">51.73%</td><td class="num">11.38%</td><td class="num">40.28%</td><td class="num">8</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_24_of_64<span>chunk_24_of_64 | capture occurrence 88 | effective seq len 393216</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">137.67 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">71.63%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">33.17%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">46.31%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">21.56%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">78.35%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[13]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">13</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">23.16</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:9.15%"></div></div></div></td><td class="num">86.56%</td><td class="num">13.44%</td><td class="num">63.92%</td><td class="num">14.15%</td><td class="num">49.72%</td><td class="num">13</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">24.03</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:9.50%"></div></div></div></td><td class="num">86.81%</td><td class="num">13.19%</td><td class="num">63.86%</td><td class="num">13.58%</td><td class="num">50.23%</td><td class="num">13</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">24.09</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:9.52%"></div></div></div></td><td class="num">86.94%</td><td class="num">13.06%</td><td class="num">64.43%</td><td class="num">13.74%</td><td class="num">50.64%</td><td class="num">13</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">23.76</td><td class="num">86.77%</td><td class="num">13.23%</td><td class="num">64.07%</td><td class="num">13.82%</td><td class="num">50.20%</td><td class="num">13</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_32_of_64<span>chunk_32_of_64 | capture occurrence 96 | effective seq len 524288</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">171.49 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">71.39%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">36.75%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">51.47%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">20.44%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">79.49%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[16]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">16</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">28.82</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:11.39%"></div></div></div></td><td class="num">89.45%</td><td class="num">10.55%</td><td class="num">71.16%</td><td class="num">14.89%</td><td class="num">56.22%</td><td class="num">16</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">29.62</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:11.70%"></div></div></div></td><td class="num">89.58%</td><td class="num">10.42%</td><td class="num">71.05%</td><td class="num">14.34%</td><td class="num">56.67%</td><td class="num">16</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">29.94</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:11.83%"></div></div></div></td><td class="num">89.64%</td><td class="num">10.36%</td><td class="num">71.71%</td><td class="num">14.52%</td><td class="num">57.15%</td><td class="num">16</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">29.46</td><td class="num">89.56%</td><td class="num">10.44%</td><td class="num">71.31%</td><td class="num">14.58%</td><td class="num">56.68%</td><td class="num">16</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_40_of_64<span>chunk_40_of_64 | capture occurrence 104 | effective seq len 655360</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">178.91 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">77.43%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">42.24%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">54.55%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">20.49%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">79.45%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[21]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">21</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">32.87</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:12.99%"></div></div></div></td><td class="num">90.71%</td><td class="num">9.29%</td><td class="num">74.59%</td><td class="num">15.63%</td><td class="num">58.91%</td><td class="num">21</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">33.78</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:13.35%"></div></div></div></td><td class="num">90.84%</td><td class="num">9.16%</td><td class="num">75.05%</td><td class="num">15.14%</td><td class="num">59.86%</td><td class="num">21</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">34.26</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:13.54%"></div></div></div></td><td class="num">90.96%</td><td class="num">9.04%</td><td class="num">75.00%</td><td class="num">15.26%</td><td class="num">59.70%</td><td class="num">21</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">33.64</td><td class="num">90.83%</td><td class="num">9.17%</td><td class="num">74.88%</td><td class="num">15.34%</td><td class="num">59.49%</td><td class="num">21</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_48_of_64<span>chunk_48_of_64 | capture occurrence 112 | effective seq len 786432</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">213.52 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">80.94%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">49.14%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">60.72%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">19.29%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">80.66%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[25]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">25</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">42.91</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:16.96%"></div></div></div></td><td class="num">92.82%</td><td class="num">7.18%</td><td class="num">80.49%</td><td class="num">15.76%</td><td class="num">64.68%</td><td class="num">25</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">43.45</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:17.17%"></div></div></div></td><td class="num">92.83%</td><td class="num">7.17%</td><td class="num">80.47%</td><td class="num">15.39%</td><td class="num">65.04%</td><td class="num">25</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">43.87</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:17.34%"></div></div></div></td><td class="num">92.83%</td><td class="num">7.17%</td><td class="num">80.75%</td><td class="num">15.48%</td><td class="num">65.24%</td><td class="num">25</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">43.41</td><td class="num">92.83%</td><td class="num">7.17%</td><td class="num">80.57%</td><td class="num">15.54%</td><td class="num">64.99%</td><td class="num">25</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_56_of_64<span>chunk_56_of_64 | capture occurrence 120 | effective seq len 917504</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">223.13 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">80.69%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">47.66%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">59.06%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">25.35%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">74.60%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[29]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">29</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">42.77</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:16.90%"></div></div></div></td><td class="num">92.85%</td><td class="num">7.15%</td><td class="num">80.47%</td><td class="num">20.84%</td><td class="num">59.59%</td><td class="num">29</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">44.59</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:17.62%"></div></div></div></td><td class="num">93.11%</td><td class="num">6.89%</td><td class="num">81.13%</td><td class="num">20.23%</td><td class="num">60.87%</td><td class="num">29</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">44.24</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:17.48%"></div></div></div></td><td class="num">92.96%</td><td class="num">7.04%</td><td class="num">80.80%</td><td class="num">20.40%</td><td class="num">60.36%</td><td class="num">29</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">43.87</td><td class="num">92.97%</td><td class="num">7.03%</td><td class="num">80.80%</td><td class="num">20.49%</td><td class="num">60.27%</td><td class="num">29</td></tr></tbody></table></div></details><details class="scenario-detail" open><summary>seq_1m_chunk_64_of_64<span>chunk_64_of_64 | capture occurrence 128 | effective seq len 1048576</span></summary><div class="detail-body"><div class="detail-grid"><div class="detail-card"><span class="label">Chunk time</span><span class="value">253.05 ms</span></div><div class="detail-card"><span class="label">Attention / chunk</span><span class="value">82.22%</span></div><div class="detail-card"><span class="label">Indexer / chunk</span><span class="value">51.46%</span></div><div class="detail-card"><span class="label">Indexer / attention</span><span class="value">62.59%</span></div><div class="detail-card"><span class="label">TopK / indexer</span><span class="value">23.47%</span></div><div class="detail-card"><span class="label">Logits / indexer</span><span class="value">76.31%</span></div><div class="detail-card"><span class="label">Observed TopK calls</span><span class="value">[32]</span></div><div class="detail-card"><span class="label">Expected TopK calls</span><span class="value">32</span></div></div><table><thead><tr><th>Layer</th><th>Decoder ms</th><th>Attention %</th><th>MLP %</th><th>Indexer %</th><th>TopK %</th><th>Logits %</th><th>TopK calls</th></tr></thead><tbody><tr><td>layer_2</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">50.90</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:20.11%"></div></div></div></td><td class="num">93.98%</td><td class="num">6.02%</td><td class="num">85.34%</td><td class="num">20.55%</td><td class="num">64.29%</td><td class="num">32</td></tr><tr><td>layer_4</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">51.55</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:20.37%"></div></div></div></td><td class="num">94.03%</td><td class="num">5.97%</td><td class="num">83.73%</td><td class="num">19.34%</td><td class="num">64.36%</td><td class="num">32</td></tr><tr><td>layer_6</td><td class="num"><div style="display:grid;gap:4px;"><span style="font-variant-numeric:tabular-nums;">51.95</span><div class="bar" style="height:8px;"><div class="fill chunk" style="width:20.53%"></div></div></div></td><td class="num">94.02%</td><td class="num">5.98%</td><td class="num">83.96%</td><td class="num">19.49%</td><td class="num">64.43%</td><td class="num">32</td></tr><tr><td><strong>avg sparse layer</strong></td><td class="num">51.47</td><td class="num">94.01%</td><td class="num">5.99%</td><td class="num">84.35%</td><td class="num">19.80%</td><td class="num">64.36%</td><td class="num">32</td></tr></tbody></table></div></details>
+      <div class="footnote">
+        Source of truth is <code>nsys stats --report nvtx_gpu_proj_sum</code>. The HTML is
+        generated from the same analysis payload as <code>summary.md</code> and
+        <code>scenario_summary.csv</code>.
+      </div>
+    </section>
+  </div>
+</body>
+</html>
