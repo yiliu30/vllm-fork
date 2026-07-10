@@ -87,7 +87,125 @@ def kv_cache_as_quant_view(
     return kv_cache.unsqueeze(-2)
 
 
+_FUNNEL_TOPK_MODES = ("exact", "fast", "turbo")
+import inspect
+
 def _prefill_topk_funnel_dense(
+    logits: torch.Tensor,
+    row_starts: torch.Tensor,
+    row_ends: torch.Tensor,
+    topk_indices: torch.Tensor,
+    topk_tokens: int,
+) -> None:
+    """Experimental funnel prefill adapter.
+
+    Prefer the ragged funnel prefill op when available, and fall back to the
+    older dense-mask + funnel_topk adapter for older funnel_topk builds.
+    Keeps the same output contract as top_k_per_row_prefill:
+    - indices are local to each row's [row_start, row_end) range
+    - invalid/excess slots are -1
+    """
+    mode = os.getenv(
+        "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE", "exact"
+    ).lower()
+    if mode not in _FUNNEL_TOPK_MODES:
+        raise ValueError(
+            "Invalid VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE: "
+            f"{mode}. Expected one of: {', '.join(_FUNNEL_TOPK_MODES)}"
+        )
+
+    try:
+        from funnel_topk import top_k_per_row_prefill_funnel
+        logger.warning_once(
+            "using funnel_topk ragged prefill op for prefill top-k "
+            "(VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense)"
+        )
+        ragged_kwargs = {}
+        if "mode" in inspect.signature(top_k_per_row_prefill_funnel).parameters:
+            ragged_kwargs["mode"] = mode
+        elif mode != "exact":
+            logger.warning_once(
+                "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE is ignored by "
+                "top_k_per_row_prefill_funnel; using the ragged funnel op "
+                "instead of the dense fallback path."
+            )
+        top_k_per_row_prefill_funnel(
+            logits,
+            row_starts,
+            row_ends,
+            topk_indices,
+            logits.shape[0],
+            logits.stride(0),
+            logits.stride(1),
+            topk_tokens,
+            **ragged_kwargs,
+        )
+        return
+    except Exception:
+        logger.warning_once(
+            "falling back to funnel_topk dense adapter for prefill top-k "
+            "(VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense)"
+        )
+        pass
+
+    try:
+        from funnel_topk.funnel import funnel_topk
+        logger.warning_once(
+            "using funnel_topk dense fallback for prefill top-k "
+            "(VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense), "
+            f"mode={mode}"
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense requires "
+            "funnel_topk to be importable. Install funnel-topk or set "
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=native."
+        ) from exc
+
+    topk_indices.fill_(-1)
+    if topk_tokens <= 0 or logits.numel() == 0:
+        return
+
+    num_cols = logits.shape[1]
+    if num_cols == 0:
+        return
+
+    k = min(topk_tokens, num_cols)
+
+    starts = row_starts.to(dtype=torch.int32, device=logits.device).view(-1, 1)
+    ends = row_ends.to(dtype=torch.int32, device=logits.device).view(-1, 1)
+    cols = torch.arange(num_cols, dtype=torch.int32, device=logits.device).view(1, -1)
+
+    valid_mask = (cols >= starts) & (cols < ends)
+    masked_logits = logits.masked_fill(~valid_mask, float("-inf"))
+
+    funnel_kwargs = {
+        "k": k,
+        "dim": -1,
+        "largest": True,
+        "sorted": True,
+    }
+    if "mode" in inspect.signature(funnel_topk).parameters:
+        funnel_kwargs["mode"] = mode
+    elif mode != "exact":
+        raise RuntimeError(
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE requires a "
+            "funnel_topk build that supports mode=fast/turbo. Upgrade "
+            "funnel-topk or set "
+            "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE=exact."
+        )
+
+    values, abs_indices = funnel_topk(masked_logits, **funnel_kwargs)
+
+    local_indices = abs_indices.to(torch.int32) - starts
+    local_indices = torch.where(
+        values == float("-inf"),
+        torch.full_like(local_indices, -1, dtype=torch.int32),
+        local_indices,
+    )
+    topk_indices[:, :k] = local_indices
+
+def __prefill_topk_funnel_dense(
     logits: torch.Tensor,
     row_starts: torch.Tensor,
     row_ends: torch.Tensor,
