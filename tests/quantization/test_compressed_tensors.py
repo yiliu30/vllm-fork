@@ -5,6 +5,8 @@
 Run `pytest tests/quantization/test_compressed_tensors.py`.
 """
 
+import sys
+import types
 from contextlib import contextmanager
 from unittest.mock import Mock
 
@@ -20,7 +22,10 @@ from compressed_tensors.quantization import (
 from tests.models.utils import check_logprobs_close
 from vllm.model_executor.kernels.linear import (
     Fp8BlockScaledMMLinearKernel,
+    MPLinearLayerConfig,
+    choose_mp_linear_kernel,
 )
+from vllm.model_executor.kernels.linear.mixed_precision import ARKLinearKernel
 from vllm.model_executor.layers.fused_moe import UnquantizedFusedMoEMethod
 from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors import (  # noqa: E501
     CompressedTensorsConfig,
@@ -40,7 +45,8 @@ from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
 )
 from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from vllm.platforms import current_platform
+from vllm.platforms import PlatformEnum, current_platform
+from vllm.scalar_type import scalar_types
 from vllm.v1.attention.backends.fa_utils import get_flash_attn_version
 
 # AITER only supports per-channel-per-channel INT8 gemm
@@ -866,6 +872,232 @@ def test_scheme_selection(
         f"input_act={input_act} + output_act={output_act} + "
         f"format={format}, got {type(scheme).__name__}"
     )
+
+
+def test_ark_kernel_selected_for_xpu_int2(monkeypatch):
+    monkeypatch.setattr(current_platform, "_enum", PlatformEnum.XPU, raising=False)
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
+
+    config = MPLinearLayerConfig(
+        full_weight_shape=(64, 64),
+        partition_weight_shape=(64, 64),
+        act_type=torch.bfloat16,
+        weight_type=scalar_types.uint2b2,
+        group_size=64,
+        zero_points=False,
+        has_g_idx=False,
+    )
+
+    kernel = choose_mp_linear_kernel(config)
+    assert kernel is ARKLinearKernel
+
+
+def test_compressed_tensors_wna16_uses_ark_kernel_on_xpu(monkeypatch):
+    monkeypatch.setattr(current_platform, "_enum", PlatformEnum.XPU, raising=False)
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
+
+    class DummyLayer(torch.nn.Module):
+        pass
+
+    layer = DummyLayer()
+    scheme = CompressedTensorsWNA16(
+        num_bits=2,
+        strategy=QuantizationStrategy.GROUP.value,
+        symmetric=True,
+        group_size=64,
+    )
+
+    scheme.create_weights(
+        layer=layer,
+        output_size=64,
+        input_size=64,
+        output_partition_sizes=[64],
+        input_size_per_partition=64,
+        params_dtype=torch.bfloat16,
+        weight_loader=lambda *args, **kwargs: None,
+    )
+
+    assert isinstance(scheme.kernel, ARKLinearKernel)
+
+
+def test_ark_kernel_repacks_compressed_tensors_int2_weights(monkeypatch):
+    monkeypatch.setattr(current_platform, "_enum", PlatformEnum.XPU, raising=False)
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
+
+    class DummyQuantLinear(torch.nn.Module):
+        def __init__(
+            self,
+            bits: int,
+            group_size: int,
+            sym: bool,
+            in_features: int,
+            out_features: int,
+            bias: bool,
+        ) -> None:
+            super().__init__()
+            assert bits == 2
+            assert group_size == 64
+            assert sym is True
+            self.qweight = torch.nn.Parameter(
+                torch.empty(in_features // 16, out_features, dtype=torch.int32),
+                requires_grad=False,
+            )
+            self.scales = torch.nn.Parameter(
+                torch.empty(in_features // group_size, out_features),
+                requires_grad=False,
+            )
+            bias_tensor = (
+                torch.zeros(out_features, dtype=torch.bfloat16)
+                if bias
+                else torch.empty(0, dtype=torch.bfloat16)
+            )
+            self.bias = torch.nn.Parameter(bias_tensor, requires_grad=False)
+            self.cdt = "auto"
+            self.wdt = "int2_clip"
+            self.sdt = "fp32"
+
+        def to(self, device):
+            return self
+
+        def post_init(self) -> None:
+            self.qweight = torch.nn.Parameter(
+                self.qweight.detach().reshape(-1).clone(),
+                requires_grad=False,
+            )
+
+    ark_module = types.ModuleType("auto_round_kernel")
+    ark_qlinear_module = types.ModuleType("auto_round_kernel.qlinear")
+    ark_qlinear_module.QuantLinear = DummyQuantLinear
+    monkeypatch.setitem(sys.modules, "auto_round_kernel", ark_module)
+    monkeypatch.setitem(sys.modules, "auto_round_kernel.qlinear", ark_qlinear_module)
+
+    class DummyLayer(torch.nn.Module):
+        pass
+
+    layer = DummyLayer()
+    layer.has_bias = False
+    scheme = CompressedTensorsWNA16(
+        num_bits=2,
+        strategy=QuantizationStrategy.GROUP.value,
+        symmetric=True,
+        group_size=64,
+    )
+    scheme.create_weights(
+        layer=layer,
+        output_size=64,
+        input_size=64,
+        output_partition_sizes=[64],
+        input_size_per_partition=64,
+        params_dtype=torch.bfloat16,
+        weight_loader=lambda *args, **kwargs: None,
+    )
+
+    layer.weight_packed.data.copy_(
+        torch.arange(layer.weight_packed.numel(), dtype=torch.int32).reshape(
+            layer.weight_packed.shape
+        )
+    )
+    layer.weight_scale.data.copy_(
+        torch.arange(layer.weight_scale.numel(), dtype=torch.bfloat16).reshape(
+            layer.weight_scale.shape
+        )
+    )
+
+    scheme.process_weights_after_loading(layer)
+
+    assert isinstance(layer.ark_qweight, torch.nn.Parameter)
+    assert layer.ark_qweight.shape == (256,)
+    assert layer.ark_qweight.dtype == torch.int32
+    assert layer.ark_bias.shape == (0,)
+    assert layer.ark_compute_type == "int8"
+    assert layer.ark_weight_type == "int2_clip"
+    assert layer.ark_scale_type == "fp16"
+    assert layer.ark_in_features == 64
+    assert layer.ark_out_features == 64
+    assert layer.ark_group_size == 64
+    assert not hasattr(layer, "weight_scale")
+
+
+def test_ark_kernel_preserves_post_init_dtypes(monkeypatch):
+    monkeypatch.setattr(current_platform, "_enum", PlatformEnum.XPU, raising=False)
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
+
+    class DummyQuantLinear(torch.nn.Module):
+        def __init__(
+            self,
+            bits: int,
+            group_size: int,
+            sym: bool,
+            in_features: int,
+            out_features: int,
+            bias: bool,
+        ) -> None:
+            super().__init__()
+            assert bits == 2
+            assert group_size == 64
+            assert sym is True
+            self.qweight = torch.nn.Parameter(
+                torch.zeros(in_features // 16, out_features, dtype=torch.int32),
+                requires_grad=False,
+            )
+            self.scales = torch.nn.Parameter(
+                torch.zeros(in_features // group_size, out_features),
+                requires_grad=False,
+            )
+            self.bias = torch.nn.Parameter(
+                torch.empty(0, dtype=torch.float16)
+                if not bias else torch.zeros(out_features, dtype=torch.float16),
+                requires_grad=False,
+            )
+            self.cdt = "int8"
+            self.wdt = "int2"
+            self.sdt = "fp16"
+            self.torch_dt = torch.float16
+
+        def to(self, device):
+            return self
+
+        def post_init(self) -> None:
+            self.cdt = "fp16"
+            self.sdt = "fp16"
+            self.torch_dt = torch.float16
+            self.qweight = torch.nn.Parameter(
+                self.qweight.detach().reshape(-1).clone(),
+                requires_grad=False,
+            )
+
+    ark_module = types.ModuleType("auto_round_kernel")
+    ark_qlinear_module = types.ModuleType("auto_round_kernel.qlinear")
+    ark_qlinear_module.QuantLinear = DummyQuantLinear
+    monkeypatch.setitem(sys.modules, "auto_round_kernel", ark_module)
+    monkeypatch.setitem(sys.modules, "auto_round_kernel.qlinear", ark_qlinear_module)
+
+    class DummyLayer(torch.nn.Module):
+        pass
+
+    layer = DummyLayer()
+    layer.has_bias = False
+    scheme = CompressedTensorsWNA16(
+        num_bits=2,
+        strategy=QuantizationStrategy.GROUP.value,
+        symmetric=True,
+        group_size=64,
+    )
+    scheme.create_weights(
+        layer=layer,
+        output_size=64,
+        input_size=64,
+        output_partition_sizes=[64],
+        input_size_per_partition=64,
+        params_dtype=torch.bfloat16,
+        weight_loader=lambda *args, **kwargs: None,
+    )
+
+    scheme.process_weights_after_loading(layer)
+
+    assert layer.ark_compute_type == "fp16"
+    assert layer.ark_scale_type == "fp16"
+    assert layer.ark_torch_dtype is torch.float16
 
 
 @pytest.mark.skipif(

@@ -4,6 +4,9 @@
 from vllm.model_executor.kernels.linear.mixed_precision.allspark import (
     AllSparkLinearKernel,
 )
+from vllm.model_executor.kernels.linear.mixed_precision.ark_xpu import (
+    ARKLinearKernel,
+)
 from vllm.model_executor.kernels.linear.mixed_precision.conch import (
     ConchLinearKernel,
 )
@@ -53,6 +56,7 @@ __all__ = [
     "MPLinearKernel",
     "MPLinearLayerConfig",
     "AllSparkLinearKernel",
+    "ARKLinearKernel",
     "ConchLinearKernel",
     "CPUWNA16LinearKernel",
     "CutlassW4A8LinearKernel",

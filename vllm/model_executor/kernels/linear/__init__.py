@@ -30,6 +30,9 @@ from vllm.model_executor.kernels.linear.mixed_precision import (
 from vllm.model_executor.kernels.linear.mixed_precision.allspark import (
     AllSparkLinearKernel,
 )
+from vllm.model_executor.kernels.linear.mixed_precision.ark_xpu import (
+    ARKLinearKernel,
+)
 from vllm.model_executor.kernels.linear.mixed_precision.conch import (
     ConchLinearKernel,
 )
@@ -292,6 +295,7 @@ _LINEAR_BACKEND_KERNEL_MAP: dict[str, set[type]] = {
         EmulationNvFp4LinearKernel,
     },
     "xpu": {
+        ARKLinearKernel,
         XPUW8A8FP8LinearKernel,
         XPUFp8BlockScaledMMKernel,
     },
@@ -412,6 +416,7 @@ _POSSIBLE_KERNELS: dict[PlatformEnum, list[type[MPLinearKernel]]] = {
         ExllamaLinearKernel,
     ],
     PlatformEnum.XPU: [
+        ARKLinearKernel,
         XPUW4A8IntLinearKernel,
         XPUwNa16LinearKernel,
     ],
