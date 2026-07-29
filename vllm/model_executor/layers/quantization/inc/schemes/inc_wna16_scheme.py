@@ -93,7 +93,44 @@ class INCWna16Scheme(INCScheme):
         prefix: str,
         layer_config: "INCLayerConfig",
     ):
-        del config, prefix
+        del config
+
+        if (
+            current_platform.is_xpu()
+            and layer_config.is_gptq
+            and layer_config.bits == 4
+            and layer_config.sym
+        ):
+            from .inc_ark_ops import get_ark_state
+            from .inc_wna16_moe import (
+                INCARKWNA16MoEMethod,
+                INCWNA16MoEScheme,
+            )
+            from vllm.model_executor.layers.quantization.moe_wna16 import (
+                MoeWNA16Config,
+            )
+
+            is_ark_available, ark_error, _, _ = get_ark_state()
+            if is_ark_available:
+                moe_config = MoeWNA16Config.from_config(
+                    {
+                        "quant_method": "gptq",
+                        "bits": layer_config.bits,
+                        "group_size": layer_config.group_size,
+                        "sym": layer_config.sym,
+                        "lm_head": False,
+                    }
+                )
+                return INCARKWNA16MoEMethod(moe_config, layer.moe_config)
+
+            logger.info(
+                "ARK backend is unavailable for MoE layer %s; "
+                "falling back to the default WNA16 MoE path. Error: %s",
+                prefix,
+                ark_error or "unknown error",
+            )
+
+            return INCWNA16MoEScheme(layer_config).get_method(layer)
 
         from .inc_wna16_moe import INCWNA16MoEScheme
 
