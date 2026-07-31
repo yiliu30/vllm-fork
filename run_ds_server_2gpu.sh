@@ -66,7 +66,7 @@ SERVE_CMD=(
   --tool-call-parser deepseek_v4
   --enable-auto-tool-choice
   --reasoning-parser deepseek_v4
-  --gpu-memory-utilization 0.9
+  --gpu-memory-utilization 0.75
   --kernel-config.enable_flashinfer_autotune=False
   --port "${PORT}"
 )

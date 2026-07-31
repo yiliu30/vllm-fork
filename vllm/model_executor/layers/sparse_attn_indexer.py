@@ -115,21 +115,21 @@ def _prefill_topk_funnel_dense(
         )
 
     try:
-        from funnel_topk import top_k_per_row_prefill_funnel
+        from funnel_topk import top_k_per_row_prefill_funnel_v1
         logger.warning_once(
-            "using funnel_topk ragged prefill op for prefill top-k "
+            "using funnel_topk ragged prefill v1 op for prefill top-k "
             "(VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense)"
         )
         ragged_kwargs = {}
-        if "mode" in inspect.signature(top_k_per_row_prefill_funnel).parameters:
+        if "mode" in inspect.signature(top_k_per_row_prefill_funnel_v1).parameters:
             ragged_kwargs["mode"] = mode
         elif mode != "exact":
             logger.warning_once(
                 "VLLM_SPARSE_INDEXER_PREFILL_TOPK_FUNNEL_MODE is ignored by "
-                "top_k_per_row_prefill_funnel; using the ragged funnel op "
+                "top_k_per_row_prefill_funnel_v1; using the ragged funnel op "
                 "instead of the dense fallback path."
             )
-        top_k_per_row_prefill_funnel(
+        top_k_per_row_prefill_funnel_v1(
             logits,
             row_starts,
             row_ends,
@@ -146,7 +146,9 @@ def _prefill_topk_funnel_dense(
             "falling back to funnel_topk dense adapter for prefill top-k "
             "(VLLM_SPARSE_INDEXER_PREFILL_TOPK_BACKEND=funnel_dense)"
         )
-        pass
+        raise RuntimeError(
+            "Falling back to funnel_topk dense adapter failed."
+        )
 
     try:
         from funnel_topk.funnel import funnel_topk
