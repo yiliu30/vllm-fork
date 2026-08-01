@@ -7,6 +7,7 @@ MODEL_PATH="${MODEL_PATH:-/storage/yiliu7/deepseek-ai/DeepSeek-V4-Flash/}"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/logs/ds_sweep}"
 PORT="${PORT:-8000}"
 CONFIG="${1:-turbo_funnel_dense}"
+TMPDIR="${TMPDIR:-$HOME/tmp_vllm_triton}"
 
 usage() {
   cat <<'EOF'
@@ -45,6 +46,7 @@ case "${CONFIG}" in
 esac
 
 mkdir -p "${LOG_DIR}"
+mkdir -p "${TMPDIR}"
 LOG_FILE="${LOG_DIR}/server_${CONFIG}.log"
 
 exec > >(tee -a "${LOG_FILE}") 2>&1
@@ -53,6 +55,7 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting DeepSeek-V4-Flash server"
 echo "Config: ${CONFIG_DESC}"
 echo "Port: ${PORT}"
 echo "Log file: ${LOG_FILE}"
+echo "TMPDIR: ${TMPDIR}"
 
 SERVE_CMD=(
   "${VLLM_BIN}" serve "${MODEL_PATH}"
@@ -66,14 +69,19 @@ SERVE_CMD=(
   --tool-call-parser deepseek_v4
   --enable-auto-tool-choice
   --reasoning-parser deepseek_v4
-  --gpu-memory-utilization 0.75
+  --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.75}"
   --kernel-config.enable_flashinfer_autotune=False
   --port "${PORT}"
 )
 
+if [[ "${DISABLE_CUSTOM_ALL_REDUCE:-0}" == "1" ]]; then
+  SERVE_CMD+=(--disable-custom-all-reduce)
+fi
+
 exec env \
   "${ENV_ARGS[@]}" \
   VLLM_DEEP_GEMM_WARMUP=skip \
+  TMPDIR="${TMPDIR}" \
   CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-6,7}" \
   PYTHONPATH="${SCRIPT_DIR}/../funnel-topk:${PYTHONPATH:-}" \
   VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR="${VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR:-$HOME/.cache/vllm_flashinfer_autotune}" \
