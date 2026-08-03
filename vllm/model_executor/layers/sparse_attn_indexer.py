@@ -40,9 +40,13 @@ from vllm.v1.attention.backends.mla.triton_fused_page_topk import (
     fused_qk_page_topk,
     fused_qk_page_topk_refined,
 )
-from vllm.v1.attention.backends.mla.prefill_observation import (
-    record_prefill_runtime_topk,
-)
+try:
+    from vllm.v1.attention.backends.mla.prefill_observation import (
+        record_prefill_runtime_topk,
+    )
+except ImportError:
+    def record_prefill_runtime_topk(*args, **kwargs) -> None:
+        return None
 from vllm.v1.attention.ops.common import pack_seq_triton, unpack_seq_triton
 from vllm.v1.worker.workspace import current_workspace_manager
 

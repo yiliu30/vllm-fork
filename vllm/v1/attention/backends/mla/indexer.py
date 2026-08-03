@@ -31,11 +31,21 @@ from vllm.v1.attention.backend import (
     MultipleOf,
 )
 from vllm.v1.attention.backends.mla.compressor_utils import get_compressed_slot_mapping
-from vllm.v1.attention.backends.mla.prefill_observation import (
-    allocate_prefill_observation_id,
-    prefill_observation_enabled,
-    record_prefill_chunk_metadata,
-)
+try:
+    from vllm.v1.attention.backends.mla.prefill_observation import (
+        allocate_prefill_observation_id,
+        prefill_observation_enabled,
+        record_prefill_chunk_metadata,
+    )
+except ImportError:
+    def allocate_prefill_observation_id():
+        return None
+
+    def prefill_observation_enabled() -> bool:
+        return False
+
+    def record_prefill_chunk_metadata(*args, **kwargs) -> None:
+        return None
 from vllm.v1.attention.backends.utils import (
     get_dcp_local_seq_lens,
     split_decodes_and_prefills,
