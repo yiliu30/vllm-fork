@@ -12,11 +12,17 @@ from .inc_scheme import INCLinearScheme
 
 
 class INCFp8LinearScheme(INCLinearScheme):
-    def __init__(self, prefix: str, weight_block_size: tuple[int, int]) -> None:
+    def __init__(
+        self,
+        prefix: str,
+        weight_block_size: tuple[int, int] | None = None,
+    ) -> None:
         self.quant_config = Fp8Config(
             is_checkpoint_fp8_serialized=True,
             activation_scheme="dynamic",
-            weight_block_size=list(weight_block_size),
+            weight_block_size=(
+                list(weight_block_size) if weight_block_size is not None else None
+            ),
         )
         self.inner_method = Fp8LinearMethod(self.quant_config)
         self.inner_method.marlin_input_dtype = get_marlin_input_dtype(prefix)

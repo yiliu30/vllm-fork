@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 class INCFp8Scheme(INCScheme):
     @staticmethod
     def can_handle(layer_config: "INCLayerConfig") -> bool:
-        return layer_config.is_fp8_block
+        return layer_config.is_fp8
 
     def get_linear_method(
         self,
@@ -27,13 +27,44 @@ class INCFp8Scheme(INCScheme):
     ):
         del config, layer
 
-        assert isinstance(layer_config.group_size, tuple)
-
         from .inc_fp8_linear import INCFp8LinearScheme
+
+        weight_block_size = (
+            layer_config.group_size
+            if isinstance(layer_config.group_size, tuple)
+            else None
+        )
 
         return INCLinearMethod(
             INCFp8LinearScheme(
                 prefix=prefix,
-                weight_block_size=layer_config.group_size,
+                weight_block_size=weight_block_size,
             )
         )
+
+    def get_moe_method(
+        self,
+        config: "INCConfig",
+        layer: "torch.nn.Module",
+        prefix: str,
+        layer_config: "INCLayerConfig",
+    ):
+        del config, prefix
+
+        if layer_config.is_fp8_block:
+            from vllm.model_executor.layers.quantization.fp8 import (
+                Fp8Config,
+                Fp8MoEMethod,
+            )
+
+            assert isinstance(layer_config.group_size, tuple)
+            quant_config = Fp8Config(
+                is_checkpoint_fp8_serialized=True,
+                activation_scheme="dynamic",
+                weight_block_size=list(layer_config.group_size),
+            )
+            return Fp8MoEMethod(quant_config, layer)
+
+        from .inc_fp8_moe import INCFp8MoEScheme
+
+        return INCFp8MoEScheme(layer_config).get_method(layer)

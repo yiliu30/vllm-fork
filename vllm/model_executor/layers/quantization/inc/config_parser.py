@@ -37,24 +37,28 @@ class INCLayerConfig:
         return self.data_type == "int" and self.quantized
 
     @property
+    def is_fp8(self) -> bool:
+        return self.data_type == "fp" and self.bits == 8 and self.sym and self.quantized
+
+    @property
+    def is_fp8_block(self) -> bool:
+        return (
+            self.is_fp8
+            and isinstance(self.group_size, tuple)
+            and len(self.group_size) == 2
+        )
+
+    @property
+    def is_fp8_w8a16(self) -> bool:
+        return self.is_fp8 and isinstance(self.group_size, int)
+
+    @property
     def is_mxfp4(self) -> bool:
         return "mx_fp" in self.data_type and self.bits == 4
 
     @property
     def is_mxfp8(self) -> bool:
         return "mx_fp" in self.data_type and self.bits == 8
-
-    @property
-    def is_fp8_block(self) -> bool:
-        return (
-            self.data_type == "fp"
-            and self.bits == 8
-            and self.sym
-            and self.quantized
-            and self.packing_format == "auto_round:fp8"
-            and isinstance(self.group_size, tuple)
-            and len(self.group_size) == 2
-        )
 
 
 class INCConfigParser:
