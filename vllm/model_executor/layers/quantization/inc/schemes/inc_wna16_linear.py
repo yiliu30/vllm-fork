@@ -7,16 +7,23 @@ import torch
 from torch.nn.parameter import Parameter
 
 from vllm.logger import init_logger
+from vllm.model_executor.kernels.linear import (
+    MPLinearLayerConfig,
+    choose_mp_linear_kernel,
+)
 from vllm.model_executor.layers.quantization.auto_awq import AutoAWQConfig
 from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
 from vllm.model_executor.layers.quantization.utils.marlin_utils import (
     check_marlin_supported,
+    marlin_repeat_scales_on_all_ranks,
 )
 from vllm.model_executor.parameter import (
+    ChannelQuantScaleParameter,
     GroupQuantScaleParameter,
     PackedvLLMParameter,
     RowvLLMParameter,
 )
+from vllm.platforms import current_platform
 from vllm.scalar_type import scalar_types
 
 from .inc_scheme import INCLinearScheme
@@ -27,46 +34,26 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-class INCHummingLinearMethod(INCLinearScheme):
-    """Humming linear method for symmetric INC INT2 AutoGPTQ weights."""
+class INCWNA16LinearMethod(INCLinearScheme):
+    """Chooser-based linear method for symmetric INC GPTQ W2/W4 weights."""
+
+    _TYPE_MAP = {
+        2: scalar_types.uint2b2,
+        4: scalar_types.uint4b8,
+    }
+    _kernel_backends_being_used: set[str] = set()
 
     def __init__(self, layer_config: "INCLayerConfig") -> None:
-        from vllm.model_executor.kernels.linear import HummingLinearKernel
-        from vllm.model_executor.layers.quantization.humming import (
-            HummingLayerQuantizationConfig,
-            HummingLinearMethod,
-        )
-        from vllm.platforms import current_platform
-        from vllm.utils.humming import GPTQWeightSchema
-        from vllm.utils.import_utils import has_humming
-
-        if not current_platform.is_cuda():
-            raise NotImplementedError("INC INT2 with Humming requires CUDA.")
-        if not current_platform.has_device_capability(
-            HummingLinearKernel.get_min_capability()
-        ):
-            raise NotImplementedError("INC INT2 with Humming requires SM75 or newer.")
-        if not has_humming():
-            raise NotImplementedError(
-                "INC INT2 on CUDA requires the optional Humming package."
-            )
         if not layer_config.is_gptq or not layer_config.sym:
             raise NotImplementedError(
-                "INC INT2 with Humming requires symmetric AutoGPTQ packing."
+                "INC chooser-based WNA16 requires symmetric AutoGPTQ packing."
             )
-        if layer_config.backend != "auto":
-            raise NotImplementedError("INC INT2 with Humming requires backend='auto'.")
-
-        self.inner_method = HummingLinearMethod(
-            HummingLayerQuantizationConfig(
-                weight_schema=GPTQWeightSchema(
-                    bits=layer_config.bits,
-                    group_size=layer_config.group_size,
-                    desc_act=False,
-                    sym=True,
-                )
+        if layer_config.bits not in self._TYPE_MAP:
+            raise NotImplementedError(
+                "INC chooser-based WNA16 supports only symmetric W2 and W4."
             )
-        )
+        self.layer_config = layer_config
+        self.kernel = None
 
     @classmethod
     def get_min_capability(cls) -> int:
@@ -82,19 +69,115 @@ class INCHummingLinearMethod(INCLinearScheme):
         params_dtype: torch.dtype,
         **extra_weight_attrs,
     ) -> None:
-        logger.info_once("Using HummingLinearKernel for INC INT2 linear layers.")
-        self.inner_method.create_weights(
-            layer=layer,
-            input_size_per_partition=input_size_per_partition,
-            output_partition_sizes=output_partition_sizes,
-            input_size=input_size,
-            output_size=output_size,
-            params_dtype=params_dtype,
-            **extra_weight_attrs,
+        output_size_per_partition = sum(output_partition_sizes)
+        is_row_parallel = input_size != input_size_per_partition
+        weight_loader = extra_weight_attrs.get("weight_loader")
+        bits = self.layer_config.bits
+        pack_factor = 32 // bits
+
+        mp_linear_kernel_config = MPLinearLayerConfig(
+            full_weight_shape=(input_size, output_size),
+            partition_weight_shape=(
+                input_size_per_partition,
+                output_size_per_partition,
+            ),
+            weight_type=self._TYPE_MAP[bits],
+            act_type=params_dtype,
+            group_size=self.layer_config.group_size,
+            zero_points=False,
+            has_g_idx=False,
+        )
+
+        kernel_type = choose_mp_linear_kernel(mp_linear_kernel_config)
+        if kernel_type.__name__ not in self._kernel_backends_being_used:
+            logger.info(
+                "Using %s for INC W%dA16 linear layers",
+                kernel_type.__name__,
+                bits,
+            )
+            self._kernel_backends_being_used.add(kernel_type.__name__)
+
+        group_size = (
+            self.layer_config.group_size
+            if self.layer_config.group_size != -1
+            else input_size
+        )
+        if marlin_repeat_scales_on_all_ranks(
+            False, self.layer_config.group_size, is_row_parallel
+        ):
+            scales_and_zp_input_dim = None
+            scales_and_zp_size = input_size // group_size
+        else:
+            scales_and_zp_input_dim = 0
+            scales_and_zp_size = input_size_per_partition // group_size
+
+        qweight = PackedvLLMParameter(
+            data=torch.empty(
+                input_size_per_partition // pack_factor,
+                output_size_per_partition,
+                dtype=torch.int32,
+            ),
+            input_dim=0,
+            output_dim=1,
+            packed_dim=0,
+            packed_factor=pack_factor,
+            weight_loader=weight_loader,
+        )
+        g_idx = RowvLLMParameter(
+            data=torch.empty(input_size_per_partition, dtype=torch.int32),
+            input_dim=0,
+            weight_loader=weight_loader,
+        )
+        qzeros = PackedvLLMParameter(
+            data=torch.empty(
+                scales_and_zp_size,
+                output_size_per_partition // pack_factor,
+                dtype=torch.int32,
+            ),
+            input_dim=0,
+            output_dim=1,
+            packed_dim=1,
+            packed_factor=pack_factor,
+            weight_loader=weight_loader,
+        )
+        scale_args = {
+            "data": torch.empty(
+                scales_and_zp_size,
+                output_size_per_partition,
+                dtype=params_dtype,
+            ),
+            "weight_loader": weight_loader,
+        }
+        if scales_and_zp_input_dim is None:
+            scales = ChannelQuantScaleParameter(output_dim=1, **scale_args)
+        else:
+            scales = GroupQuantScaleParameter(
+                output_dim=1, input_dim=0, **scale_args
+            )
+
+        layer.register_parameter("qweight", qweight)
+        layer.register_parameter("g_idx", g_idx)
+        layer.register_parameter("scales", scales)
+        layer.register_parameter("qzeros", qzeros)
+        self.kernel = kernel_type(
+            mp_linear_kernel_config,
+            w_q_param_name="qweight",
+            w_s_param_name="scales",
+            w_zp_param_name="qzeros",
+            w_gidx_param_name="g_idx",
         )
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        self.inner_method.process_weights_after_loading(layer)
+        assert self.kernel is not None
+        self.kernel.process_weights_after_loading(layer)
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.apply_weights(layer, x, bias)
 
     def apply_weights(
         self,
@@ -102,7 +185,8 @@ class INCHummingLinearMethod(INCLinearScheme):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        return self.inner_method.apply(layer, x, bias)
+        assert self.kernel is not None
+        return self.kernel.apply_weights(layer, x, bias)
 
 
 class INCWNA16LinearScheme(INCLinearScheme):
@@ -124,6 +208,14 @@ class INCWNA16LinearScheme(INCLinearScheme):
         )
 
     def _build_gptq_method(self):
+        if (
+            not current_platform.is_cpu()
+            and current_platform.is_cuda()
+            and self.layer_config.bits in (2, 4)
+            and self.layer_config.sym
+        ):
+            return INCWNA16LinearMethod(self.layer_config)
+
         gptq_type_map = {
             (4, True): scalar_types.uint4b8,
             (8, True): scalar_types.uint8b128,

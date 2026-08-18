@@ -35,7 +35,7 @@ from vllm.model_executor.layers.quantization.inc.schemes.inc_scheme import (
 )
 from vllm.model_executor.layers.quantization.inc.schemes.inc_wna16_linear import (
     INCARKLinearMethod,
-    INCHummingLinearMethod,
+    INCWNA16LinearMethod,
     INCWNA16LinearScheme,
     INCXPULinearMethod,
 )
@@ -954,17 +954,10 @@ def test_inc_mixed_int2_mlp_int4_attention_config() -> None:
     assert (attention.bits, attention.group_size) == (4, 128)
 
 
-def test_wna16_cuda_int2_uses_humming(monkeypatch) -> None:
+def test_wna16_cuda_int2_uses_shared_kernel_chooser(monkeypatch) -> None:
     monkeypatch.setattr(current_platform, "is_xpu", lambda: False)
     monkeypatch.setattr(current_platform, "is_cpu", lambda: False)
     monkeypatch.setattr(current_platform, "is_cuda", lambda: True)
-    monkeypatch.setattr(
-        current_platform, "has_device_capability", lambda capability: capability <= 100
-    )
-    monkeypatch.setattr(
-        "vllm.utils.import_utils.has_humming",
-        lambda: True,
-    )
 
     method = INCWna16Scheme().get_linear_method(
         make_config(weight_bits=2, group_size=128),
@@ -974,15 +967,35 @@ def test_wna16_cuda_int2_uses_humming(monkeypatch) -> None:
     )
 
     assert isinstance(method, INCLinearMethod)
-    assert isinstance(method.scheme, INCHummingLinearMethod)
+    assert isinstance(method.scheme, INCWNA16LinearScheme)
+    assert isinstance(method.scheme.inner_method, INCWNA16LinearMethod)
 
 
-def test_inc_humming_int2_create_weights(monkeypatch) -> None:
-    monkeypatch.setattr(current_platform, "is_cuda", lambda: True)
+@pytest.mark.parametrize("bits,expected_qweight_rows", [(2, 16), (4, 32)])
+def test_inc_wna16_chooser_create_weights(
+    monkeypatch, bits: int, expected_qweight_rows: int
+) -> None:
+    class DummyKernel:
+        def __init__(self, config, **kwargs) -> None:
+            self.config = config
+            self.kwargs = kwargs
+
+        def process_weights_after_loading(self, layer) -> None:
+            pass
+
+        def apply_weights(self, layer, x, bias=None):
+            return x
+
     monkeypatch.setattr(
-        current_platform, "has_device_capability", lambda capability: capability <= 100
+        "vllm.model_executor.layers.quantization.inc.schemes.inc_wna16_linear."
+        "choose_mp_linear_kernel",
+        lambda config: DummyKernel,
     )
-    monkeypatch.setattr("vllm.utils.import_utils.has_humming", lambda: True)
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes.inc_wna16_linear."
+        "marlin_repeat_scales_on_all_ranks",
+        lambda *args: False,
+    )
     monkeypatch.setattr(
         "vllm.model_executor.parameter.get_tensor_model_parallel_rank",
         lambda: 0,
@@ -993,7 +1006,7 @@ def test_inc_humming_int2_create_weights(monkeypatch) -> None:
     )
 
     layer = torch.nn.Module()
-    method = INCHummingLinearMethod(make_layer_config(bits=2, group_size=128))
+    method = INCWNA16LinearMethod(make_layer_config(bits=bits, group_size=128))
     method.create_weights(
         layer=layer,
         input_size_per_partition=256,
@@ -1004,23 +1017,11 @@ def test_inc_humming_int2_create_weights(monkeypatch) -> None:
         weight_loader=lambda *args, **kwargs: None,
     )
 
-    assert layer.qweight.shape == (16, 256)
+    assert layer.qweight.shape == (expected_qweight_rows, 256)
     assert layer.scales.shape == (2, 256)
-    assert layer.qzeros.shape == (2, 16)
+    assert layer.qzeros.shape == (2, 256 // (32 // bits))
     assert layer.g_idx.shape == (256,)
-    assert method.inner_method.weight_schema.bits == 2
-    assert method.inner_method.weight_schema.sym
-
-
-def test_inc_humming_int2_requires_humming(monkeypatch) -> None:
-    monkeypatch.setattr(current_platform, "is_cuda", lambda: True)
-    monkeypatch.setattr(
-        current_platform, "has_device_capability", lambda capability: capability <= 100
-    )
-    monkeypatch.setattr("vllm.utils.import_utils.has_humming", lambda: False)
-
-    with pytest.raises(NotImplementedError, match="requires the optional Humming"):
-        INCHummingLinearMethod(make_layer_config(bits=2, group_size=128))
+    assert method.kernel.config.weight_type.size_bits == bits
 
 
 def test_wna16_xpu_int2_prefers_ark_when_available(monkeypatch) -> None:
@@ -1207,11 +1208,11 @@ def test_wna16_linear_gptq_uses_auto_gptq_when_supported(monkeypatch) -> None:
         DummyMethod,
     )
 
-    scheme = INCWNA16LinearScheme(make_layer_config())
+    scheme = INCWNA16LinearScheme(make_layer_config(bits=8))
 
     assert isinstance(scheme.inner_method, DummyMethod)
     assert isinstance(captured["cfg"], AutoGPTQConfig)
-    assert captured["cfg"].weight_bits == 4
+    assert captured["cfg"].weight_bits == 8
     assert captured["cfg"].group_size == 128
     assert captured["cfg"].is_sym is True
 
