@@ -48,6 +48,10 @@ class INCMxfp4Scheme(INCScheme):
         prefix: str,
         layer_config: "INCLayerConfig",
     ):
+        if layer_config.dual_scale:
+            raise NotImplementedError(
+                "INC dual-scale MXFP4 currently supports dense Linear layers only"
+            )
         del config, prefix, layer_config
         from .inc_mxfp4_moe import INCMxfp4MoEMethod
 

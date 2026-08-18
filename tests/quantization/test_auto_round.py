@@ -488,6 +488,73 @@ def test_inc_config_accepts_mxfp_family_llm_compressor() -> None:
     assert isinstance(resolve_scheme(layer_config), INCMxfp4Scheme)
 
 
+def test_inc_dual_scale_config_resolves_and_registers_coarse_weights(
+    monkeypatch,
+) -> None:
+    class DummyKernel:
+        def process_weights_after_loading(self, layer) -> None:
+            assert hasattr(layer, "weight_coarse_scale")
+
+    monkeypatch.setattr(
+        "vllm.model_executor.layers.quantization.inc.schemes."
+        "inc_mxfp4_linear.init_dualscale_mxfp4_linear_kernel",
+        lambda: DummyKernel(),
+    )
+    monkeypatch.setattr(
+        "vllm.model_executor.parameter.get_tensor_model_parallel_rank",
+        lambda: 0,
+    )
+    monkeypatch.setattr(
+        "vllm.model_executor.parameter.get_tensor_model_parallel_world_size",
+        lambda: 1,
+    )
+
+    config = INCConfig.from_config(
+        {
+            "quant_method": "auto-round",
+            "bits": 4,
+            "group_size": 32,
+            "sym": True,
+            "packing_format": "auto_round:llm_compressor",
+            "data_type": "mx_fp4e2m1",
+            "dual_scale": True,
+        }
+    )
+    layer_config = config.config_parser.resolve(
+        DummyLayer(), "model.layers.0.mlp.up_proj"
+    )
+    assert layer_config.dual_scale is True
+
+    from vllm.model_executor.layers.quantization.inc.schemes.inc_mxfp4_linear import (
+        INCMxfp4LinearMethod,
+    )
+
+    layer = torch.nn.Module()
+    method = INCMxfp4LinearMethod(
+        make_layer_config(
+            group_size=32,
+            data_type="mx_fp4e2m1",
+            dual_scale=True,
+        )
+    )
+    method.create_weights(
+        layer,
+        input_size_per_partition=1024,
+        output_partition_sizes=[128],
+        input_size=1024,
+        output_size=128,
+        params_dtype=torch.bfloat16,
+    )
+
+    assert layer.weight_packed.shape == (128, 512)
+    assert layer.weight_scale.shape == (128, 32)
+    assert layer.weight_coarse_scale.shape == (128, 2)
+    assert layer.weight_coarse_scale.dtype is torch.float32
+
+    method.process_weights_after_loading(layer)
+    assert not hasattr(layer, "weight_packed")
+
+
 def test_qwen3_1p7b_mxfp4_autoround_uses_mxfp4_linear_scheme(
     monkeypatch,
 ) -> None:

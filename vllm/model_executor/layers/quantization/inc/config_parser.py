@@ -23,6 +23,7 @@ class INCLayerConfig:
     backend: str
     data_type: str
     quantized: bool
+    dual_scale: bool = False
 
     @property
     def is_gptq(self) -> bool:
@@ -59,6 +60,7 @@ class INCConfigParser:
             backend=self._config.backend,
             data_type=self._config.data_type,
             quantized=bits < 16,
+            dual_scale=self._config.dual_scale,
         )
 
     def get_layer_config(

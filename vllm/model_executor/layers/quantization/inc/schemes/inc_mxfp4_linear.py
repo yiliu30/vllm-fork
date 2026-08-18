@@ -7,6 +7,9 @@ import torch
 from torch.nn.parameter import Parameter
 
 from vllm.model_executor.kernels.linear import init_mxfp4_linear_kernel
+from vllm.model_executor.kernels.linear.mxfp4.dualscale import (
+    init_dualscale_mxfp4_linear_kernel,
+)
 from vllm.model_executor.layers.quantization.utils.quant_utils import kMxfp4Dynamic
 from vllm.model_executor.parameter import (
     GroupQuantScaleParameter,
@@ -30,7 +33,11 @@ class INCMxfp4LinearMethod(INCLinearScheme):
 
     def __init__(self, layer_config: "INCLayerConfig") -> None:
         self.group_size = layer_config.group_size or 32
-        self.kernel = init_mxfp4_linear_kernel(activation_quant_key=kMxfp4Dynamic)
+        self.dual_scale = layer_config.dual_scale
+        if self.dual_scale:
+            self.kernel = init_dualscale_mxfp4_linear_kernel()
+        else:
+            self.kernel = init_mxfp4_linear_kernel(activation_quant_key=kMxfp4Dynamic)
 
     @classmethod
     def get_min_capability(cls) -> int:
@@ -47,6 +54,16 @@ class INCMxfp4LinearMethod(INCLinearScheme):
         **extra_weight_attrs: Any,
     ) -> None:
         del input_size, output_size
+        if input_size_per_partition % self.group_size != 0:
+            raise ValueError(
+                "INC MXFP4 requires input_size_per_partition divisible by "
+                f"group_size={self.group_size}"
+            )
+        if self.dual_scale and input_size_per_partition % 512 != 0:
+            raise ValueError(
+                "INC dual-scale MXFP4 requires input_size_per_partition divisible "
+                "by 512"
+            )
         output_size_per_partition = sum(output_partition_sizes)
         layer.logical_widths = output_partition_sizes
         layer.input_size_per_partition = input_size_per_partition
@@ -77,6 +94,19 @@ class INCMxfp4LinearMethod(INCLinearScheme):
             weight_loader=weight_loader,
         )
         layer.register_parameter("weight_scale", weight_scale)
+
+        if self.dual_scale:
+            weight_coarse_scale = ModelWeightParameter(
+                data=torch.empty(
+                    output_size_per_partition,
+                    input_size_per_partition // 512,
+                    dtype=torch.float32,
+                ),
+                input_dim=1,
+                output_dim=0,
+                weight_loader=weight_loader,
+            )
+            layer.register_parameter("weight_coarse_scale", weight_coarse_scale)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         layer.weight = Parameter(layer.weight_packed.data, requires_grad=False)
