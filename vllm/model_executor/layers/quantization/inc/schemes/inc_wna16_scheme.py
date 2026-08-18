@@ -84,6 +84,11 @@ class INCWna16Scheme(INCScheme):
                 return INCLinearMethod(INCWNA16LinearScheme(layer_config))
             raise NotImplementedError(f"INC on CPU: unsupported config {layer_config}")
 
+        if current_platform.is_cuda() and layer_config.bits == 2:
+            from .inc_wna16_linear import INCHummingLinearMethod
+
+            return INCLinearMethod(INCHummingLinearMethod(layer_config))
+
         from .inc_wna16_linear import INCWNA16LinearScheme
 
         return INCLinearMethod(INCWNA16LinearScheme(layer_config))

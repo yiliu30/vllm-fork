@@ -35,6 +35,7 @@ from vllm.model_executor.layers.quantization.inc.schemes.inc_scheme import (
 )
 from vllm.model_executor.layers.quantization.inc.schemes.inc_wna16_linear import (
     INCARKLinearMethod,
+    INCHummingLinearMethod,
     INCWNA16LinearScheme,
     INCXPULinearMethod,
 )
@@ -935,6 +936,91 @@ def test_inc_config_from_config_accepts_xpu_int2() -> None:
     assert config.data_type == "int"
     assert config.packing_format == "auto_round:auto_gptq"
     assert config.backend == "auto"
+
+
+def test_inc_mixed_int2_mlp_int4_attention_config() -> None:
+    config = make_config(
+        weight_bits=2,
+        group_size=128,
+        extra_config={"self_attn": {"bits": 4}},
+    )
+
+    mlp = config.config_parser.resolve(DummyLayer(), "model.layers.0.mlp.down_proj")
+    attention = config.config_parser.resolve(
+        DummyLayer(), "model.layers.0.self_attn.qkv_proj"
+    )
+
+    assert (mlp.bits, mlp.group_size) == (2, 128)
+    assert (attention.bits, attention.group_size) == (4, 128)
+
+
+def test_wna16_cuda_int2_uses_humming(monkeypatch) -> None:
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: False)
+    monkeypatch.setattr(current_platform, "is_cpu", lambda: False)
+    monkeypatch.setattr(current_platform, "is_cuda", lambda: True)
+    monkeypatch.setattr(
+        current_platform, "has_device_capability", lambda capability: capability <= 100
+    )
+    monkeypatch.setattr(
+        "vllm.utils.import_utils.has_humming",
+        lambda: True,
+    )
+
+    method = INCWna16Scheme().get_linear_method(
+        make_config(weight_bits=2, group_size=128),
+        object(),
+        "model.layers.0.mlp.down_proj",
+        make_layer_config(bits=2, group_size=128),
+    )
+
+    assert isinstance(method, INCLinearMethod)
+    assert isinstance(method.scheme, INCHummingLinearMethod)
+
+
+def test_inc_humming_int2_create_weights(monkeypatch) -> None:
+    monkeypatch.setattr(current_platform, "is_cuda", lambda: True)
+    monkeypatch.setattr(
+        current_platform, "has_device_capability", lambda capability: capability <= 100
+    )
+    monkeypatch.setattr("vllm.utils.import_utils.has_humming", lambda: True)
+    monkeypatch.setattr(
+        "vllm.model_executor.parameter.get_tensor_model_parallel_rank",
+        lambda: 0,
+    )
+    monkeypatch.setattr(
+        "vllm.model_executor.parameter.get_tensor_model_parallel_world_size",
+        lambda: 1,
+    )
+
+    layer = torch.nn.Module()
+    method = INCHummingLinearMethod(make_layer_config(bits=2, group_size=128))
+    method.create_weights(
+        layer=layer,
+        input_size_per_partition=256,
+        output_partition_sizes=[128, 128],
+        input_size=256,
+        output_size=256,
+        params_dtype=torch.bfloat16,
+        weight_loader=lambda *args, **kwargs: None,
+    )
+
+    assert layer.qweight.shape == (16, 256)
+    assert layer.scales.shape == (2, 256)
+    assert layer.qzeros.shape == (2, 16)
+    assert layer.g_idx.shape == (256,)
+    assert method.inner_method.weight_schema.bits == 2
+    assert method.inner_method.weight_schema.sym
+
+
+def test_inc_humming_int2_requires_humming(monkeypatch) -> None:
+    monkeypatch.setattr(current_platform, "is_cuda", lambda: True)
+    monkeypatch.setattr(
+        current_platform, "has_device_capability", lambda capability: capability <= 100
+    )
+    monkeypatch.setattr("vllm.utils.import_utils.has_humming", lambda: False)
+
+    with pytest.raises(NotImplementedError, match="requires the optional Humming"):
+        INCHummingLinearMethod(make_layer_config(bits=2, group_size=128))
 
 
 def test_wna16_xpu_int2_prefers_ark_when_available(monkeypatch) -> None:

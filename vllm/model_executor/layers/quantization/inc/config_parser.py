@@ -150,6 +150,19 @@ class INCConfigParser:
                 if layer_name.endswith(f".{cfg_key}"):
                     return get_config(cfg_key)
 
+        # AutoRound accepts fuzzy (partial) layer names and preserves them in
+        # extra_config. Match those literals against the fully qualified vLLM
+        # layer name, including fused names such as self_attn.qkv_proj.
+        if self._config.extra_config:
+            for cfg_key in self._config.extra_config:
+                if (
+                    isinstance(cfg_key, str)
+                    and not any(c in REGEX_SPECIAL_CHARS for c in cfg_key)
+                    and re.search(rf"(?:^|\.){re.escape(cfg_key)}(?:\.|$)", layer_name)
+                    is not None
+                ):
+                    return get_config(cfg_key)
+
         quantized = not isinstance(layer, ParallelLMHead)
         if self._config.block_name_to_quantize:
             quantized = any(

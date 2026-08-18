@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch.nn.parameter import Parameter
 
+from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.auto_awq import AutoAWQConfig
 from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
 from vllm.model_executor.layers.quantization.utils.marlin_utils import (
@@ -22,6 +23,86 @@ from .inc_scheme import INCLinearScheme
 
 if TYPE_CHECKING:
     from ..config_parser import INCLayerConfig
+
+logger = init_logger(__name__)
+
+
+class INCHummingLinearMethod(INCLinearScheme):
+    """Humming linear method for symmetric INC INT2 AutoGPTQ weights."""
+
+    def __init__(self, layer_config: "INCLayerConfig") -> None:
+        from vllm.model_executor.kernels.linear import HummingLinearKernel
+        from vllm.model_executor.layers.quantization.humming import (
+            HummingLayerQuantizationConfig,
+            HummingLinearMethod,
+        )
+        from vllm.platforms import current_platform
+        from vllm.utils.humming import GPTQWeightSchema
+        from vllm.utils.import_utils import has_humming
+
+        if not current_platform.is_cuda():
+            raise NotImplementedError("INC INT2 with Humming requires CUDA.")
+        if not current_platform.has_device_capability(
+            HummingLinearKernel.get_min_capability()
+        ):
+            raise NotImplementedError("INC INT2 with Humming requires SM75 or newer.")
+        if not has_humming():
+            raise NotImplementedError(
+                "INC INT2 on CUDA requires the optional Humming package."
+            )
+        if not layer_config.is_gptq or not layer_config.sym:
+            raise NotImplementedError(
+                "INC INT2 with Humming requires symmetric AutoGPTQ packing."
+            )
+        if layer_config.backend != "auto":
+            raise NotImplementedError("INC INT2 with Humming requires backend='auto'.")
+
+        self.inner_method = HummingLinearMethod(
+            HummingLayerQuantizationConfig(
+                weight_schema=GPTQWeightSchema(
+                    bits=layer_config.bits,
+                    group_size=layer_config.group_size,
+                    desc_act=False,
+                    sym=True,
+                )
+            )
+        )
+
+    @classmethod
+    def get_min_capability(cls) -> int:
+        return 75
+
+    def create_weights(
+        self,
+        layer: torch.nn.Module,
+        input_size_per_partition: int,
+        output_partition_sizes: list[int],
+        input_size: int,
+        output_size: int,
+        params_dtype: torch.dtype,
+        **extra_weight_attrs,
+    ) -> None:
+        logger.info_once("Using HummingLinearKernel for INC INT2 linear layers.")
+        self.inner_method.create_weights(
+            layer=layer,
+            input_size_per_partition=input_size_per_partition,
+            output_partition_sizes=output_partition_sizes,
+            input_size=input_size,
+            output_size=output_size,
+            params_dtype=params_dtype,
+            **extra_weight_attrs,
+        )
+
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        self.inner_method.process_weights_after_loading(layer)
+
+    def apply_weights(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.inner_method.apply(layer, x, bias)
 
 
 class INCWNA16LinearScheme(INCLinearScheme):
