@@ -907,7 +907,7 @@ def test_wna16_xpu_moe_ark_backend_requested_but_unavailable_raises(
         )
 
 
-def test_wna16_xpu_moe_w4a16_backend_overrides_available_ark(monkeypatch) -> None:
+def test_wna16_xpu_moe_w4a16_backend_skips_ark(monkeypatch) -> None:
     expected_method = object()
 
     class DummyMoeConfig:
@@ -923,6 +923,10 @@ def test_wna16_xpu_moe_w4a16_backend_overrides_available_ark(monkeypatch) -> Non
     monkeypatch.setenv(_BACKEND_ENV, "w4a16")
     monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
     monkeypatch.setattr(current_platform, "is_cpu", lambda: False)
+    monkeypatch.setattr(
+        _ARK_STATE,
+        lambda: pytest.fail("w4a16 MoE backend override must not query ARK"),
+    )
     monkeypatch.setattr(
         inc_wna16_moe,
         "INCWNA16MoEScheme",
@@ -940,6 +944,138 @@ def test_wna16_xpu_moe_w4a16_backend_overrides_available_ark(monkeypatch) -> Non
     )
 
     assert method is expected_method
+
+
+def test_wna16_xpu_moe_w4a8_backend_uses_ark_w4a8(monkeypatch) -> None:
+    captured = {}
+
+    class DummyXpuLib:
+        def moe_w4a8_prepack(self):
+            pass
+
+        def moe_gemm_w4a8(self):
+            pass
+
+    class DummyArk:
+        xpu_lib = DummyXpuLib()
+
+        def moe_w4a8_prepack(self):
+            pass
+
+        def moe_gemm_w4a8(self):
+            pass
+
+    class DummyMoeConfig:
+        hidden_dim = 2048
+        intermediate_size_per_partition = 768
+        w13_num_shards = 2
+
+    class DummyArkW4A8Method:
+        def __init__(self, quant_config, moe_config) -> None:
+            captured["quant_config"] = quant_config
+            captured["moe_config"] = moe_config
+
+    monkeypatch.setenv(_BACKEND_ENV, "w4a8")
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
+    monkeypatch.setattr(current_platform, "is_cpu", lambda: False)
+    monkeypatch.setattr(_ARK_STATE, lambda: (True, None, DummyArk(), object()))
+    monkeypatch.setattr(
+        inc_wna16_moe,
+        "INCARKW4A8MoEMethod",
+        DummyArkW4A8Method,
+    )
+
+    layer = object.__new__(RoutedExperts)
+    layer.moe_config = DummyMoeConfig()
+
+    method = INCWna16Scheme().get_moe_method(
+        make_config(),
+        layer,
+        "model.layers.0.mlp",
+        make_layer_config(group_size=32),
+    )
+
+    assert isinstance(method, DummyArkW4A8Method)
+    assert captured["quant_config"].weight_bits == 4
+    assert captured["quant_config"].group_size == 32
+    assert captured["moe_config"] is layer.moe_config
+
+
+def test_wna16_xpu_moe_w4a8_backend_requires_ark_symbols(monkeypatch) -> None:
+    class DummyXpuLib:
+        def moe_w4a8_prepack(self):
+            pass
+
+    class DummyArk:
+        xpu_lib = DummyXpuLib()
+
+        def moe_w4a8_prepack(self):
+            pass
+
+        def moe_gemm_w4a8(self):
+            pass
+
+    class DummyMoeConfig:
+        hidden_dim = 2048
+        intermediate_size_per_partition = 768
+        w13_num_shards = 2
+
+    monkeypatch.setenv(_BACKEND_ENV, "w4a8")
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
+    monkeypatch.setattr(current_platform, "is_cpu", lambda: False)
+    monkeypatch.setattr(_ARK_STATE, lambda: (True, None, DummyArk(), object()))
+
+    layer = object.__new__(RoutedExperts)
+    layer.moe_config = DummyMoeConfig()
+
+    with pytest.raises(NotImplementedError, match="ARK W4A8 MoE kernels"):
+        INCWna16Scheme().get_moe_method(
+            make_config(),
+            layer,
+            "model.layers.0.mlp",
+            make_layer_config(group_size=32),
+        )
+
+
+def test_wna16_xpu_moe_w4a8_backend_rejects_unaligned_shape(
+    monkeypatch,
+) -> None:
+    class DummyXpuLib:
+        def moe_w4a8_prepack(self):
+            pass
+
+        def moe_gemm_w4a8(self):
+            pass
+
+    class DummyArk:
+        xpu_lib = DummyXpuLib()
+
+        def moe_w4a8_prepack(self):
+            pass
+
+        def moe_gemm_w4a8(self):
+            pass
+
+    class DummyMoeConfig:
+        hidden_dim = 2048
+        intermediate_size_per_partition = 800
+        w13_num_shards = 2
+
+    monkeypatch.setenv(_BACKEND_ENV, "w4a8")
+    monkeypatch.setattr(current_platform, "is_xpu", lambda: True)
+    monkeypatch.setattr(current_platform, "is_cpu", lambda: False)
+    monkeypatch.setattr(_ARK_STATE, lambda: (True, None, DummyArk(), object()))
+
+    layer = object.__new__(RoutedExperts)
+    layer.moe_config = DummyMoeConfig()
+
+    with pytest.raises(NotImplementedError, match="N multiple of 16"):
+        INCWna16Scheme().get_moe_method(
+            make_config(),
+            layer,
+            "model.layers.0.mlp",
+            make_layer_config(group_size=32),
+        )
 
 
 def test_inc_resolve_scheme_selects_mxfp8() -> None:

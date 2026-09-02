@@ -28,10 +28,13 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
         self,
         quant_config: MoeWNA16Config,
         moe: FusedMoEConfig,
+        *,
+        use_w4a8: bool = False,
     ) -> None:
         if quant_config.weight_bits != 4 or quant_config.has_zp:
+            kernel_name = "W4A8" if use_w4a8 else "W4A16"
             raise NotImplementedError(
-                "ARK WNA16 MoE only supports symmetric int4 W4A16 for now."
+                f"ARK {kernel_name} MoE only supports symmetric int4 for now."
             )
 
         super().__init__(quant_config, moe)
@@ -40,18 +43,38 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
 
         is_available, error_str, ark, _ = get_ark_state()
         xpu_lib = getattr(ark, "xpu_lib", None) if ark is not None else None
-        has_moe_kernel = (
-            is_available
-            and ark is not None
-            and hasattr(ark, "MoeSymmetricGemm")
-            and xpu_lib is not None
+        required_symbols = (
+            ("moe_w4a8_prepack", "moe_gemm_w4a8")
+            if use_w4a8
+            else ("MoeSymmetricGemm",)
         )
+        if use_w4a8:
+            has_moe_kernel = (
+                is_available
+                and ark is not None
+                and xpu_lib is not None
+                and all(
+                    hasattr(ark, symbol) and hasattr(xpu_lib, symbol)
+                    for symbol in required_symbols
+                )
+            )
+        else:
+            has_moe_kernel = (
+                is_available
+                and ark is not None
+                and xpu_lib is not None
+                and hasattr(ark, "MoeSymmetricGemm")
+            )
         if not has_moe_kernel:
-            reason = error_str or "ARK MoE kernels are unavailable."
-            raise ImportError(f"Failed to initialize ARK WNA16 MoE. {reason}")
+            kernel_name = "W4A8" if use_w4a8 else "WNA16"
+            reason = error_str or f"ARK {kernel_name} MoE kernels are unavailable."
+            raise ImportError(
+                f"Failed to initialize ARK {kernel_name} MoE. {reason}"
+            )
 
         assert ark is not None
         self.ark = ark
+        self.use_w4a8 = use_w4a8
         self.remap_hidden_states_op = None
         self.moe_gather_op = None
         self.local_num_experts: int | None = None
@@ -66,10 +89,91 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
         self.inter_size_scale: int = 1
         self.w13_moe = None
         self.w2_moe = None
+        self.w13_moe_w4a8: tuple[torch.Tensor, torch.Tensor, int] | None = None
+        self.w2_moe_w4a8: tuple[torch.Tensor, torch.Tensor, int] | None = None
 
-        logger.info_once("Using ARK XPU WNA16 MoE kernel.")
+        logger.info_once(
+            "Using ARK XPU W4A8 MoE kernel."
+            if use_w4a8
+            else "Using ARK XPU WNA16 MoE kernel."
+        )
+
+    @staticmethod
+    def _signed_w4a8_qweight(qweight: torch.Tensor) -> torch.Tensor:
+        qweight = qweight.detach()
+        if qweight.is_contiguous():
+            qweight.bitwise_xor_(0x88)
+            return qweight
+        return torch.bitwise_xor(qweight.contiguous(), 0x88)
+
+    @staticmethod
+    def _contiguous_tensor(tensor: torch.Tensor) -> torch.Tensor:
+        tensor = tensor.detach()
+        if tensor.is_contiguous():
+            return tensor
+        return tensor.contiguous()
+
+    def _make_w4a8_moe_weight(
+        self,
+        qweight: torch.Tensor,
+        scales: torch.Tensor,
+        group_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, int]:
+        signed_qweight = self._signed_w4a8_qweight(qweight)
+        contiguous_scales = self._contiguous_tensor(scales)
+        return signed_qweight, contiguous_scales, group_size
 
     def process_weights_after_loading(self, layer) -> None:
+        num_local_experts = layer.w13_qweight.shape[0]
+        self.local_num_experts = num_local_experts
+        self.global_num_experts = layer.global_num_experts
+        self.expert_map = layer.expert_map
+        self.rows_per_expert = torch.empty(
+            (num_local_experts,),
+            dtype=torch.int32,
+            device=layer.w13_qweight.device,
+        )
+        self.unpermuted_row_to_permuted_row = None
+        self.router_weight_ones = None
+        if layer.apply_router_weight_on_input:
+            if layer.top_k != 1:
+                raise NotImplementedError(
+                    "apply_router_weight_on_input is only supported for topk=1."
+                )
+            self.router_weights_fn = self._apply_router_weight_to_input
+        else:
+            self.router_weights_fn = self._keep_router_weights
+        self.activation = layer.activation
+        self.inter_size = layer.w13_qweight.shape[-2] // 2
+        self.inter_size_scale = 1 if layer.activation.is_gated else 2
+        self.remap_hidden_states_op = torch.ops._moe_C.remap_hidden_states
+        self.moe_gather_op = torch.ops._moe_C.moe_gather
+
+        if self.use_w4a8:
+            w13_qweight, w13_scales, group_size = self._make_w4a8_moe_weight(
+                layer.w13_qweight,
+                layer.w13_scales,
+                layer.group_size,
+            )
+            replace_parameter(layer, "w13_qweight", w13_qweight)
+            replace_parameter(layer, "w13_scales", w13_scales)
+
+            w2_qweight, w2_scales, _ = self._make_w4a8_moe_weight(
+                layer.w2_qweight,
+                layer.w2_scales,
+                layer.group_size,
+            )
+            replace_parameter(layer, "w2_qweight", w2_qweight)
+            replace_parameter(layer, "w2_scales", w2_scales)
+
+            self.w13_moe_w4a8 = (
+                layer.w13_qweight,
+                layer.w13_scales,
+                group_size,
+            )
+            self.w2_moe_w4a8 = (layer.w2_qweight, layer.w2_scales, group_size)
+            return
+
         # ARK int4 MoE with asym=False expects signed nibbles [-8, 7].
         # Loaded GPTQ weights are unsigned nibbles [0, 15], so flip the sign
         # bit of each nibble, equivalent to q - 8 in 4-bit two's-complement.
@@ -89,30 +193,6 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
 
         layer.w13_weight = layer.w13_qweight
         layer.w2_weight = layer.w2_qweight
-        num_local_experts = layer.w13_weight.shape[0]
-        self.local_num_experts = num_local_experts
-        self.global_num_experts = layer.global_num_experts
-        self.expert_map = layer.expert_map
-        self.rows_per_expert = torch.empty(
-            (num_local_experts,),
-            dtype=torch.int32,
-            device=layer.w13_weight.device,
-        )
-        self.unpermuted_row_to_permuted_row = None
-        self.router_weight_ones = None
-        if layer.apply_router_weight_on_input:
-            if layer.top_k != 1:
-                raise NotImplementedError(
-                    "apply_router_weight_on_input is only supported for topk=1."
-                )
-            self.router_weights_fn = self._apply_router_weight_to_input
-        else:
-            self.router_weights_fn = self._keep_router_weights
-        self.activation = layer.activation
-        self.inter_size = layer.w13_weight.shape[-2] // 2
-        self.inter_size_scale = 1 if layer.activation.is_gated else 2
-        self.remap_hidden_states_op = torch.ops._moe_C.remap_hidden_states
-        self.moe_gather_op = torch.ops._moe_C.moe_gather
 
         self.w13_moe = self.ark.MoeSymmetricGemm.prepare(
             layer.w13_weight,
@@ -215,6 +295,27 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             topk_weights.device,
         )
 
+    def _apply_w4a8_moe(
+        self,
+        x: torch.Tensor,
+        rows_per_expert: torch.Tensor,
+        packed: tuple[torch.Tensor, torch.Tensor, int],
+    ) -> torch.Tensor:
+        qweight, scales, group_size = packed
+        weights_s8, wscales, block = self.ark.moe_w4a8_prepack(
+            qweight,
+            scales,
+            group_size=group_size,
+        )
+        return self.ark.moe_gemm_w4a8(
+            x,
+            weights_s8,
+            wscales,
+            rows_per_expert,
+            rescale_block_size=block,
+            phase="auto",
+        )
+
     def apply(
         self,
         layer,
@@ -246,8 +347,12 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
         assert self.global_num_experts is not None
         assert self.remap_hidden_states_op is not None
         assert self.moe_gather_op is not None
-        assert self.w13_moe is not None
-        assert self.w2_moe is not None
+        if self.use_w4a8:
+            assert self.w13_moe_w4a8 is not None
+            assert self.w2_moe_w4a8 is not None
+        else:
+            assert self.w13_moe is not None
+            assert self.w2_moe is not None
         assert self.activation is not None
 
         remapped_hidden_states = torch.empty(
@@ -273,11 +378,19 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             local_experts_num=self.local_num_experts,
         )
 
-        gemm1_output = self.w13_moe.apply(
-            remapped_hidden_states,
-            rows_per_expert,
-            phase="auto",
-        )
+        if self.use_w4a8:
+            gemm1_output = self._apply_w4a8_moe(
+                remapped_hidden_states,
+                rows_per_expert,
+                self.w13_moe_w4a8,
+            )
+        else:
+            assert self.w13_moe is not None
+            gemm1_output = self.w13_moe.apply(
+                remapped_hidden_states,
+                rows_per_expert,
+                phase="auto",
+            )
 
         act_output = gemm1_output.new_empty(
             (gemm1_output.shape[0], self.inter_size * self.inter_size_scale)
@@ -289,11 +402,19 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             gemm1_output,
         )
 
-        gemm2_output = self.w2_moe.apply(
-            act_output,
-            rows_per_expert,
-            phase="auto",
-        )
+        if self.use_w4a8:
+            gemm2_output = self._apply_w4a8_moe(
+                act_output,
+                rows_per_expert,
+                self.w2_moe_w4a8,
+            )
+        else:
+            assert self.w2_moe is not None
+            gemm2_output = self.w2_moe.apply(
+                act_output,
+                rows_per_expert,
+                phase="auto",
+            )
 
         self.moe_gather_op(
             output,
@@ -303,6 +424,15 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             self.local_num_experts,
         )
         return output
+
+
+class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
+    def __init__(
+        self,
+        quant_config: MoeWNA16Config,
+        moe: FusedMoEConfig,
+    ) -> None:
+        super().__init__(quant_config, moe, use_w4a8=True)
 
 
 class INCWNA16MoEScheme:
