@@ -47,69 +47,6 @@ def _check_xpu_w4a8_supported(layer_config: "INCLayerConfig", prefix: str) -> No
         )
 
 
-def _effective_moe_group_size(
-    layer_config: "INCLayerConfig",
-    hidden_size: int,
-    intermediate_size: int,
-    prefix: str,
-) -> int:
-    group_size = layer_config.group_size
-    while intermediate_size % group_size or hidden_size % group_size:
-        group_size //= 2
-        if group_size < 32:
-            raise NotImplementedError(
-                "VLLM_XPU_INC_WNA16_BACKEND=w4a8 requires hidden and "
-                "intermediate sizes divisible by a derived group size of at "
-                f"least 32. Layer: {prefix}."
-            )
-    return group_size
-
-
-def _check_xpu_moe_w4a8_supported(
-    layer: "torch.nn.Module",
-    layer_config: "INCLayerConfig",
-    prefix: str,
-) -> int:
-    moe_config = layer.moe_config
-    hidden_size = moe_config.hidden_dim
-    intermediate_size = moe_config.intermediate_size_per_partition
-    group_size = _effective_moe_group_size(
-        layer_config,
-        hidden_size,
-        intermediate_size,
-        prefix,
-    )
-
-    if group_size <= 0 or group_size % 8 != 0:
-        raise NotImplementedError(
-            "VLLM_XPU_INC_WNA16_BACKEND=w4a8 requires a MoE group size that "
-            f"is a positive multiple of 8, got {group_size}. Layer: {prefix}."
-        )
-
-    gemm_shapes = (
-        (
-            "w13",
-            moe_config.w13_num_shards * intermediate_size,
-            hidden_size,
-        ),
-        ("w2", hidden_size, intermediate_size),
-    )
-    for name, out_features, in_features in gemm_shapes:
-        if out_features % 16 != 0 or in_features % 64 != 0:
-            raise NotImplementedError(
-                "VLLM_XPU_INC_WNA16_BACKEND=w4a8 requires MoE GEMM shapes "
-                "with N multiple of 16 and K multiple of 64, got "
-                f"{name}: N={out_features}, K={in_features}. Layer: {prefix}."
-            )
-        if in_features % group_size != 0:
-            raise NotImplementedError(
-                "VLLM_XPU_INC_WNA16_BACKEND=w4a8 requires K to be divisible "
-                f"by group_size, got {name}: K={in_features}, "
-                f"group_size={group_size}. Layer: {prefix}."
-            )
-    return group_size
-
-
 class INCWna16Scheme(INCScheme):
     @staticmethod
     def can_handle(layer_config: "INCLayerConfig") -> bool:
@@ -215,8 +152,12 @@ class INCWna16Scheme(INCScheme):
             )
 
             from .inc_ark_ops import get_ark_state
-            from .inc_wna16_moe import (
+            from .inc_w4a8_moe import (
                 INCARKW4A8MoEMethod,
+                check_xpu_moe_w4a8_supported,
+                has_ark_w4a8_moe_kernel,
+            )
+            from .inc_wna16_moe import (
                 INCARKWNA16MoEMethod,
                 INCWNA16MoEScheme,
             )
@@ -227,15 +168,9 @@ class INCWna16Scheme(INCScheme):
 
             is_ark_available, ark_error, ark, _ = get_ark_state()
             xpu_lib = getattr(ark, "xpu_lib", None) if ark is not None else None
-            w4a8_symbols = ("moe_w4a8_prepack", "moe_gemm_w4a8")
-            is_ark_w4a8_moe_available = (
-                is_ark_available
-                and ark is not None
-                and xpu_lib is not None
-                and all(
-                    hasattr(ark, symbol) and hasattr(xpu_lib, symbol)
-                    for symbol in w4a8_symbols
-                )
+            is_ark_w4a8_moe_available = has_ark_w4a8_moe_kernel(
+                is_ark_available,
+                ark,
             )
             ark_moe_error = ark_error or "ARK MoE kernels are unavailable"
             if backend == "w4a8":
@@ -245,7 +180,7 @@ class INCWna16Scheme(INCScheme):
                         f"ARK W4A8 MoE kernels are unavailable: "
                         f"{ark_moe_error}. Layer: {prefix}."
                     )
-                _check_xpu_moe_w4a8_supported(
+                check_xpu_moe_w4a8_supported(
                     layer,
                     layer_config,
                     prefix,

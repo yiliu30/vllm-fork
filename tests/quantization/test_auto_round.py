@@ -41,7 +41,10 @@ from vllm.model_executor.layers.quantization.inc.schemes.inc_wna16_linear import
     INCWNA16LinearScheme,
     INCXPULinearMethod,
 )
-from vllm.model_executor.layers.quantization.inc.schemes import inc_wna16_moe
+from vllm.model_executor.layers.quantization.inc.schemes import (
+    inc_w4a8_moe,
+    inc_wna16_moe,
+)
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.platforms import current_platform
 
@@ -980,7 +983,7 @@ def test_wna16_xpu_moe_w4a8_backend_uses_ark_w4a8(monkeypatch) -> None:
     monkeypatch.setattr(current_platform, "is_cpu", lambda: False)
     monkeypatch.setattr(_ARK_STATE, lambda: (True, None, DummyArk(), object()))
     monkeypatch.setattr(
-        inc_wna16_moe,
+        inc_w4a8_moe,
         "INCARKW4A8MoEMethod",
         DummyArkW4A8Method,
     )
