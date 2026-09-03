@@ -1093,6 +1093,88 @@ def test_wna16_xpu_moe_w4a8_backend_rejects_unaligned_shape(
         )
 
 
+def test_wna16_xpu_moe_w4a8_eager_prepack_cache(monkeypatch) -> None:
+    prepack_calls = []
+    gemm_phases = []
+
+    class DummyArk:
+        def moe_w4a8_prepack(self, qweight, scales, *, group_size):
+            prepack_calls.append((qweight, scales, group_size))
+            weights = torch.empty((1,), dtype=torch.int32)
+            wscales = torch.empty((1,), dtype=torch.float32)
+            return weights, wscales, group_size
+
+        def moe_gemm_w4a8(
+            self,
+            x,
+            weights_s8,
+            wscales,
+            rows_per_expert,
+            *,
+            rescale_block_size,
+            phase,
+        ):
+            del x, wscales, rows_per_expert, rescale_block_size
+            gemm_phases.append(phase)
+            return weights_s8
+
+    method = object.__new__(inc_w4a8_moe.INCARKW4A8MoEMethod)
+    method.ark = DummyArk()
+    monkeypatch.setenv("ARK_MOE_W4A8_EAGER_PREPACK", "1")
+    monkeypatch.setattr(inc_w4a8_moe, "_tensor_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(method, "_setup_common_moe_state", lambda layer: None)
+    monkeypatch.setattr(
+        inc_w4a8_moe,
+        "replace_parameter",
+        lambda layer, name, value: setattr(layer, name, value),
+    )
+
+    layer = SimpleNamespace(
+        group_size=32,
+        w13_qweight=torch.zeros((1, 16, 16), dtype=torch.uint8),
+        w13_scales=torch.ones((1, 16, 1), dtype=torch.float16),
+        w2_qweight=torch.zeros((1, 16, 16), dtype=torch.uint8),
+        w2_scales=torch.ones((1, 16, 1), dtype=torch.float16),
+    )
+
+    method.process_weights_after_loading(layer)
+
+    assert len(prepack_calls) == 2
+    assert method.w13_moe_w4a8 is not None
+    assert method.w13_moe_w4a8_prepacked is not None
+    w13_packed = method.w13_moe_w4a8
+    w13_prepacked = method.w13_moe_w4a8_prepacked
+
+    result = method._apply_w4a8_moe_prefill(
+        torch.empty((1, 16)),
+        torch.empty((1,), dtype=torch.int32),
+        w13_packed,
+        w13_prepacked,
+    )
+
+    assert len(prepack_calls) == 2
+    assert result is w13_prepacked[0]
+    assert gemm_phases == ["prefill"]
+
+
+def test_wna16_xpu_moe_w4a8_eager_prepack_disabled_for_tp1(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARK_MOE_W4A8_EAGER_PREPACK", "1")
+    monkeypatch.setattr(inc_w4a8_moe, "_tensor_parallel_world_size", lambda: 1)
+
+    assert not inc_w4a8_moe._w4a8_eager_prepack_enabled()
+
+
+def test_wna16_xpu_moe_w4a8_eager_prepack_force_for_tp1(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARK_MOE_W4A8_EAGER_PREPACK", "force")
+    monkeypatch.setattr(inc_w4a8_moe, "_tensor_parallel_world_size", lambda: 1)
+
+    assert inc_w4a8_moe._w4a8_eager_prepack_enabled()
+
+
 def test_inc_resolve_scheme_selects_mxfp8() -> None:
     layer_config = INCLayerConfig(
         bits=8,
