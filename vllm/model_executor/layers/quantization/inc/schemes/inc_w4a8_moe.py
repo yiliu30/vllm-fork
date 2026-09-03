@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from typing import TYPE_CHECKING
 
 import torch
 
+from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.model_executor.layers.fused_moe.config import FusedMoEConfig
 from vllm.model_executor.layers.quantization.moe_wna16 import MoeWNA16Config
 from vllm.model_executor.utils import replace_parameter
@@ -15,19 +17,78 @@ if TYPE_CHECKING:
     from ..config_parser import INCLayerConfig
 
 W4A8_MOE_SYMBOLS = ("moe_w4a8_prepack", "moe_gemm_w4a8")
+W4A16_DECODE_SYMBOLS = ("moe_gemm_decode",)
+_MOE_AUTO_DECODE_MAX_TOTAL_TOKENS = 128
 
 
-def has_ark_w4a8_moe_kernel(is_ark_available: bool, ark) -> bool:
+def _has_ark_symbols(is_ark_available: bool, ark, symbols: tuple[str, ...]) -> bool:
     xpu_lib = getattr(ark, "xpu_lib", None) if ark is not None else None
     return (
         is_ark_available
         and ark is not None
         and xpu_lib is not None
-        and all(
-            hasattr(ark, symbol) and hasattr(xpu_lib, symbol)
-            for symbol in W4A8_MOE_SYMBOLS
-        )
+        and all(hasattr(ark, symbol) and hasattr(xpu_lib, symbol) for symbol in symbols)
     )
+
+
+def has_ark_w4a8_moe_kernel(is_ark_available: bool, ark) -> bool:
+    return _has_ark_symbols(
+        is_ark_available,
+        ark,
+        W4A8_MOE_SYMBOLS + W4A16_DECODE_SYMBOLS,
+    )
+
+
+def _moe_auto_decode_max_total_tokens() -> int:
+    value = os.environ.get("ARK_MOE_AUTO_DECODE_MAX_TOKENS")
+    if value is None:
+        return _MOE_AUTO_DECODE_MAX_TOTAL_TOKENS
+    try:
+        threshold = int(value.strip())
+    except ValueError:
+        return _MOE_AUTO_DECODE_MAX_TOTAL_TOKENS
+    if threshold <= 0:
+        return _MOE_AUTO_DECODE_MAX_TOTAL_TOKENS
+    return threshold
+
+
+def _first_attention_metadata():
+    if not is_forward_context_available():
+        return None
+
+    attn_metadata = get_forward_context().attn_metadata
+    if isinstance(attn_metadata, list):
+        entries = attn_metadata
+    else:
+        entries = [attn_metadata]
+
+    for entry in entries:
+        if isinstance(entry, dict):
+            for metadata in entry.values():
+                if metadata is not None:
+                    return metadata
+        elif entry is not None:
+            return entry
+    return None
+
+
+def _prefill_decode_split(num_rows: int) -> tuple[int, int] | None:
+    metadata = _first_attention_metadata()
+    if metadata is None:
+        return None
+
+    num_decode_tokens = getattr(metadata, "num_decode_tokens", None)
+    num_prefill_tokens = getattr(metadata, "num_prefill_tokens", None)
+    if num_decode_tokens is None or num_prefill_tokens is None:
+        return None
+
+    num_decode_tokens = int(num_decode_tokens)
+    num_prefill_tokens = int(num_prefill_tokens)
+    if num_decode_tokens < 0 or num_prefill_tokens < 0:
+        return None
+    if num_decode_tokens + num_prefill_tokens != num_rows:
+        return None
+    return num_decode_tokens, num_prefill_tokens
 
 
 def _effective_moe_group_size(
@@ -95,7 +156,7 @@ def check_xpu_moe_w4a8_supported(
 
 class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
     kernel_name = "W4A8"
-    log_message = "Using ARK XPU W4A8 MoE kernel."
+    log_message = "Using ARK XPU W4A8 MoE kernel for prefill."
 
     def __init__(
         self,
@@ -105,6 +166,9 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
         super().__init__(quant_config, moe)
         self.w13_moe_w4a8: tuple[torch.Tensor, torch.Tensor, int] | None = None
         self.w2_moe_w4a8: tuple[torch.Tensor, torch.Tensor, int] | None = None
+        self.w13_moe_w4a16: tuple[torch.Tensor, torch.Tensor, int] | None = None
+        self.w2_moe_w4a16: tuple[torch.Tensor, torch.Tensor, int] | None = None
+        self._use_w4a8_for_current_apply = False
 
     def _has_ark_moe_kernel(self, is_available, ark, xpu_lib) -> bool:
         del xpu_lib
@@ -125,7 +189,7 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
             return tensor
         return tensor.contiguous()
 
-    def _make_w4a8_moe_weight(
+    def _make_moe_weight(
         self,
         qweight: torch.Tensor,
         scales: torch.Tensor,
@@ -138,7 +202,7 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
     def process_weights_after_loading(self, layer) -> None:
         self._setup_common_moe_state(layer)
 
-        w13_qweight, w13_scales, group_size = self._make_w4a8_moe_weight(
+        w13_qweight, w13_scales, group_size = self._make_moe_weight(
             layer.w13_qweight,
             layer.w13_scales,
             layer.group_size,
@@ -146,7 +210,7 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
         replace_parameter(layer, "w13_qweight", w13_qweight)
         replace_parameter(layer, "w13_scales", w13_scales)
 
-        w2_qweight, w2_scales, _ = self._make_w4a8_moe_weight(
+        w2_qweight, w2_scales, _ = self._make_moe_weight(
             layer.w2_qweight,
             layer.w2_scales,
             layer.group_size,
@@ -160,12 +224,16 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
             group_size,
         )
         self.w2_moe_w4a8 = (layer.w2_qweight, layer.w2_scales, group_size)
+        self.w13_moe_w4a16 = self.w13_moe_w4a8
+        self.w2_moe_w4a16 = self.w2_moe_w4a8
 
     def _check_moe_weights_loaded(self) -> None:
         assert self.w13_moe_w4a8 is not None
         assert self.w2_moe_w4a8 is not None
+        assert self.w13_moe_w4a16 is not None
+        assert self.w2_moe_w4a16 is not None
 
-    def _apply_w4a8_moe(
+    def _apply_w4a8_moe_prefill(
         self,
         x: torch.Tensor,
         rows_per_expert: torch.Tensor,
@@ -183,7 +251,23 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
             wscales,
             rows_per_expert,
             rescale_block_size=block,
-            phase="auto",
+            phase="prefill",
+        )
+
+    def _apply_w4a16_moe_decode(
+        self,
+        x: torch.Tensor,
+        rows_per_expert: torch.Tensor,
+        packed: tuple[torch.Tensor, torch.Tensor, int],
+    ) -> torch.Tensor:
+        qweight, scales, group_size = packed
+        return self.ark.moe_gemm_decode(
+            x,
+            qweight,
+            rows_per_expert,
+            scales=scales,
+            weight_bits=4,
+            group_size=group_size,
         )
 
     def _apply_w13_moe(
@@ -191,13 +275,124 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
         x: torch.Tensor,
         rows_per_expert: torch.Tensor,
     ) -> torch.Tensor:
-        assert self.w13_moe_w4a8 is not None
-        return self._apply_w4a8_moe(x, rows_per_expert, self.w13_moe_w4a8)
+        if self._use_w4a8_for_current_apply:
+            assert self.w13_moe_w4a8 is not None
+            return self._apply_w4a8_moe_prefill(
+                x,
+                rows_per_expert,
+                self.w13_moe_w4a8,
+            )
+        assert self.w13_moe_w4a16 is not None
+        return self._apply_w4a16_moe_decode(x, rows_per_expert, self.w13_moe_w4a16)
 
     def _apply_w2_moe(
         self,
         x: torch.Tensor,
         rows_per_expert: torch.Tensor,
     ) -> torch.Tensor:
-        assert self.w2_moe_w4a8 is not None
-        return self._apply_w4a8_moe(x, rows_per_expert, self.w2_moe_w4a8)
+        if self._use_w4a8_for_current_apply:
+            assert self.w2_moe_w4a8 is not None
+            return self._apply_w4a8_moe_prefill(
+                x,
+                rows_per_expert,
+                self.w2_moe_w4a8,
+            )
+        assert self.w2_moe_w4a16 is not None
+        return self._apply_w4a16_moe_decode(x, rows_per_expert, self.w2_moe_w4a16)
+
+    def _apply_with_prefill_kernel(
+        self,
+        use_w4a8_prefill: bool,
+        layer,
+        x: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        shared_experts,
+        shared_experts_input: torch.Tensor | None,
+    ) -> torch.Tensor:
+        previous = self._use_w4a8_for_current_apply
+        self._use_w4a8_for_current_apply = use_w4a8_prefill
+        try:
+            return super().apply(
+                layer,
+                x,
+                topk_weights,
+                topk_ids,
+                shared_experts,
+                shared_experts_input,
+            )
+        finally:
+            self._use_w4a8_for_current_apply = previous
+
+    def apply(
+        self,
+        layer,
+        x: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        shared_experts,
+        shared_experts_input: torch.Tensor | None,
+    ) -> torch.Tensor:
+        split = _prefill_decode_split(x.shape[0])
+        if split is None:
+            use_w4a8_prefill = (
+                x.shape[0] * topk_ids.shape[1]
+                > _moe_auto_decode_max_total_tokens()
+            )
+            return self._apply_with_prefill_kernel(
+                use_w4a8_prefill,
+                layer,
+                x,
+                topk_weights,
+                topk_ids,
+                shared_experts,
+                shared_experts_input,
+            )
+
+        num_decode_tokens, num_prefill_tokens = split
+        if num_decode_tokens == 0:
+            return self._apply_with_prefill_kernel(
+                True,
+                layer,
+                x,
+                topk_weights,
+                topk_ids,
+                shared_experts,
+                shared_experts_input,
+            )
+        if num_prefill_tokens == 0:
+            return self._apply_with_prefill_kernel(
+                False,
+                layer,
+                x,
+                topk_weights,
+                topk_ids,
+                shared_experts,
+                shared_experts_input,
+            )
+
+        output = torch.empty_like(x)
+        decode_output = self._apply_with_prefill_kernel(
+            False,
+            layer,
+            x[:num_decode_tokens],
+            topk_weights[:num_decode_tokens],
+            topk_ids[:num_decode_tokens],
+            shared_experts,
+            shared_experts_input,
+        )
+        output[:num_decode_tokens].copy_(decode_output)
+        del decode_output
+
+        prefill_output = self._apply_with_prefill_kernel(
+            True,
+            layer,
+            x[num_decode_tokens:],
+            topk_weights[num_decode_tokens:],
+            topk_ids[num_decode_tokens:],
+            shared_experts,
+            shared_experts_input,
+        )
+        output[num_decode_tokens:].copy_(prefill_output)
+        del prefill_output
+        return output

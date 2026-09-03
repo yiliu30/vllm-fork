@@ -959,6 +959,9 @@ def test_wna16_xpu_moe_w4a8_backend_uses_ark_w4a8(monkeypatch) -> None:
         def moe_gemm_w4a8(self):
             pass
 
+        def moe_gemm_decode(self):
+            pass
+
     class DummyArk:
         xpu_lib = DummyXpuLib()
 
@@ -966,6 +969,9 @@ def test_wna16_xpu_moe_w4a8_backend_uses_ark_w4a8(monkeypatch) -> None:
             pass
 
         def moe_gemm_w4a8(self):
+            pass
+
+        def moe_gemm_decode(self):
             pass
 
     class DummyMoeConfig:
@@ -1031,7 +1037,7 @@ def test_wna16_xpu_moe_w4a8_backend_requires_ark_symbols(monkeypatch) -> None:
     layer = object.__new__(RoutedExperts)
     layer.moe_config = DummyMoeConfig()
 
-    with pytest.raises(NotImplementedError, match="ARK W4A8 MoE kernels"):
+    with pytest.raises(NotImplementedError, match="W4A8 prefill/W4A16 decode"):
         INCWna16Scheme().get_moe_method(
             make_config(),
             layer,
@@ -1050,6 +1056,9 @@ def test_wna16_xpu_moe_w4a8_backend_rejects_unaligned_shape(
         def moe_gemm_w4a8(self):
             pass
 
+        def moe_gemm_decode(self):
+            pass
+
     class DummyArk:
         xpu_lib = DummyXpuLib()
 
@@ -1057,6 +1066,9 @@ def test_wna16_xpu_moe_w4a8_backend_rejects_unaligned_shape(
             pass
 
         def moe_gemm_w4a8(self):
+            pass
+
+        def moe_gemm_decode(self):
             pass
 
     class DummyMoeConfig:

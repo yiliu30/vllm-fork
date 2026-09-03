@@ -177,8 +177,8 @@ class INCWna16Scheme(INCScheme):
                 if not is_ark_w4a8_moe_available:
                     raise NotImplementedError(
                         "VLLM_XPU_INC_WNA16_BACKEND=w4a8 was requested but "
-                        f"ARK W4A8 MoE kernels are unavailable: "
-                        f"{ark_moe_error}. Layer: {prefix}."
+                        "ARK W4A8 prefill/W4A16 decode MoE kernels are "
+                        f"unavailable: {ark_moe_error}. Layer: {prefix}."
                     )
                 check_xpu_moe_w4a8_supported(
                     layer,
