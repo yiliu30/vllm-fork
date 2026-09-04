@@ -26,7 +26,7 @@ XPU_ONEDNN_BACKENDS = ("w4a16", "w4a8")
 
 
 def _check_xpu_w4a8_supported(layer_config: "INCLayerConfig", prefix: str) -> None:
-    """Raise unless ``int4_gemm_w4a8`` can serve this layer.
+    """Raise unless ``int4_gemm_w4a8`` can serve this linear layer.
 
     The backend is requested explicitly, so an unusable configuration is an
     error rather than something to silently fall back from.
@@ -152,24 +152,56 @@ class INCWna16Scheme(INCScheme):
             )
 
             from .inc_ark_ops import get_ark_state
+            from .inc_w4a8_moe import (
+                INCARKW4A8MoEMethod,
+                check_xpu_moe_w4a8_supported,
+                has_ark_w4a8_moe_kernel,
+            )
             from .inc_wna16_moe import (
                 INCARKWNA16MoEMethod,
                 INCWNA16MoEScheme,
             )
 
             backend = envs.VLLM_XPU_INC_WNA16_BACKEND
-            if backend in XPU_ONEDNN_BACKENDS:
+            if backend == "w4a16":
                 return INCWNA16MoEScheme(layer_config).get_method(layer)
 
             is_ark_available, ark_error, ark, _ = get_ark_state()
             xpu_lib = getattr(ark, "xpu_lib", None) if ark is not None else None
+            is_ark_w4a8_moe_available = has_ark_w4a8_moe_kernel(
+                is_ark_available,
+                ark,
+            )
+            ark_moe_error = ark_error or "ARK MoE kernels are unavailable"
+            if backend == "w4a8":
+                if not is_ark_w4a8_moe_available:
+                    raise NotImplementedError(
+                        "VLLM_XPU_INC_WNA16_BACKEND=w4a8 was requested but "
+                        "ARK W4A8 prefill/W4A16 decode MoE kernels are "
+                        f"unavailable: {ark_moe_error}. Layer: {prefix}."
+                    )
+                check_xpu_moe_w4a8_supported(
+                    layer,
+                    layer_config,
+                    prefix,
+                )
+                moe_config = MoeWNA16Config.from_config(
+                    {
+                        "quant_method": "gptq",
+                        "bits": layer_config.bits,
+                        "group_size": layer_config.group_size,
+                        "sym": layer_config.sym,
+                        "lm_head": False,
+                    }
+                )
+                return INCARKW4A8MoEMethod(moe_config, layer.moe_config)
+
             is_ark_moe_available = (
                 is_ark_available
                 and ark is not None
-                and hasattr(ark, "MoeSymmetricGemm")
                 and xpu_lib is not None
+                and hasattr(ark, "MoeSymmetricGemm")
             )
-            ark_moe_error = ark_error or "ARK MoE kernels are unavailable"
             if backend == "ark" and not is_ark_moe_available:
                 raise NotImplementedError(
                     "VLLM_XPU_INC_WNA16_BACKEND=ark was requested but "
