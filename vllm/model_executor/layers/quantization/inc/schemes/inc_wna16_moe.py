@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
+import time
 from typing import TYPE_CHECKING
 
 import torch
@@ -22,10 +24,47 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 
+_PROFILE_VALUES = {"1", "true", "yes", "on"}
+_PROFILE_SYNC_DISABLED_VALUES = {"0", "false", "no", "off"}
+
+
+def _ark_moe_profile_enabled() -> bool:
+    return os.environ.get("ARK_MOE_PROFILE", "").strip().lower() in _PROFILE_VALUES
+
+
+def _ark_moe_profile_sync_enabled() -> bool:
+    value = os.environ.get("ARK_MOE_PROFILE_SYNC", "1")
+    return value.strip().lower() not in _PROFILE_SYNC_DISABLED_VALUES
+
+
+def _ark_moe_profile_every() -> int:
+    value = os.environ.get("ARK_MOE_PROFILE_EVERY", "1")
+    try:
+        every = int(value.strip())
+    except ValueError:
+        return 1
+    return max(every, 1)
+
+
+def _ark_moe_profile_timestamp(
+    device: torch.device,
+    synchronize: bool,
+) -> float:
+    if synchronize:
+        torch.accelerator.synchronize(device)
+    return time.perf_counter()
+
 
 class INCARKWNA16MoEMethod(MoeWNA16Method):
     kernel_name = "WNA16"
     log_message = "Using ARK XPU WNA16 MoE kernel."
+    _profile_log_format = (
+        "ARK MoE profile: kernel=%s phase=%s rows=%d topk=%d "
+        "moe_rows=%d hidden=%d rows_per_expert_sum=%s "
+        "router=%.3fms setup=%.3fms remap=%.3fms "
+        "w13=%.3fms act=%.3fms w2=%.3fms gather=%.3fms "
+        "total=%.3fms sync=%s"
+    )
 
     def __init__(
         self,
@@ -67,6 +106,7 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
         self.inter_size_scale: int = 1
         self.w13_moe = None
         self.w2_moe = None
+        self._profile_call_count = 0
 
         logger.info_once(self.log_message)
 
@@ -256,6 +296,12 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             phase="auto",
         )
 
+    def _profile_phase(self) -> str:
+        return "auto"
+
+    def _log_profile(self, *profile_args: object) -> None:
+        logger.info(self._profile_log_format, *profile_args)
+
     def apply(
         self,
         layer,
@@ -267,6 +313,12 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
     ) -> torch.Tensor:
         del layer, shared_experts, shared_experts_input
 
+        profile_enabled = _ark_moe_profile_enabled()
+        profile_sync = profile_enabled and _ark_moe_profile_sync_enabled()
+        profile_every = _ark_moe_profile_every() if profile_enabled else 1
+        if profile_enabled:
+            profile_start = _ark_moe_profile_timestamp(x.device, profile_sync)
+
         num_rows, hidden_size = x.shape
         topk = topk_ids.shape[1]
 
@@ -276,6 +328,8 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             num_rows,
             topk,
         )
+        if profile_enabled:
+            profile_router = _ark_moe_profile_timestamp(x.device, profile_sync)
 
         num_moe_inputs = num_rows * topk
         output = torch.empty_like(x)
@@ -299,6 +353,8 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
         unpermuted_row_to_permuted_row = (
             self._get_unpermuted_row_to_permuted_row(num_rows, topk, x.device)
         )
+        if profile_enabled:
+            profile_setup = _ark_moe_profile_timestamp(x.device, profile_sync)
 
         self.remap_hidden_states_op(
             hidden_states=x,
@@ -312,11 +368,15 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             total_experts_num=self.global_num_experts,
             local_experts_num=self.local_num_experts,
         )
+        if profile_enabled:
+            profile_remap = _ark_moe_profile_timestamp(x.device, profile_sync)
 
         gemm1_output = self._apply_w13_moe(
             remapped_hidden_states,
             rows_per_expert,
         )
+        if profile_enabled:
+            profile_w13 = _ark_moe_profile_timestamp(x.device, profile_sync)
 
         act_output = gemm1_output.new_empty(
             (gemm1_output.shape[0], self.inter_size * self.inter_size_scale)
@@ -327,11 +387,15 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             act_output,
             gemm1_output,
         )
+        if profile_enabled:
+            profile_act = _ark_moe_profile_timestamp(x.device, profile_sync)
 
         gemm2_output = self._apply_w2_moe(
             act_output,
             rows_per_expert,
         )
+        if profile_enabled:
+            profile_w2 = _ark_moe_profile_timestamp(x.device, profile_sync)
 
         self.moe_gather_op(
             output,
@@ -340,6 +404,31 @@ class INCARKWNA16MoEMethod(MoeWNA16Method):
             unpermuted_row_to_permuted_row,
             self.local_num_experts,
         )
+        if profile_enabled:
+            profile_end = _ark_moe_profile_timestamp(x.device, profile_sync)
+            self._profile_call_count += 1
+            if self._profile_call_count % profile_every == 0:
+                rows_per_expert_sum = (
+                    int(rows_per_expert.sum().item()) if profile_sync else "skipped"
+                )
+                self._log_profile(
+                    self.kernel_name,
+                    self._profile_phase(),
+                    num_rows,
+                    topk,
+                    num_moe_inputs,
+                    hidden_size,
+                    rows_per_expert_sum,
+                    (profile_router - profile_start) * 1000,
+                    (profile_setup - profile_router) * 1000,
+                    (profile_remap - profile_setup) * 1000,
+                    (profile_w13 - profile_remap) * 1000,
+                    (profile_act - profile_w13) * 1000,
+                    (profile_w2 - profile_act) * 1000,
+                    (profile_end - profile_w2) * 1000,
+                    (profile_end - profile_start) * 1000,
+                    profile_sync,
+                )
         return output
 
 

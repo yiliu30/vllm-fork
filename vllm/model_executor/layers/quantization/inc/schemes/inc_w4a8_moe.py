@@ -12,7 +12,12 @@ from vllm.model_executor.layers.fused_moe.config import FusedMoEConfig
 from vllm.model_executor.layers.quantization.moe_wna16 import MoeWNA16Config
 from vllm.model_executor.utils import replace_parameter
 
-from .inc_wna16_moe import INCARKWNA16MoEMethod
+from .inc_wna16_moe import (
+    INCARKWNA16MoEMethod,
+    _ark_moe_profile_enabled,
+    _ark_moe_profile_sync_enabled,
+    _ark_moe_profile_timestamp,
+)
 
 if TYPE_CHECKING:
     from ..config_parser import INCLayerConfig
@@ -53,6 +58,15 @@ def _tensor_parallel_world_size() -> int:
         return 1
 
 
+def _pipeline_parallel_world_size() -> int:
+    try:
+        from vllm.distributed import get_pp_group
+
+        return get_pp_group().world_size
+    except (AssertionError, RuntimeError, ValueError):
+        return 1
+
+
 def _w4a8_eager_prepack_enabled() -> bool:
     value = os.environ.get("ARK_MOE_W4A8_EAGER_PREPACK", "")
     normalized = value.strip().lower()
@@ -61,13 +75,17 @@ def _w4a8_eager_prepack_enabled() -> bool:
     if normalized not in _EAGER_PREPACK_VALUES:
         return False
 
-    if _tensor_parallel_world_size() > 1:
+    tp_size = _tensor_parallel_world_size()
+    pp_size = _pipeline_parallel_world_size()
+    if tp_size > 1 or pp_size > 1:
         return True
 
     logger.info_once(
         "ARK W4A8 MoE eager prepack is disabled for "
-        "tensor_parallel_size=1; use "
-        "ARK_MOE_W4A8_EAGER_PREPACK=force to override."
+        "tensor_parallel_size=%d and pipeline_parallel_size=%d; use "
+        "ARK_MOE_W4A8_EAGER_PREPACK=force to override.",
+        tp_size,
+        pp_size,
     )
     return False
 
@@ -190,6 +208,11 @@ def check_xpu_moe_w4a8_supported(
 class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
     kernel_name = "W4A8"
     log_message = "Selected ARK XPU W4A8 prefill/W4A16 decode MoE method."
+    _profile_log_format = (
+        INCARKWNA16MoEMethod._profile_log_format
+        + " w13_prepack=%.3fms w13_gemm=%.3fms"
+        + " w2_prepack=%.3fms w2_gemm=%.3fms"
+    )
     prefill_kernel_log_message = "Using ARK XPU W4A8 MoE kernel for prefill."
     decode_kernel_log_message = "Using ARK XPU W4A16 MoE kernel for decode."
     _eager_prepack_layer_count = 0
@@ -211,10 +234,32 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
             torch.Tensor, torch.Tensor, int
         ] | None = None
         self._use_w4a8_for_current_apply = False
+        self._w4a8_profile_parts: dict[str, tuple[float, float]] = {}
 
     def _has_ark_moe_kernel(self, is_available, ark, xpu_lib) -> bool:
         del xpu_lib
         return has_ark_w4a8_moe_kernel(is_available, ark)
+
+    def _profile_phase(self) -> str:
+        if self._use_w4a8_for_current_apply:
+            return "prefill_w4a8"
+        return "decode_w4a16"
+
+    def _log_profile(self, *profile_args: object) -> None:
+        w13_prepack_ms, w13_gemm_ms = self._w4a8_profile_parts.get(
+            "w13", (0.0, 0.0)
+        )
+        w2_prepack_ms, w2_gemm_ms = self._w4a8_profile_parts.get(
+            "w2", (0.0, 0.0)
+        )
+        logger.info(
+            self._profile_log_format,
+            *profile_args,
+            w13_prepack_ms,
+            w13_gemm_ms,
+            w2_prepack_ms,
+            w2_gemm_ms,
+        )
 
     @staticmethod
     def _signed_w4a8_qweight(qweight: torch.Tensor) -> torch.Tensor:
@@ -309,12 +354,33 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
         rows_per_expert: torch.Tensor,
         packed: tuple[torch.Tensor, torch.Tensor, int],
         prepacked: tuple[torch.Tensor, torch.Tensor, int] | None,
+        profile_name: str,
     ) -> torch.Tensor:
         logger.info_once(self.prefill_kernel_log_message)
-        if prepacked is None:
+        profile_enabled = _ark_moe_profile_enabled()
+        profile_sync = profile_enabled and _ark_moe_profile_sync_enabled()
+        profile_start = 0.0
+        profile_after_prepack = 0.0
+        prepack_ms = 0.0
+        if profile_enabled:
+            profile_start = _ark_moe_profile_timestamp(x.device, profile_sync)
+
+        needs_prepack = prepacked is None
+        if needs_prepack:
             prepacked = self._prepack_w4a8_moe_weight(packed)
+        assert prepacked is not None
+
+        if profile_enabled:
+            if needs_prepack:
+                profile_after_prepack = _ark_moe_profile_timestamp(
+                    x.device, profile_sync
+                )
+                prepack_ms = (profile_after_prepack - profile_start) * 1000
+            else:
+                profile_after_prepack = profile_start
+
         weights_s8, wscales, block = prepacked
-        return self.ark.moe_gemm_w4a8(
+        output = self.ark.moe_gemm_w4a8(
             x,
             weights_s8,
             wscales,
@@ -322,6 +388,13 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
             rescale_block_size=block,
             phase="prefill",
         )
+        if profile_enabled:
+            profile_end = _ark_moe_profile_timestamp(x.device, profile_sync)
+            self._w4a8_profile_parts[profile_name] = (
+                prepack_ms,
+                (profile_end - profile_after_prepack) * 1000,
+            )
+        return output
 
     def _apply_w4a16_moe_decode(
         self,
@@ -330,6 +403,11 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
         packed: tuple[torch.Tensor, torch.Tensor, int],
     ) -> torch.Tensor:
         logger.info_once(self.decode_kernel_log_message)
+        logger.info(
+            "ARK W4A16 MoE decode: rows=%s, rows_per_expert_sum=%s",
+            x.shape[0],
+            int(rows_per_expert.sum().item()),
+        )
         qweight, scales, group_size = packed
         return self.ark.moe_gemm_decode(
             x,
@@ -352,6 +430,7 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
                 rows_per_expert,
                 self.w13_moe_w4a8,
                 self.w13_moe_w4a8_prepacked,
+                "w13",
             )
         assert self.w13_moe_w4a16 is not None
         return self._apply_w4a16_moe_decode(x, rows_per_expert, self.w13_moe_w4a16)
@@ -368,6 +447,7 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
                 rows_per_expert,
                 self.w2_moe_w4a8,
                 self.w2_moe_w4a8_prepacked,
+                "w2",
             )
         assert self.w2_moe_w4a16 is not None
         return self._apply_w4a16_moe_decode(x, rows_per_expert, self.w2_moe_w4a16)
@@ -383,6 +463,7 @@ class INCARKW4A8MoEMethod(INCARKWNA16MoEMethod):
         shared_experts_input: torch.Tensor | None,
     ) -> torch.Tensor:
         previous = self._use_w4a8_for_current_apply
+        self._w4a8_profile_parts = {}
         self._use_w4a8_for_current_apply = use_w4a8_prefill
         try:
             return super().apply(
