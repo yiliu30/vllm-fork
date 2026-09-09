@@ -50,17 +50,25 @@ class CompressedTensorsW4A4Mxfp4MoEMethod(CompressedTensorsMoEMethod):
         self.mxfp4_backend = Mxfp4MoeBackend.MARLIN
         # Backend selection must match the weight preparation below: CUTLASS
         # swizzles scales, b12x and XPU consume checkpoint packing, and Marlin
-        # repacks weights and scales.
-        self.use_cutlass_mxfp4 = CutlassExpertsMxfp4._supports_current_device()
+        # repacks weights and scales. Cutlass is only used when explicitly
+        # requested: on this machine (B300 / SM103) the cutlass mxfp4 group
+        # GEMM (run_fp4_blockwise_scaled_group_mm_sm100) failed to initialize
+        # on the DeepSeek-V4 mixed checkpoint, so auto keeps Marlin.
+        self.use_cutlass_mxfp4 = False
         self.experts_cls: type[mk.FusedMoEExperts]
         if moe.moe_backend == "b12x":
             self.mxfp4_backend, experts_cls = select_mxfp4_moe_backend(moe)
             assert experts_cls is not None
             self.experts_cls = experts_cls
-            self.use_cutlass_mxfp4 = False
-        elif self.use_cutlass_mxfp4:
-            logger.info_once("Using CutlassExpertsMxfp4 for MXFP4 MoE")
+        elif moe.moe_backend == "cutlass":
+            if not CutlassExpertsMxfp4._supports_current_device():
+                raise ValueError(
+                    "moe_backend='cutlass' requested but the current device "
+                    "does not support the cutlass MXFP4 experts."
+                )
+            logger.info_once("Using CutlassExpertsMxfp4 for MXFP4 MoE (explicit)")
             self.experts_cls = CutlassExpertsMxfp4
+            self.use_cutlass_mxfp4 = True
         elif current_platform.is_xpu():
             self.mxfp4_backend = Mxfp4MoeBackend.XPU
             self.experts_cls = XPUExpertsMxFp4
@@ -140,7 +148,7 @@ class CompressedTensorsW4A4Mxfp4MoEMethod(CompressedTensorsMoEMethod):
     def get_fused_moe_quant_config(
         self, layer: torch.nn.Module
     ) -> FusedMoEQuantConfig | None:
-        if self.use_cutlass_mxfp4:
+        if self.experts_cls is CutlassExpertsMxfp4:
             # W4A4: both weights and activations quantized to MXFP4
             return mxfp4_moe_quant_config(
                 w1_scale=layer.w13_weight_scale,
