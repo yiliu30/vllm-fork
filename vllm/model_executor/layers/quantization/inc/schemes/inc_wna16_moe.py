@@ -3,263 +3,438 @@
 
 from typing import TYPE_CHECKING
 
-from vllm import envs
+import torch
+
 from vllm.logger import init_logger
+from vllm.model_executor.layers.fused_moe.activation import (
+    ApplyMoEActivationConfig,
+    apply_moe_activation,
+)
+from vllm.model_executor.layers.fused_moe.config import (
+    FusedMoEConfig,
+    FusedMoEQuantConfig,
+)
+from vllm.model_executor.layers.quantization.auto_awq import AutoAWQConfig
+from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
+from vllm.model_executor.layers.quantization.moe_wna16 import (
+    MoeWNA16Config,
+    MoeWNA16Method,
+)
+from vllm.model_executor.utils import replace_parameter
 from vllm.platforms import current_platform
 
-from ..inc_linear import INCLinearMethod
-from .inc_scheme import INCScheme
-
 if TYPE_CHECKING:
-    import torch
-
     from ..config_parser import INCLayerConfig
-    from ..inc import INCConfig
 
 logger = init_logger(__name__)
 
-XPU_WNA16_SUPPORTED_BITS = {2, 4}
-# On CUDA the Marlin/GPTQ/AWQ kernels only cover 4/8-bit. The remaining
-# widths (2/3/5/6/7) have no dedicated CUDA kernel, so they are dispatched to
-# the humming kernel instead. This mirrors compressed-tensors WNA16, whose
-# 5/6/7-bit biased scalar types also fall back to humming at kernel selection.
-CUDA_HUMMING_SUPPORTED_BITS = {2, 3, 5, 6, 7}
 
-# Backends selectable through VLLM_XPU_INC_WNA16_BACKEND that are served by the
-# oneDNN int4 GEMMs rather than by ARK. These only cover int4.
-XPU_ONEDNN_BACKENDS = ("w4a16", "w4a8")
-
-
-def _check_xpu_w4a8_supported(layer_config: "INCLayerConfig", prefix: str) -> None:
-    """Raise unless ``int4_gemm_w4a8`` can serve this layer.
-
-    The backend is requested explicitly, so an unusable configuration is an
-    error rather than something to silently fall back from.
-    """
-    import torch
-
-    if not hasattr(torch.ops._xpu_C, "int4_gemm_w4a8"):
-        raise NotImplementedError(
-            "VLLM_XPU_INC_WNA16_BACKEND=w4a8 requires the int4_gemm_w4a8 op, "
-            "which this build of vllm-xpu-kernels does not provide. "
-            f"Layer: {prefix}."
-        )
-    assert isinstance(layer_config.group_size, int), (
-        "WNA16 only supports integer group_size."
-    )
-    if layer_config.group_size <= 0 or layer_config.group_size % 32 != 0:
-        raise NotImplementedError(
-            "VLLM_XPU_INC_WNA16_BACKEND=w4a8 requires a group size that is a "
-            f"positive multiple of 32, got {layer_config.group_size}. "
-            f"Layer: {prefix}."
-        )
-
-
-class INCWna16Scheme(INCScheme):
-    @staticmethod
-    def can_handle(layer_config: "INCLayerConfig") -> bool:
-        return layer_config.is_wna16_int
-
-    def get_linear_method(
+class INCARKWNA16MoEMethod(MoeWNA16Method):
+    def __init__(
         self,
-        config: "INCConfig",
-        layer: "torch.nn.Module",
-        prefix: str,
-        layer_config: "INCLayerConfig",
-    ):
-        del config, layer
-        if current_platform.is_xpu():
-            if layer_config.bits in XPU_WNA16_SUPPORTED_BITS and layer_config.sym:
-                from .inc_ark_ops import get_ark_state
-                from .inc_w4a8_linear import INCXPUW4A8LinearMethod
-                from .inc_wna16_linear import (
-                    INCARKLinearMethod,
-                    INCXPULinearMethod,
+        quant_config: MoeWNA16Config,
+        moe: FusedMoEConfig,
+    ) -> None:
+        if quant_config.weight_bits != 4 or quant_config.has_zp:
+            raise NotImplementedError(
+                "ARK WNA16 MoE only supports symmetric int4 W4A16 for now."
+            )
+
+        super().__init__(quant_config, moe)
+
+        from .inc_ark_ops import get_ark_state
+
+        is_available, error_str, ark, _ = get_ark_state()
+        xpu_lib = getattr(ark, "xpu_lib", None) if ark is not None else None
+        has_moe_kernel = (
+            is_available
+            and ark is not None
+            and hasattr(ark, "MoeSymmetricGemm")
+            and xpu_lib is not None
+        )
+        if not has_moe_kernel:
+            reason = error_str or "ARK MoE kernels are unavailable."
+            raise ImportError(f"Failed to initialize ARK WNA16 MoE. {reason}")
+
+        assert ark is not None
+        self.ark = ark
+        self.remap_hidden_states_op = None
+        self.moe_gather_op = None
+        self.local_num_experts: int | None = None
+        self.global_num_experts: int | None = None
+        self.expert_map: torch.Tensor | None = None
+        self.rows_per_expert: torch.Tensor | None = None
+        self.unpermuted_row_to_permuted_row: torch.Tensor | None = None
+        self.router_weight_ones: torch.Tensor | None = None
+        self.router_weights_fn = self._keep_router_weights
+        self.activation = None
+        self.activation_config = ApplyMoEActivationConfig.from_configs(
+            moe,
+            FusedMoEQuantConfig.make(),
+        )
+        self.inter_size: int = 0
+        self.inter_size_scale: int = 1
+        self.w13_moe = None
+        self.w2_moe = None
+
+        logger.info_once("Using ARK XPU WNA16 MoE kernel.")
+
+    def process_weights_after_loading(self, layer) -> None:
+        # ARK int4 MoE with asym=False expects signed nibbles [-8, 7].
+        # Loaded GPTQ weights are unsigned nibbles [0, 15], so flip the sign
+        # bit of each nibble, equivalent to q - 8 in 4-bit two's-complement.
+        w13_qweight = torch.bitwise_xor(
+            layer.w13_qweight.detach().contiguous(),
+            0x88,
+        )
+        w2_qweight = torch.bitwise_xor(
+            layer.w2_qweight.detach().contiguous(),
+            0x88,
+        )
+
+        replace_parameter(layer, "w13_qweight", w13_qweight)
+        replace_parameter(layer, "w2_qweight", w2_qweight)
+        replace_parameter(layer, "w13_scales", layer.w13_scales.detach().contiguous())
+        replace_parameter(layer, "w2_scales", layer.w2_scales.detach().contiguous())
+
+        layer.w13_weight = layer.w13_qweight
+        layer.w2_weight = layer.w2_qweight
+        num_local_experts = layer.w13_weight.shape[0]
+        self.local_num_experts = num_local_experts
+        self.global_num_experts = layer.global_num_experts
+        self.expert_map = layer.expert_map
+        self.rows_per_expert = torch.empty(
+            (num_local_experts,),
+            dtype=torch.int32,
+            device=layer.w13_weight.device,
+        )
+        self.unpermuted_row_to_permuted_row = None
+        self.router_weight_ones = None
+        if layer.apply_router_weight_on_input:
+            if layer.top_k != 1:
+                raise NotImplementedError(
+                    "apply_router_weight_on_input is only supported for topk=1."
                 )
+            self.router_weights_fn = self._apply_router_weight_to_input
+        else:
+            self.router_weights_fn = self._keep_router_weights
+        self.activation = layer.activation
+        self.activation_config = ApplyMoEActivationConfig.from_configs(
+            self.moe,
+            FusedMoEQuantConfig.make(
+                gemm1_alpha=getattr(layer, "swiglu_alpha", None),
+                gemm1_beta=getattr(layer, "swiglu_beta", None),
+                gemm1_clamp_limit=getattr(layer, "swiglu_limit", None),
+            ),
+        )
+        self.inter_size = layer.w13_weight.shape[-2] // 2
+        self.inter_size_scale = 1 if layer.activation.is_gated else 2
+        self.remap_hidden_states_op = torch.ops._moe_C.remap_hidden_states
+        self.moe_gather_op = torch.ops._moe_C.moe_gather
 
-                backend = envs.VLLM_XPU_INC_WNA16_BACKEND
-                if backend in XPU_ONEDNN_BACKENDS:
-                    if layer_config.bits != 4:
-                        raise NotImplementedError(
-                            f"VLLM_XPU_INC_WNA16_BACKEND={backend} only supports "
-                            f"int4, got int{layer_config.bits}. Layer: {prefix}."
-                        )
-                    if backend == "w4a8":
-                        _check_xpu_w4a8_supported(layer_config, prefix)
-                        return INCLinearMethod(INCXPUW4A8LinearMethod(layer_config))
-                    return INCLinearMethod(INCXPULinearMethod(layer_config))
+        self.w13_moe = self.ark.MoeSymmetricGemm.prepare(
+            layer.w13_weight,
+            layer.w13_scales,
+            weight_bits=4,
+            group_size=layer.group_size,
+            activation_dtype=layer.w13_scales.dtype,
+        )
 
-                is_ark_available, ark_error, _, _ = get_ark_state()
-                if backend == "ark" and not is_ark_available:
-                    raise NotImplementedError(
-                        "VLLM_XPU_INC_WNA16_BACKEND=ark was requested but "
-                        f"auto_round_kernel is unavailable: "
-                        f"{ark_error or 'unknown error'}. Layer: {prefix}."
-                    )
-                if is_ark_available:
-                    return INCLinearMethod(INCARKLinearMethod(layer_config))
-                if layer_config.bits == 2:
-                    raise NotImplementedError(
-                        "INC int2 on XPU requires the ARK backend. "
-                        f"Layer: {prefix}. "
-                        f"auto_round_kernel unavailable: "
-                        f"{ark_error or 'unknown error'}"
-                    )
+        self.w2_moe = self.ark.MoeSymmetricGemm.prepare(
+            layer.w2_weight,
+            layer.w2_scales,
+            weight_bits=4,
+            group_size=layer.group_size,
+            activation_dtype=layer.w2_scales.dtype,
+        )
 
-                logger.debug(
-                    "ARK backend is unavailable for layer %s; "
-                    "falling back to the default XPU INC path. Error: %s",
-                    prefix,
-                    ark_error or "unknown error",
-                )
-                return INCLinearMethod(INCXPULinearMethod(layer_config))
-            raise NotImplementedError(f"INC on XPU: unsupported config {layer_config}")
-
-        if current_platform.is_cpu() and layer_config.is_gptq:
-            if layer_config.bits == 4 and layer_config.sym:
-                from .inc_ark_ops import get_ark_state
-                from .inc_wna16_linear import (
-                    INCARKLinearMethod,
-                    INCWNA16LinearScheme,
-                )
-
-                is_ark_available, ark_error, _, _ = get_ark_state()
-                if is_ark_available:
-                    return INCLinearMethod(INCARKLinearMethod(layer_config))
-
-                logger.debug(
-                    "ARK backend is unavailable for layer %s; "
-                    "falling back to the default CPU INC path. Error: %s",
-                    prefix,
-                    ark_error or "unknown error",
-                )
-                return INCLinearMethod(INCWNA16LinearScheme(layer_config))
-            raise NotImplementedError(f"INC on CPU: unsupported config {layer_config}")
-
-        # CUDA low-bit (2/3/5/6/7): no Marlin/GPTQ/AWQ kernel, route to humming
-        # so a single model can mix 4/8-bit (Marlin) and 2/3/5/6/7-bit (humming)
-        # layers.
-        if (
-            current_platform.is_cuda()
-            and layer_config.bits in CUDA_HUMMING_SUPPORTED_BITS
-        ):
-            return _build_humming_linear_method(layer_config)
-
-        from .inc_wna16_linear import INCWNA16LinearScheme
-
-        return INCLinearMethod(INCWNA16LinearScheme(layer_config))
-
-    def get_moe_method(
+    def _get_rows_per_expert(
         self,
-        config: "INCConfig",
-        layer: "torch.nn.Module",
-        prefix: str,
-        layer_config: "INCLayerConfig",
-    ):
-        del config
+        local_num_experts: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        rows_per_expert = self.rows_per_expert
+        if rows_per_expert is None or rows_per_expert.device != device:
+            rows_per_expert = torch.empty(
+                (local_num_experts,),
+                dtype=torch.int32,
+                device=device,
+            )
+            self.rows_per_expert = rows_per_expert
+        rows_per_expert.zero_()
+        return rows_per_expert
 
+    def _get_unpermuted_row_to_permuted_row(
+        self,
+        num_rows: int,
+        topk: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        mapping = self.unpermuted_row_to_permuted_row
         if (
-            current_platform.is_xpu()
-            and layer_config.is_gptq
-            and layer_config.bits == 4
-            and layer_config.sym
+            mapping is None
+            or mapping.device != device
+            or mapping.shape[0] < num_rows
+            or mapping.shape[1] != topk
         ):
-            from .inc_ark_ops import get_ark_state
-            from .inc_wna16_moe import INCARKWNA16MoEMethod
+            mapping = torch.empty(
+                (num_rows, topk),
+                dtype=torch.int32,
+                device=device,
+            )
+            self.unpermuted_row_to_permuted_row = mapping
+        return mapping[:num_rows]
 
-            backend = envs.VLLM_XPU_INC_WNA16_BACKEND
-            if backend not in XPU_ONEDNN_BACKENDS:
-                is_ark_available, ark_error, ark, _ = get_ark_state()
-                xpu_lib = getattr(ark, "xpu_lib", None) if ark is not None else None
-                is_ark_moe_available = (
-                    is_ark_available
-                    and ark is not None
-                    and hasattr(ark, "MoeSymmetricGemm")
-                    and xpu_lib is not None
-                )
-                ark_moe_error = ark_error or "ARK MoE kernels are unavailable"
-                if backend == "ark" and not is_ark_moe_available:
-                    raise NotImplementedError(
-                        "VLLM_XPU_INC_WNA16_BACKEND=ark was requested but "
-                        f"ARK MoE kernels are unavailable: {ark_moe_error}. "
-                        f"Layer: {prefix}."
-                    )
-
-                if is_ark_moe_available:
-                    from vllm.model_executor.layers.quantization.moe_wna16 import (
-                        MoeWNA16Config,
-                    )
-
-                    moe_config = MoeWNA16Config.from_config(
-                        {
-                            "quant_method": "gptq",
-                            "bits": layer_config.bits,
-                            "group_size": layer_config.group_size,
-                            "sym": layer_config.sym,
-                            "lm_head": False,
-                        }
-                    )
-                    return INCARKWNA16MoEMethod(moe_config, layer.moe_config)
-
-                logger.info(
-                    "ARK backend is unavailable for MoE layer %s; "
-                    "falling back to the default WNA16 MoE path. Error: %s",
-                    prefix,
-                    ark_moe_error,
-                )
-
-        # CUDA low-bit (2/3/5/6/7): route to the humming MoE kernel (see above).
+    def _get_router_weight_ones(
+        self,
+        num_rows: int,
+        topk: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        router_weight_ones = self.router_weight_ones
         if (
-            current_platform.is_cuda()
-            and layer_config.bits in CUDA_HUMMING_SUPPORTED_BITS
+            router_weight_ones is None
+            or router_weight_ones.device != device
+            or router_weight_ones.dtype != dtype
+            or router_weight_ones.shape[0] < num_rows
+            or router_weight_ones.shape[1] != topk
         ):
-            return _build_humming_moe_method(layer, layer_config)
+            router_weight_ones = torch.ones(
+                (num_rows, topk),
+                dtype=dtype,
+                device=device,
+            )
+            self.router_weight_ones = router_weight_ones
+        return router_weight_ones[:num_rows]
 
-        from .inc_wna16_moe import INCWNA16MoEScheme
+    def _keep_router_weights(
+        self,
+        x: torch.Tensor,
+        topk_weights: torch.Tensor,
+        num_rows: int,
+        topk: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        del num_rows, topk
+        return x, topk_weights
 
-        return INCWNA16MoEScheme(layer_config).get_method(layer)
+    def _apply_router_weight_to_input(
+        self,
+        x: torch.Tensor,
+        topk_weights: torch.Tensor,
+        num_rows: int,
+        topk: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        x = x * topk_weights.to(x.dtype)
+        return x, self._get_router_weight_ones(
+            num_rows,
+            topk,
+            topk_weights.dtype,
+            topk_weights.device,
+        )
+
+    def apply(
+        self,
+        layer,
+        x: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        shared_experts,
+        shared_experts_input: torch.Tensor | None,
+    ) -> torch.Tensor:
+        del layer, shared_experts, shared_experts_input
+
+        num_rows, hidden_size = x.shape
+        topk = topk_ids.shape[1]
+
+        x, gather_topk_weights = self.router_weights_fn(
+            x,
+            topk_weights,
+            num_rows,
+            topk,
+        )
+
+        num_moe_inputs = num_rows * topk
+        output = torch.empty_like(x)
+
+        if num_moe_inputs == 0:
+            return output
+
+        assert self.local_num_experts is not None
+        assert self.global_num_experts is not None
+        assert self.remap_hidden_states_op is not None
+        assert self.moe_gather_op is not None
+        assert self.w13_moe is not None
+        assert self.w2_moe is not None
+        assert self.activation is not None
+
+        remapped_hidden_states = torch.empty(
+            (num_moe_inputs, hidden_size),
+            dtype=x.dtype,
+            device=x.device,
+        )
+        rows_per_expert = self._get_rows_per_expert(self.local_num_experts, x.device)
+        unpermuted_row_to_permuted_row = self._get_unpermuted_row_to_permuted_row(
+            num_rows, topk, x.device
+        )
+
+        self.remap_hidden_states_op(
+            hidden_states=x,
+            hidden_states_scales=None,
+            remapped_hidden_states=remapped_hidden_states,
+            remapped_hidden_states_scales=None,
+            expert_map=self.expert_map,
+            rows_per_expert=rows_per_expert,
+            unpermuted_row_to_permuted_row=unpermuted_row_to_permuted_row,
+            topk_ids=topk_ids,
+            total_experts_num=self.global_num_experts,
+            local_experts_num=self.local_num_experts,
+        )
+
+        gemm1_output = self.w13_moe.apply(
+            remapped_hidden_states,
+            rows_per_expert,
+            phase="auto",
+        )
+
+        act_output = gemm1_output.new_empty(
+            (gemm1_output.shape[0], self.inter_size * self.inter_size_scale)
+        )
+
+        apply_moe_activation(
+            self.activation,
+            act_output,
+            gemm1_output,
+            activation_config=self.activation_config,
+        )
+
+        gemm2_output = self.w2_moe.apply(
+            act_output,
+            rows_per_expert,
+            phase="auto",
+        )
+
+        self.moe_gather_op(
+            output,
+            gemm2_output,
+            gather_topk_weights,
+            unpermuted_row_to_permuted_row,
+            self.local_num_experts,
+        )
+        return output
 
 
-def _humming_weight_config(layer_config: "INCLayerConfig") -> dict:
-    """Build the humming weight-schema config for a WNA16 int checkpoint."""
-    if layer_config.is_gptq:
-        return {
-            "quant_method": "gptq",
-            "bits": layer_config.bits,
-            "group_size": layer_config.group_size,
-            "desc_act": False,
-            "sym": layer_config.sym,
-        }
-    if layer_config.is_awq:
-        return {
-            "quant_method": "awq",
-            "bits": layer_config.bits,
-            "group_size": layer_config.group_size,
-            "zero_point": not layer_config.sym,
-        }
-    raise NotImplementedError(
-        "INC humming dispatch only supports gptq/awq packed int checkpoints, "
-        f"but found {layer_config}."
-    )
+class INCWNA16MoEScheme:
+    def __init__(self, layer_config: "INCLayerConfig") -> None:
+        self.layer_config = layer_config
 
+    def get_method(self, layer: torch.nn.Module):
+        if current_platform.is_cpu():
+            return self._build_cpu_method(layer)
+        if self.layer_config.is_gptq:
+            return self._build_gptq_method(layer)
+        if self.layer_config.is_awq:
+            return self._build_awq_method(layer)
+        raise NotImplementedError(
+            f"WNA16 MoE does not support config {self.layer_config}"
+        )
 
-def _build_humming_quant_config(layer_config: "INCLayerConfig"):
-    from vllm.model_executor.layers.quantization.humming import (
-        HummingLayerQuantizationConfig,
-    )
-    from vllm.utils.humming import BaseWeightSchema
+    def _build_cpu_method(self, layer: torch.nn.Module):
+        from vllm.model_executor.layers.fused_moe import (
+            UnquantizedFusedMoEMethod,
+        )
 
-    weight_schema = BaseWeightSchema.from_config(_humming_weight_config(layer_config))
-    return HummingLayerQuantizationConfig(weight_schema=weight_schema)
+        return UnquantizedFusedMoEMethod(layer.moe_config)
 
+    def _build_gptq_method(self, layer: torch.nn.Module):
+        from vllm.model_executor.layers.quantization.auto_gptq import (
+            AutoGPTQMoEMethod,
+        )
+        from vllm.model_executor.layers.quantization.moe_wna16 import (
+            MoeWNA16Config,
+            MoeWNA16Method,
+        )
+        from vllm.model_executor.layers.quantization.utils.marlin_utils import (
+            check_moe_marlin_supports_layer,
+        )
 
-def _build_humming_linear_method(layer_config: "INCLayerConfig"):
-    from vllm.model_executor.layers.quantization.humming import HummingLinearMethod
+        group_size = self.layer_config.group_size
+        assert isinstance(group_size, int), "WNA16 only supports integer group_size."
 
-    return HummingLinearMethod(_build_humming_quant_config(layer_config))
+        use_marlin = (self.layer_config.bits, self.layer_config.sym) in {
+            (4, True),
+            (8, True),
+        } and check_moe_marlin_supports_layer(
+            layer,
+            group_size,
+        )
 
+        if use_marlin:
+            return AutoGPTQMoEMethod(
+                AutoGPTQConfig(
+                    weight_bits=self.layer_config.bits,
+                    group_size=group_size,
+                    desc_act=False,
+                    is_sym=self.layer_config.sym,
+                    lm_head_quantized=False,
+                    dynamic={},
+                    full_config={},
+                ),
+                layer.moe_config,
+            )
 
-def _build_humming_moe_method(layer: "torch.nn.Module", layer_config: "INCLayerConfig"):
-    from vllm.model_executor.layers.quantization.humming import HummingMoEMethod
+        moe_config = MoeWNA16Config.from_config(
+            {
+                "quant_method": "gptq",
+                "bits": self.layer_config.bits,
+                "group_size": group_size,
+                "sym": self.layer_config.sym,
+                "lm_head": False,
+            }
+        )
+        return MoeWNA16Method(moe_config, layer.moe_config)
 
-    return HummingMoEMethod(_build_humming_quant_config(layer_config), layer.moe_config)
+    def _build_awq_method(self, layer: torch.nn.Module):
+        from vllm.model_executor.layers.quantization.auto_awq import AutoAWQMoEMethod
+        from vllm.model_executor.layers.quantization.moe_wna16 import (
+            MoeWNA16Config,
+            MoeWNA16Method,
+        )
+        from vllm.model_executor.layers.quantization.utils.marlin_utils import (
+            check_moe_marlin_supports_layer,
+        )
+
+        group_size = self.layer_config.group_size
+        assert isinstance(group_size, int), "WNA16 only supports integer group_size."
+
+        use_marlin = self.layer_config.bits in (
+            4,
+            8,
+        ) and check_moe_marlin_supports_layer(
+            layer,
+            group_size,
+        )
+
+        if use_marlin:
+            return AutoAWQMoEMethod(
+                AutoAWQConfig(
+                    weight_bits=self.layer_config.bits,
+                    group_size=group_size,
+                    zero_point=not self.layer_config.sym,
+                    lm_head_quantized=False,
+                    modules_to_not_convert=[],
+                    full_config={},
+                ),
+                layer.moe_config,
+            )
+
+        moe_config = MoeWNA16Config.from_config(
+            {
+                "quant_method": "awq",
+                "bits": self.layer_config.bits,
+                "group_size": group_size,
+                "zero_point": not self.layer_config.sym,
+                "lm_head": False,
+            }
+        )
+        return MoeWNA16Method(moe_config, layer.moe_config)
