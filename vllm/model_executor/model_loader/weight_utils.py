@@ -1444,6 +1444,12 @@ def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> str | None:
         attn_str = "attn"
     # Define scale name mapping patterns in order of precedence
     scale_mapping_patterns = [
+        # Checkpoints may already include `.self_attn.attn`; replace it with
+        # the model's actual attention module path to avoid duplicating `.attn`.
+        (
+            r"\.self_attn\.attn\.([qkv])_scale$",
+            rf".self_attn.{attn_str}.\1_scale",
+        ),
         # ModelOpt format: .self_attn.{k,v}_proj.{k,v}_scale ->
         # .self_attn.attn.{k,v}_scale
         (
