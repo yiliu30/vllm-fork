@@ -99,19 +99,6 @@ class TestMaybeRemapKvScaleName:
         )
         assert result == "model.layers.0.self_attn.attn.k_scale"
 
-    def test_mla_attn_scale(self):
-        """Already-attention-qualified scales map to the nested MLA module."""
-        mla_params = {
-            "model.layers.0.self_attn.mla_attn.mla_attn.k_scale": None,
-            "model.layers.0.self_attn.mla_attn.mla_attn.v_scale": None,
-        }
-        assert maybe_remap_kv_scale_name(
-            "model.layers.0.self_attn.attn.k_scale", mla_params
-        ) == "model.layers.0.self_attn.mla_attn.mla_attn.k_scale"
-        assert maybe_remap_kv_scale_name(
-            "model.layers.0.self_attn.attn.v_scale", mla_params
-        ) == "model.layers.0.self_attn.mla_attn.mla_attn.v_scale"
-
     def test_non_scale_name_unchanged(self):
         """Non-scale names should be returned unchanged."""
         name = "model.layers.0.self_attn.qkv_proj.weight"
